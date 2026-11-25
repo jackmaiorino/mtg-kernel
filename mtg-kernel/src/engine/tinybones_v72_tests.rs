@@ -656,6 +656,135 @@ fn independent_prepaid_hidden_worlds_and_stash_counter_forgery_refusals_both_sea
     }
 }
 
+fn v72_rows(s: &GameState) -> Vec<(usize, JournalV72)> {
+    s.engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, e)| match e {
+            CommittedEvent::TinybonesV72 { journal } => Some((at, journal.as_ref().clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An ordinary paid exile grant, with no Tinybones anywhere, reaches the
+/// foreign Adventure receipt. Only a receipt proving a known non-Tinybones
+/// grant route leaves the legacy boundary open; a receipt-only state whose
+/// provenance is erased or changed stays refused.
+#[test]
+fn foreign_adventure_receipt_opens_legacy_only_with_its_known_grant_route_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p, "Forest");
+        for _ in 0..8 {
+            put(&mut s, p, "Mountain", Zone::Battlefield);
+        }
+        let dragon = put(&mut s, p.opponent(), "Fang Dragon", Zone::Exile);
+        let generation = s.objects.get(dragon).zone_change_count;
+        s.engine.exile_play_permissions.push(PlayPermission {
+            without_mana_cost: FreeCastV1(false),
+            any_mana_type: Default::default(),
+            object: dragon,
+            holder: p,
+            zone_change_generation: generation,
+            play_or_cast: PlayOrCast::Cast,
+            expiry: PlayPermissionExpiry::EndOfTurn,
+        });
+        let row = cast_mode(&mut s, p, dragon, None, 1);
+        assert_eq!(row.v4.cast_method, Some(CastMethodV4::Omen));
+        assert!(matches!(
+            row.v4.source_contract.unwrap().spell_cast_origin.unwrap().route,
+            SpellCastRouteV4::ExilePermission { holder, .. } if holder == p
+        ));
+        finish(&mut s);
+        assert_eq!(s.objects.get(dragon).zone, Zone::Exile);
+        assert!(adventure_allowed(&s, dragon, p));
+        assert!(!adventure_allowed(&s, dragon, p.opponent()));
+        validate_state(&restore(&s)).unwrap();
+        let rows = v72_rows(&s);
+        let [(at, JournalV72::ForeignAdventure { .. })] = rows.as_slice() else {
+            panic!("the receipt is the only Tinybones journal row: {rows:?}");
+        };
+        let at = *at;
+        assert!(!tinybones_row(&s, at, &rows[0].1));
+        for viewer in [p, p.opponent()] {
+            require_legacy(&s, Some(viewer)).unwrap();
+        }
+        let forged = |edit: &dyn Fn(&mut StackItem)| {
+            let mut bad = s.clone();
+            let original = bad
+                .engine
+                .event_history
+                .iter_mut()
+                .find_map(|e| match e {
+                    CommittedEvent::TinybonesV72 { journal } => match journal.as_mut() {
+                        JournalV72::ForeignAdventure { original, .. } => Some(original),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .unwrap();
+            edit(original);
+            require_legacy(&bad, Some(p)).unwrap_err()
+        };
+        let refusal = "Tinybones requires a distinct complete V72 consumer";
+        // Erased cast origin.
+        assert_eq!(
+            forged(&|o| o.v4.source_contract.as_mut().unwrap().spell_cast_origin = None),
+            refusal
+        );
+        // Erased source contract.
+        assert_eq!(forged(&|o| o.v4.source_contract = None), refusal);
+        // A Tinybones route.
+        assert_eq!(
+            forged(&|o| {
+                let origin = o.v4.source_contract.as_mut().unwrap();
+                origin.spell_cast_origin.as_mut().unwrap().route =
+                    SpellCastRouteV4::TinybonesExileV72 {
+                        play_history_index: 0,
+                    };
+            }),
+            refusal
+        );
+        // A route the exception does not know.
+        assert_eq!(
+            forged(&|o| {
+                let origin = o.v4.source_contract.as_mut().unwrap();
+                origin.spell_cast_origin.as_mut().unwrap().route = SpellCastRouteV4::Hand;
+            }),
+            refusal
+        );
+        // A grant held by another player.
+        assert_eq!(
+            forged(&|o| {
+                let origin = o.v4.source_contract.as_mut().unwrap();
+                origin.spell_cast_origin.as_mut().unwrap().route =
+                    SpellCastRouteV4::ExilePermission {
+                        holder: p.opponent(),
+                        permission_zone_change_count: generation,
+                    };
+            }),
+            refusal
+        );
+        // Not the Adventure form.
+        assert_eq!(
+            forged(&|o| o.v4.cast_method = Some(CastMethodV4::Normal)),
+            refusal
+        );
+        // The actual caster still casts the creature from this exile.
+        let row = cast(&mut s, p, dragon, None);
+        assert_eq!(row.v4.cast_method, Some(CastMethodV4::Normal));
+        finish(&mut s);
+        assert_eq!(s.objects.get(dragon).zone, Zone::Battlefield);
+        assert_eq!(s.objects.get(dragon).controller, p);
+        assert_eq!(s.objects.get(dragon).owner, p.opponent());
+        for viewer in [p, p.opponent()] {
+            require_legacy(&s, Some(viewer)).unwrap();
+        }
+        validate_state(&restore(&s)).unwrap();
+    }
+}
+
 #[test]
 fn foreign_paid_adventure_retains_actual_caster_permission_after_stash_and_source_leave_both_seats()
 {
@@ -680,6 +809,23 @@ fn foreign_paid_adventure_retains_actual_caster_permission_after_stash_and_sourc
         assert_eq!(s.objects.get(dragon).counters.stash, 0);
         assert!(adventure_allowed(&s, dragon, p));
         assert!(!adventure_allowed(&s, dragon, p.opponent()));
+        // This receipt's original cast came through a Tinybones play, so the
+        // receipt alone is Tinybones state at the legacy boundary.
+        let (at, row) = s
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find_map(|(at, e)| match e {
+                CommittedEvent::TinybonesV72 { journal } => {
+                    matches!(journal.as_ref(), JournalV72::ForeignAdventure { .. })
+                        .then(|| (at, journal.as_ref().clone()))
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(tinybones_row(&s, at, &row));
+        assert!(require_legacy(&s, Some(p)).is_err());
         // Real paid source removal; Adventure permission survives independently.
         cast(&mut s, p.opponent(), bolt, Some(Target::Object(tiny)));
         finish(&mut s);
@@ -709,6 +855,21 @@ fn foreign_paid_adventure_retains_actual_caster_permission_after_stash_and_sourc
         let pending = s.engine.pending_cast.take().unwrap();
         abort_cast(&mut s, pending, CastMethodV4::Normal);
         validate_state(&restore(&s)).unwrap();
+        // The reversal inherits the Tinybones provenance of its permission.
+        let (at, row) = s
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find_map(|(at, e)| match e {
+                CommittedEvent::TinybonesV72 { journal } => {
+                    matches!(journal.as_ref(), JournalV72::AdventureAborted { .. })
+                        .then(|| (at, journal.as_ref().clone()))
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(tinybones_row(&s, at, &row));
         assert!(adventure_allowed(&s, dragon, p));
         assert!(!adventure_allowed(&s, dragon, p.opponent()));
         let before = tapped(&s, p);
