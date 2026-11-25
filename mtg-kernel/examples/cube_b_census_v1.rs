@@ -33,7 +33,10 @@ use mtg_kernel::cube_b_census_v1::{
     play_drafted_range, DealtSchedule, DraftedPod, GameLine, ProcessDeath, A2_CAPS,
     GAMES_PER_DRAFT, RUN_RECORD_SCHEMA,
 };
-use mtg_kernel::cube_draft_v1::{basic_land_ids, game_decision_counter, CubePool, GameCaps};
+use mtg_kernel::cube_draft_v1::{basic_land_ids, CubePool, GameCaps};
+use mtg_kernel::cube_worker_liveness_v1::{
+    check_watchdog, with_heartbeat, WorkerProgress, HEARTBEAT_INTERVAL, LIVENESS,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,12 +44,11 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 const WORKER_STACK_BYTES: usize = 256 << 20;
-const HEARTBEAT_SECONDS: u64 = 5;
 const POLL: Duration = Duration::from_millis(500);
 
 type Fallible<T> = Result<T, String>;
@@ -265,7 +267,7 @@ fn load_run(args: &Args) -> Fallible<Run> {
             let basics = basic_land_ids().map_err(|error| error.to_string())?;
             let record = json!({
                 "schema": RUN_RECORD_SCHEMA,
-                "liveness": "per-decision-v1",
+                "liveness": LIVENESS,
                 "mode": mode,
                 "binary": binary,
                 "card_db_hash": card_db_hash,
@@ -325,7 +327,7 @@ fn load_run(args: &Args) -> Fallible<Run> {
                 .flat_map(|deck| deck.card_ids());
             let record = json!({
                 "schema": RUN_RECORD_SCHEMA,
-                "liveness": "per-decision-v1",
+                "liveness": LIVENESS,
                 "mode": mode,
                 "binary": binary,
                 "card_db_hash": card_db_hash,
@@ -435,68 +437,6 @@ impl From<mtg_kernel::cube_draft_v1::CubeDraftError> for StringError {
 // Worker
 // ---------------------------------------------------------------------------
 
-struct WorkerProgress {
-    game: Mutex<u64>,
-    decisions: Arc<AtomicU64>,
-}
-
-impl WorkerProgress {
-    fn new(start: u64) -> Self {
-        let decisions = game_decision_counter();
-        decisions.store(0, Ordering::Relaxed);
-        Self {
-            game: Mutex::new(start),
-            decisions,
-        }
-    }
-
-    // A sampler sees the index and count on the same side of a game boundary.
-    fn begin(&self, index: u64) {
-        let mut game = self.game.lock().unwrap();
-        self.decisions.store(0, Ordering::Relaxed);
-        *game = index;
-    }
-
-    fn sample(&self) -> (u64, u64) {
-        let game = self.game.lock().unwrap();
-        (*game, self.decisions.load(Ordering::Relaxed))
-    }
-}
-
-fn with_heartbeat(
-    progress: &Path,
-    current: &WorkerProgress,
-    interval: Duration,
-    play: impl FnOnce() -> Fallible<()>,
-) -> Fallible<()> {
-    let live = progress.with_added_extension("live");
-    let temp = live.with_added_extension("tmp");
-    std::thread::scope(|scope| {
-        let (stop, wait) = mpsc::channel::<()>();
-        let heartbeat = scope.spawn(move || {
-            let mut last = None;
-            while wait.recv_timeout(interval) == Err(mpsc::RecvTimeoutError::Timeout) {
-                let (game, decisions) = current.sample();
-                if decisions == 0 || last == Some((game, decisions)) {
-                    continue;
-                }
-                if let Err(error) = std::fs::write(&temp, format!("{game} {decisions}"))
-                    .and_then(|()| std::fs::rename(&temp, &live))
-                {
-                    let _ = std::fs::remove_file(&temp);
-                    let _ = writeln!(std::io::stderr(), "{}: {error}", live.display());
-                    continue;
-                }
-                last = Some((game, decisions));
-            }
-            Ok(())
-        });
-        let result = play();
-        drop(stop);
-        result.and(heartbeat.join().expect("heartbeat thread panicked"))
-    })
-}
-
 fn worker(args: &Args) -> Fallible<()> {
     let run = load_run(args)?;
     let start = args
@@ -526,12 +466,9 @@ fn worker(args: &Args) -> Fallible<()> {
             .stack_size(WORKER_STACK_BYTES)
             .spawn_scoped(scope, || {
                 let current = WorkerProgress::new(start);
-                with_heartbeat(
-                    &progress,
-                    &current,
-                    Duration::from_secs(HEARTBEAT_SECONDS),
-                    || run.play(start, end, &mut out, &progress, &current),
-                )
+                with_heartbeat(&progress, &current, HEARTBEAT_INTERVAL, || {
+                    run.play(start, end, &mut out, &progress, &current)
+                })
             })
             .map_err(|error| format!("spawning the game thread: {error}"))?
             .join()
@@ -622,23 +559,6 @@ fn part_progress(part: &Part) -> PartProgress {
         game: std::fs::read_to_string(&part.progress).unwrap_or_default(),
         live: std::fs::read_to_string(part.progress.with_added_extension("live"))
             .unwrap_or_default(),
-    }
-}
-
-/// Returns the time of the last change, or None if the worker is stuck.
-fn check_watchdog(
-    previous: &PartProgress,
-    current: &PartProgress,
-    seen_at: Instant,
-    now: Instant,
-    watchdog: Duration,
-) -> Option<Instant> {
-    if current != previous {
-        Some(now)
-    } else if now.duration_since(seen_at) <= watchdog {
-        Some(seen_at)
-    } else {
-        None
     }
 }
 
@@ -1229,12 +1149,15 @@ mod tests {
         with_heartbeat(&progress, &current, poll, || {
             for decision in 1..=3 {
                 std::thread::sleep(Duration::from_secs(1));
-                game_decision_counter().store(decision, Ordering::Relaxed);
+                current
+                    .decision_counter()
+                    .store(decision, Ordering::Relaxed);
                 let expected = format!("8 {decision}");
                 loop {
                     let seen = part_progress(&part);
-                    part.seen_at = check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit)
-                        .expect("advancing worker timed out");
+                    part.seen_at =
+                        check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit)
+                            .expect("advancing worker timed out");
                     part.seen = seen;
                     if part.seen.live == expected {
                         break;
@@ -1245,13 +1168,18 @@ mod tests {
             let live = progress.with_added_extension("live");
             let modified = std::fs::metadata(&live).unwrap().modified().unwrap();
             std::thread::sleep(limit + poll);
-            assert_eq!(std::fs::metadata(&live).unwrap().modified().unwrap(), modified);
+            assert_eq!(
+                std::fs::metadata(&live).unwrap().modified().unwrap(),
+                modified
+            );
             let seen = part_progress(&part);
-            assert_eq!(check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit), None);
+            assert_eq!(
+                check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit),
+                None
+            );
             assert_eq!(hang_message(0, part.next, &seen, limit),
                 "hang: worker 0 made no progress for 2s at game 8 (last decision 3); the batch is void (A2.1), no output written");
-            Ok(())
-        }).unwrap();
+        });
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
