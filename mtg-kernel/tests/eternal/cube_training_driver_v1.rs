@@ -1771,37 +1771,60 @@ fn checkpoint_sixteen_is_pinned_at_creation_and_recovered_after_copy_loss() {
 
 #[test]
 fn publication_io_failure_ledgers_the_batch_and_refuses_resume() {
-    struct BlockingPilot(PathBuf);
+    struct BlockingPilot {
+        path: PathBuf,
+        fail_rename: bool,
+    }
     impl GamePilot for BlockingPilot {
         fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
-            fs::create_dir_all(&self.0).unwrap();
+            if self.fail_rename {
+                fs::write(&self.path, b"blocks publication").unwrap();
+            } else {
+                fs::create_dir_all(&self.path).unwrap();
+            }
             NaturalPilot.play(spec, caps)
         }
     }
 
-    let temp = TempTestDir::new("publication-io");
-    let root = temp.join("b1");
-    let config = config(&root, "b1", Segment::BuilderOnly, 1);
-    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
-    let pilot = FixturePilot(Arc::new(BlockingPilot(
-        root.join("pending/update-0000/checkpoint.json"),
-    )));
-    assert!(matches!(
-        driver.run_next_update(&pool(), &pilot),
-        Err(TrainingDriverError::Io(_))
-    ));
-    let stop = read_value(&root.join("stops/stop-0000.json"));
-    assert_eq!(stop["kind"], "io_error");
-    assert_eq!(stop["batch_index"], 0);
-    assert!(stop.get("update").is_none());
-    assert_eq!(stop["batch"].as_array().unwrap().len(), 16);
-    assert!(!root.join("updates/update-0000").exists());
-    assert!(!root.join("pending/update-0000").exists());
-    drop(driver);
-    assert_eq!(
-        TrainingDriver::open(config, model_rows(), 1234).err(),
-        Some(TrainingDriverError::StoppedWithoutResolution)
-    );
+    for fail_rename in [false, true] {
+        let temp = TempTestDir::new("publication-io");
+        let root = temp.join("b1");
+        let config = config(&root, "b1", Segment::BuilderOnly, 1);
+        let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+        let published = root.join("updates/update-0000");
+        let pending = root.join("pending/update-0000");
+        let pilot = FixturePilot(Arc::new(BlockingPilot {
+            path: if fail_rename {
+                published.clone()
+            } else {
+                pending.join("checkpoint.json")
+            },
+            fail_rename,
+        }));
+        assert!(matches!(
+            driver.run_next_update(&pool(), &pilot),
+            Err(TrainingDriverError::Io(_))
+        ));
+        let stop = read_value(&root.join("stops/stop-0000.json"));
+        assert_eq!(stop["kind"], "io_error");
+        assert_eq!(stop["batch_index"], 0);
+        assert!(stop.get("update").is_none());
+        assert_eq!(stop["batch"].as_array().unwrap().len(), 16);
+        assert_eq!(pending.join("commit.json").exists(), fail_rename);
+        assert!(!published.is_dir());
+        if fail_rename {
+            fs::remove_file(&published).unwrap();
+        } else {
+            assert!(!pending.exists());
+        }
+        drop(driver);
+        assert_eq!(
+            TrainingDriver::open(config, model_rows(), 1234).err(),
+            Some(TrainingDriverError::StoppedWithoutResolution)
+        );
+        assert!(!pending.exists());
+        assert_eq!(published.join("commit.json").exists(), fail_rename);
+    }
 }
 
 #[test]
