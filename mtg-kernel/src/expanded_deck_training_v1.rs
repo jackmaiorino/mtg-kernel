@@ -15034,21 +15034,22 @@ pub(crate) mod tests {
     /// (CR 117.3c/117.5). Paired Native235/236 inputs first differ at the actual
     /// off-turn Ward trigger; initial parameters match. Both-seat paid Ward/
     /// Mystic tests also verify native restore and the following priority pass.
-    // Exact CPU outputs: Native236 (Windows), CI39598628050 (Linux).
+    // Windows CPU outputs for the issue #969 fixture seed.
     #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "6f8c26c98ed04629736de73f66fda34079e6608c7a42c1e2a4de2dc0fbe0c63e",
-        "81a23cc9045ed28b0630ea34f9b4bc379d49faeef120e606d617b8450ad5dcc7",
+        "bb753f462b55dbe47216e27824e4a322ab347f5052c6a3e33bbc46bdb128267c",
+        "78cdaf606ebf81479a6703cacab1fb017f21e8b19fc9cbc2e532122af9ca3c08",
     ];
+    // Non-Windows CPU outputs from Linux CI for the issue #969 fixture seed.
     #[cfg(not(target_os = "windows"))]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "edaa78f4aa822d845aacc5cf829577cc832dc64109bbee1574671662f366b3a5",
-        "2ffea00f50926f435738cf80c5fabc1e4ad01b991e9c3328471b87f6e6e4b7d5",
+        "4b1f08cd5f3128f89caa9882533f93a7cf828d8f3f12e08c4a699eb859571753",
+        "61f9e08ed62428b8cb87a56fa4eddfe392e3d0c1318ab5541bb9e222194caa9b",
     ];
-    // Current GPU1 outputs: cuda_teacher_witness_bba7779a.json, 2026-10-01.
+    // GPU1 outputs for the issue #969 fixture seed.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
-        "8c9e77a2bc923c12bd883ef45d9f96eb8efbfe9b3909fdfe8fd8a10d62ad76cd",
-        "0f04932d69bcb05687126f9c01c554039c718aefada39abc0e44b219e3566d88",
+        "1d28b7b17a7cbfd3a9a9b315c443e1315569c1fa362a2ac3e1f9241c373c4c8c",
+        "b4f869ebbe905b5dc386f5996f30a28840a20fed9b799e36ef16e85be58e3a6a",
     ];
 
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
@@ -15124,7 +15125,9 @@ pub(crate) mod tests {
         };
         let seeds = || {
             vec![Some(LineBGameSeedsV1 {
-                root_seed: 11,
+                // Issue #969: the catalog hash re-ranked seed 11 onto the
+                // other seat. Seed 40 selects a root in the learner replay group.
+                root_seed: 40,
                 teacher_seed: 21,
             })]
         };
@@ -15158,6 +15161,7 @@ pub(crate) mod tests {
         let initial_frozen = line_b_frozen_sha256_v1(&source).unwrap();
         let mut moved = Vec::new();
         let mut checkpoints = Vec::new();
+        let seed_drift = "issue #969: a catalog change moved the root; pick a new seed";
         for (label, direction) in [
             ("reverse", LineBDivergenceV1::Reverse),
             ("forward", LineBDivergenceV1::Forward),
@@ -15178,6 +15182,7 @@ pub(crate) mod tests {
             );
             assert_eq!(taught["census"], packet["census"]);
             assert_eq!(taught["census"]["selected_roots"], 1);
+            assert_eq!(taught["census"]["complete_roots"], 1, "{seed_drift}");
             // Census by learner list (review change 10) sums to the census.
             let by_list = taught["census_by_list"].as_object().unwrap();
             for key in [
@@ -15219,38 +15224,32 @@ pub(crate) mod tests {
             let permuted = &taught["permuted_control"];
             assert_eq!(permuted["backend"], "cpu");
             let auxiliary = telemetry["auxiliary_head_l2"].as_f64().unwrap();
+            assert!(auxiliary > 0.0, "{seed_drift} ({direction:?})");
             let root = &telemetry["roots"][0];
-            if taught["census"]["complete_roots"] == 1 {
-                // A single root is its width's only member: its own target
-                // rotated by one action, so a different divergence.
-                assert_eq!(permuted["kinds"], json!(["within_root"]));
-                assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
-                assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
-                assert_ne!(
-                    permuted["after_state_sha256"],
-                    receipt["after_state_sha256"]
-                );
-                eprintln!("{label} {direction:?} permuted control {permuted}");
-                let before = root["divergence_before"].as_f64().unwrap();
-                let rescore_before = root["rescore_before"].as_f64().unwrap();
-                let rescore_after = root["rescore_after"].as_f64().unwrap();
-                assert_eq!(
-                    root["signed_difference"].as_f64().unwrap(),
-                    rescore_after - rescore_before
-                );
-                if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
-                    // The CPU tape is the recorded collection forward.
-                    assert_eq!(rescore_before.to_bits(), before.to_bits());
-                } else {
-                    assert!((rescore_before - before).abs() < 1e-6);
-                }
+            // A single root is its width's only member: its own target
+            // rotated by one action, so a different divergence.
+            assert_eq!(permuted["kinds"], json!(["within_root"]));
+            assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
+            assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
+            assert_ne!(
+                permuted["after_state_sha256"],
+                receipt["after_state_sha256"]
+            );
+            eprintln!("{label} {direction:?} permuted control {permuted}");
+            let before = root["divergence_before"].as_f64().unwrap();
+            let rescore_before = root["rescore_before"].as_f64().unwrap();
+            let rescore_after = root["rescore_after"].as_f64().unwrap();
+            assert_eq!(
+                root["signed_difference"].as_f64().unwrap(),
+                rescore_after - rescore_before
+            );
+            if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
+                // The CPU tape is the recorded collection forward.
+                assert_eq!(rescore_before.to_bits(), before.to_bits());
             } else {
-                assert!(root["divergence_before"].is_null());
-                assert!(root["rescore_after"].is_null());
-                assert_eq!(auxiliary, 0.0);
-                assert_eq!(permuted["kinds"], json!([null]));
+                assert!((rescore_before - before).abs() < 1e-6);
             }
-            moved.push((auxiliary > 0.0, receipt["after_state_sha256"].clone()));
+            moved.push(receipt["after_state_sha256"].clone());
             checkpoints.push(receipt["checkpoint"].clone());
         }
         // Pinned treatment goldens (FABLE-REVIEW-20260927 change 4).
@@ -15258,10 +15257,7 @@ pub(crate) mod tests {
             ExpandedUpdateBackendV1::Cpu => LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1,
             ExpandedUpdateBackendV1::Cuda { .. } => LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1,
         };
-        let observed: Vec<&str> = moved
-            .iter()
-            .map(|(_, state)| state.as_str().unwrap())
-            .collect();
+        let observed: Vec<&str> = moved.iter().map(|state| state.as_str().unwrap()).collect();
         assert_eq!(
             observed.as_slice(),
             goldens,
@@ -15289,16 +15285,12 @@ pub(crate) mod tests {
         );
         assert!(reference > 0.0);
         assert_eq!(treated["relative_l2"].as_f64().unwrap(), l2 / reference);
-        if moved[0].0 {
-            assert!(l2 > 0.0, "the teacher must move the heads");
-        }
-        if moved.iter().all(|(nonzero, _)| *nonzero) {
-            assert_ne!(
-                moved[0].1, control["after_state_sha256"],
-                "the teacher must change the update"
-            );
-            assert_ne!(moved[0].1, moved[1].1, "the directions must differ");
-        }
+        assert!(l2 > 0.0, "the teacher must move the heads");
+        assert_ne!(
+            moved[0], control["after_state_sha256"],
+            "the teacher must change the update"
+        );
+        assert_ne!(moved[0], moved[1], "the directions must differ");
         for games in [Vec::new(), vec![None, None]] {
             assert!(update("refused", Some(teacher(LineBDivergenceV1::Reverse, games))).is_err());
         }

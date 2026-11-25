@@ -16,7 +16,7 @@
 //! from the intended transfer": that fixture's model-parameter import was
 //! stamped with an older merged card catalog hash
 //! (`de59c501e943f3fd`), which no longer equals this commit's
-//! `KERNEL_CARDDB_HASH` (`064a7c989255ab3c`, the Pauper-meta-wave-1
+//! `KERNEL_CARDDB_HASH` (`1291b789c9aaa269`, the Pauper-meta-wave-1
 //! catalog; see `mtg-kernel/src/card_def.rs:1691`). This is a real,
 //! pre-existing provenance gate, not specific to this test: the original
 //! `cuda_probe_tests` probe over the same update command would fail the
@@ -274,7 +274,7 @@ fn run_warm_timing_v1(plan: WarmTimingPlanV1) -> Result<Value, String> {
     let result = json!({
         "schema": "mtg-kernel-v3-warm-cuda-timing/v1",
         "claim": "Warm/steady-state in-process CUDA-vs-CPU timing diagnostic on the existing V3 update backend only; no numerical acceptance envelope, no V4 arm, no playing-strength or speed qualification.",
-        "batch_provenance": "Crate's own canonical in-process fixture (FrozenPlayPolicyV1::training_fixture_v3+ the tests module's replay_fixture over 32 real actor decisions, self-play), tiled batch_repeat times. NOT the pinned windows-gpu-check-001 real-trajectory fixture: that fixture's model-parameter import is stamped with an older card catalog hash (de59c501e943f3fd) that no longer equals this commit's KERNEL_CARDDB_HASH (064a7c989255ab3c); initialize() fails closed with 'destination card database differs from the intended transfer'. Every substep here is still a genuine forward/backward pass through the real production model architecture and real encoded game state.",
+        "batch_provenance": "Crate's own canonical in-process fixture (FrozenPlayPolicyV1::training_fixture_v3+ the tests module's replay_fixture over 32 real actor decisions, self-play), tiled batch_repeat times. NOT the pinned windows-gpu-check-001 real-trajectory fixture: that fixture's model-parameter import is stamped with an older card catalog hash (de59c501e943f3fd) that no longer equals this commit's KERNEL_CARDDB_HASH (1291b789c9aaa269); initialize() fails closed with 'destination card database differs from the intended transfer'. Every substep here is still a genuine forward/backward pass through the real production model architecture and real encoded game state.",
         "device_ordinal": plan.device_ordinal,
         "batch_repeat": plan.batch_repeat,
         "batch_is_tiled": plan.batch_repeat > 1,

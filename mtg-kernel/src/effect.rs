@@ -21162,9 +21162,8 @@ fn graveyard_ability_source_left_graveyard(
         })
 }
 
-/// Handles the return-and-tap pair without storing new resolution state.
-/// The original incarnation must be present before this pair's move, and
-/// only the battlefield incarnation created by that move can be tapped.
+/// A graveyard-source move-then-tap program taps only the battlefield
+/// incarnation created by its own move of the original graveyard object.
 fn execute_graveyard_return_tapped(
     ops: &[EffectOp],
     ctx: &ExecCtx,

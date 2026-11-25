@@ -853,7 +853,7 @@ fn legacy_routes_tell_strict_r14_and_frozen_receipts_apart() {
     // and a well-formed wrong one are both refused (CODEX #570).
     let wrong_db = "r14 admission receipt does not state the version-1 source card-DB hash";
     for pins in [
-        json!({"destination_card_db_hash": "064a7c989255ab3c"}),
+        json!({"destination_card_db_hash": concat!("064a7c98", "9255ab3c")}),
         json!({"source_card_db_hash": "64c82a261e078f1a"}),
     ] {
         let mut bad = r14.clone();
@@ -903,7 +903,9 @@ fn registry_bindings_must_equal_the_loaded_identity() {
         "source_card_db_hash": "64c82a261e078f1a",
         "namespace_rule": "card-token=id+1; original registry entries identical except deck membership; append-only",
         "destination_registry_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
-        "destination_card_db_hash": "064a7c989255ab3c",
+        // Historical receipt values (catalog v34), split so the live-catalog
+        // repin tool leaves them alone.
+        "destination_card_db_hash": concat!("064a7c98", "9255ab3c"),
     });
     let mut strict_pins = strict_origin.clone();
     strict_pins.as_object_mut().unwrap().remove("schema");
