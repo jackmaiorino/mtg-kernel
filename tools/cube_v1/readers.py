@@ -674,16 +674,356 @@ def _set_info(opened: dict[str, Any]) -> dict[str, Any]:
             "execution": opened["execution"], "expired_games": opened["expired"]}
 
 
+BASICS_BANDS: tuple[tuple[str, int, int], ...] = (
+    ("0-14", 0, 14),
+    ("15-19", 15, 19),
+    ("20-35", 20, 35),
+    ("36-40", 36, 40),
+)
+DECISION_CAP_STOP_KINDS = frozenset({
+    "decision_cap",
+    "driver_decision_cap",
+    "terminal:max_physical_decisions",
+    "terminal:max_policy_steps",
+})
+
+
 def _games(records: dict[int, dict[str, Any]]) -> dict[str, int]:
     games = [g for r in records.values() for g in r["games"]]
     return {"played": len(games), "completed": sum(g["scores"] is not None for g in games),
             "halted": sum(g["scores"] is None for g in games)}
 
 
+def _scoped_games(read: str, records: dict[int, dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    """Games belonging to `read`'s own denominator. For (b'), only the stated-arm games (games_y)."""
+    if read != "b_prime":
+        return {pid: list(rec["games"]) for pid, rec in records.items()}
+    out: dict[int, list[dict[str, Any]]] = {}
+    for pid, rec in records.items():
+        stated_ids = {gy for pair in rec["paired_builds"] for gy in pair["games_y"]}
+        out[pid] = [g for g in rec["games"] if g["game"] in stated_ids]
+    return out
+
+
+def _games_from_scoped(scoped: dict[int, list[dict[str, Any]]]) -> dict[str, int]:
+    games = [g for gs in scoped.values() for g in gs]
+    return {"played": len(games), "completed": sum(g["scores"] is not None for g in games),
+            "halted": sum(g["scores"] is None for g in games)}
+
+
+def _game_arm_and_play_draw(read: str, rec: dict[str, Any], plan: dict[str, Any],
+                            game: dict[str, Any]) -> tuple[str, str]:
+    layout = read_plans.FAMILIES[plan["family"]]["layout"]
+    if layout == "a":
+        arm = "candidate" if game["game"] % 2 == 0 else "stated"
+        learning = {c["chair"] for c in plan["chairs"] if c["role"] == "learning"}
+        pos = next((idx for idx, ch in enumerate(game["chairs"]) if ch in learning), 0)
+        return arm, ("play" if pos == 0 else "draw")
+    if layout == "one":
+        rot = plan["rotation"]
+        pos = game["chairs"].index(rot) if rot in game["chairs"] else 0
+        return "single_seat", ("play" if pos == 0 else "draw")
+    if layout == "all":
+        return "all_learned", "play"
+    if layout == "b":
+        focal = next((d for d in game["decks"] if plan["decks"][d]["source"] == "build"), game["decks"][0])
+        return "candidate", ("play" if game["decks"].index(focal) == 0 else "draw")
+    # Paired dealer layouts (c, b_prime, dose, d13)
+    focal = next((d for d in game["decks"] if plan["decks"][d]["source"] == "build"), game["decks"][0])
+    arm = plan["decks"][focal]["row"]
+    return arm, ("play" if game["decks"].index(focal) == 0 else "draw")
+
+
+def _halts_and_lengths(read: str, records: dict[int, dict[str, Any]], plans: dict[int, dict[str, Any]],
+                       scoped: dict[int, list[dict[str, Any]]]) -> tuple[dict[str, Any], bool]:
+    """A2.3 halt and game-length breakdowns and A2.1 >0.1% over-8192 warning."""
+    by_stop_kind: dict[str, int] = {}
+    by_last_source: dict[str, int] = {}
+    by_card_present: dict[int, list[int]] = {}
+    by_card_charged: dict[int, int] = {}
+    by_play_draw: dict[str, dict[str, int]] = {
+        "play": {"completed": 0, "halted": 0},
+        "draw": {"completed": 0, "halted": 0},
+    }
+    by_arm: dict[str, dict[str, int]] = {}
+    completed_decisions: list[Fraction] = []
+    over_8192 = 0
+    for pid, gs in sorted(scoped.items()):
+        rec = records[pid]
+        plan = plans[pid]
+        deck_cards = {d["deck"]: set(d["cards"]) for d in rec["decks"]}
+        for g in gs:
+            att = g["attempts"][0]
+            halted = g["scores"] is None
+            arm, pd = _game_arm_and_play_draw(read, rec, plan, g)
+            by_play_draw[pd]["halted" if halted else "completed"] += 1
+            arm_bucket = by_arm.setdefault(arm, {"completed": 0, "halted": 0})
+            arm_bucket["halted" if halted else "completed"] += 1
+            cards_in_game = deck_cards.get(g["decks"][0], set()) | deck_cards.get(g["decks"][1], set())
+            for cid in cards_in_game:
+                slot = by_card_present.setdefault(cid, [0, 0])
+                slot[1 if halted else 0] += 1
+            if halted:
+                sk = att["stop_kind"] or "unknown"
+                by_stop_kind[sk] = by_stop_kind.get(sk, 0) + 1
+                src = att["last_action_source"]
+                src_key = "null" if src is None else str(src)
+                by_last_source[src_key] = by_last_source.get(src_key, 0) + 1
+                if src is not None:
+                    by_card_charged[src] = by_card_charged.get(src, 0) + 1
+            else:
+                dec = att["decisions"]
+                completed_decisions.append(Fraction(dec))
+                if dec > 8192:
+                    over_8192 += 1
+    completed_decisions.sort()
+    if completed_decisions:
+        pcts = {
+            "p50": _num(percentile(completed_decisions, Fraction(1, 2))),
+            "p99": _num(percentile(completed_decisions, Fraction(99, 100))),
+            "p99_9": _num(percentile(completed_decisions, Fraction(999, 1000))),
+        }
+    else:
+        pcts = {"p50": None, "p99": None, "p99_9": None}
+    n_comp = len(completed_decisions)
+    warning = bool(n_comp > 0 and Fraction(over_8192, n_comp) > Fraction(1, 1000))
+    breakdown = {
+        "by_stop_kind": dict(sorted(by_stop_kind.items())),
+        "by_last_action_source": dict(sorted(by_last_source.items())),
+        "by_card_charged": {str(k): v for k, v in sorted(by_card_charged.items())},
+        "by_card_present_in_halts": {
+            str(k): {"completed": v[0], "halted": v[1]}
+            for k, v in sorted(by_card_present.items()) if v[1] > 0
+        },
+        "by_play_draw": by_play_draw,
+        "by_arm": dict(sorted(by_arm.items())),
+        "decision_percentiles_completed": pcts,
+        "completed_over_8192": over_8192,
+    }
+    return breakdown, warning
+
+
+def _denominators(read: str, layout: str, unit_list: list[Any], raw: dict[str, dict[str, Any]],
+                  scoped: dict[int, list[dict[str, Any]]]) -> dict[str, dict[str, int]]:
+    """A6.3 per-statistic exact denominators: units, pools/rows and games."""
+    out: dict[str, dict[str, int]] = {}
+    g_tot = _games_from_scoped(scoped)
+    if layout == "a":
+        for name, row_key in (("candidate_edge", "candidate"), ("stated_edge", "stated")):
+            rows_planned = len(unit_list)
+            rows_empty = sum(all(w is None for w in u[row_key]) for u in unit_list)
+            gp = sum(len(u[row_key]) for u in unit_list)
+            gc = sum(sum(w is not None for w in u[row_key]) for u in unit_list)
+            out[name] = {
+                "units_planned": len(unit_list),
+                "units_defined": raw[name]["drop"]["units_defined"],
+                "units_omitted": len(unit_list) - raw[name]["drop"]["units_defined"],
+                "rows_planned": rows_planned,
+                "rows_complete": rows_planned - rows_empty,
+                "rows_empty": rows_empty,
+                "games_planned": gp,
+                "games_completed": gc,
+                "games_halted": gp - gc,
+            }
+        both_complete = sum(
+            (not all(w is None for w in u["candidate"])) and (not all(w is None for w in u["stated"]))
+            for u in unit_list
+        )
+        out["interaction"] = {
+            "units_planned": len(unit_list),
+            "units_defined": raw["interaction"]["drop"]["units_defined"],
+            "units_omitted": len(unit_list) - raw["interaction"]["drop"]["units_defined"],
+            "rows_planned": len(unit_list),
+            "rows_complete": both_complete,
+            "rows_empty": len(unit_list) - both_complete,
+            "games_planned": g_tot["played"],
+            "games_completed": g_tot["completed"],
+            "games_halted": g_tot["halted"],
+        }
+        return out
+    if layout == "b":
+        pools = [p for u in unit_list for p in u]
+        pools_empty = sum(all(w is None for w in p) for p in pools)
+        name = next(iter(raw))
+        out[name] = {
+            "units_planned": len(unit_list),
+            "units_defined": raw[name]["drop"]["units_defined"],
+            "units_omitted": len(unit_list) - raw[name]["drop"]["units_defined"],
+            "pools_planned": len(pools),
+            "pools_complete": len(pools) - pools_empty,
+            "pools_empty": pools_empty,
+            "games_planned": g_tot["played"],
+            "games_completed": g_tot["completed"],
+            "games_halted": g_tot["halted"],
+        }
+        return out
+    if read == "b_prime":
+        pools = [y for u in unit_list for _, y in u]
+        pools_empty = sum(all(w is None for w in p) for p in pools)
+        name = next(iter(raw))
+        out[name] = {
+            "units_planned": len(unit_list),
+            "units_defined": raw[name]["drop"]["units_defined"],
+            "units_omitted": len(unit_list) - raw[name]["drop"]["units_defined"],
+            "pools_planned": len(pools),
+            "pools_complete": len(pools) - pools_empty,
+            "pools_empty": pools_empty,
+            "games_planned": g_tot["played"],
+            "games_completed": g_tot["completed"],
+            "games_halted": g_tot["halted"],
+        }
+        return out
+    if layout == "c":
+        pools = [pair for u in unit_list for pair in u]
+        pools_defined = sum(
+            (not all(w is None for w in x)) and (not all(w is None for w in y)) for x, y in pools
+        )
+        pools_empty = sum(all(w is None for w in x + y) for x, y in pools)
+        name = next(iter(raw))
+        out[name] = {
+            "units_planned": len(unit_list),
+            "units_defined": raw[name]["drop"]["units_defined"],
+            "units_omitted": len(unit_list) - raw[name]["drop"]["units_defined"],
+            "pools_planned": len(pools),
+            "pools_complete": pools_defined,
+            "pools_empty": pools_empty,
+            "games_planned": g_tot["played"],
+            "games_completed": g_tot["completed"],
+            "games_halted": g_tot["halted"],
+        }
+        return out
+    if layout == "one":
+        name = next(iter(raw))
+        out[name] = {
+            "units_planned": len(unit_list),
+            "units_defined": raw[name]["drop"]["units_defined"],
+            "units_omitted": len(unit_list) - raw[name]["drop"]["units_defined"],
+            "games_planned": g_tot["played"],
+            "games_completed": g_tot["completed"],
+            "games_halted": g_tot["halted"],
+        }
+        return out
+    return out
+
+
+def _aa_pair_by_row(unit_list: list[dict[str, list[Fraction | None]]], units: range) -> list[dict[str, Any]]:
+    """A6.12: report drop scores and both signed completions by pair and builder row."""
+    rows = []
+    for pair_idx, u in zip(units, unit_list):
+        cand_n = len(u["candidate"])
+        cand_c = sum(w is not None for w in u["candidate"])
+        stat_n = len(u["stated"])
+        stat_c = sum(w is not None for w in u["stated"])
+        rows.append({
+            "pair": pair_idx,
+            "candidate": {
+                "drop": _num(stat_a_candidate(u, "drop")),
+                "lower": _num(stat_a_candidate(u, "lower")),
+                "upper": _num(stat_a_candidate(u, "upper")),
+                "games_planned": cand_n,
+                "games_completed": cand_c,
+                "games_halted": cand_n - cand_c,
+            },
+            "stated": {
+                "drop": _num(stat_a_stated(u, "drop")),
+                "lower": _num(stat_a_stated(u, "lower")),
+                "upper": _num(stat_a_stated(u, "upper")),
+                "games_planned": stat_n,
+                "games_completed": stat_c,
+                "games_halted": stat_n - stat_c,
+            },
+            "interaction": {
+                "drop": _num(stat_a_interaction(u, "drop")),
+                "lower": _num(stat_a_interaction(u, "lower")),
+                "upper": _num(stat_a_interaction(u, "upper")),
+            },
+        })
+    return rows
+
+
+def _basics_band(count: int) -> str:
+    for label, lo, hi in BASICS_BANDS:
+        if lo <= count <= hi:
+            return label
+    raise ReadError(f"basics count {count} outside [0, 40]")
+
+
+def _dose_first_basics_bands(records: dict[int, dict[str, Any]], plans: dict[int, dict[str, Any]],
+                             timing: dict[int, dict[int, dict[str, Any]]],
+                             basic_ids: list[int]) -> dict[str, Any]:
+    """A6.17 & D0.20 first-dose timing and decision-cap hit rates in the four signed basics bands."""
+    basics_set = set(basic_ids)
+    buckets: dict[str, dict[str, Any]] = {
+        label: {"games": 0, "completed": 0, "halted": 0, "decision_cap_hits": 0, "ms": []}
+        for label, _, _ in BASICS_BANDS
+    }
+    all_bucket: dict[str, Any] = {"games": 0, "completed": 0, "halted": 0, "decision_cap_hits": 0, "ms": []}
+    for pid, rec in sorted(records.items()):
+        plan = plans[pid]
+        pod_timing = timing.get(pid)
+        if pod_timing is None:
+            raise ReadError(f"first dose missing timing side file for pod {pid}")
+        decks_by_id = {d["deck"]: d for d in rec["decks"]}
+        for g in rec["games"]:
+            gid = g["game"]
+            if gid not in pod_timing:
+                raise ReadError(f"first dose missing timing entry for pod {pid} game {gid}")
+            elapsed = pod_timing[gid]["elapsed_ms"]
+            focal = next((d for d in g["decks"] if plan["decks"][d]["source"] == "build"), None)
+            if focal is None:
+                raise ReadError(f"dose pod {pid} game {gid} has no built focal deck")
+            b_count = sum(1 for cid in decks_by_id[focal]["cards"] if cid in basics_set)
+            band = _basics_band(b_count)
+            att = g["attempts"][0]
+            halted = g["scores"] is None
+            cap_hit = halted and (att["stop_kind"] in DECISION_CAP_STOP_KINDS)
+            for b in (buckets[band], all_bucket):
+                b["games"] += 1
+                if halted:
+                    b["halted"] += 1
+                else:
+                    b["completed"] += 1
+                if cap_hit:
+                    b["decision_cap_hits"] += 1
+                b["ms"].append(elapsed)
+
+    def summarize(b: dict[str, Any]) -> dict[str, Any]:
+        ms_sorted = sorted(Fraction(x) for x in b["ms"])
+        n = len(ms_sorted)
+        if n > 0:
+            total = sum(b["ms"])
+            timing_summary = {
+                "count": n,
+                "total_ms": total,
+                "mean_ms": _num(Fraction(total, n)),
+                "p50_ms": _num(percentile(ms_sorted, Fraction(1, 2))),
+                "p99_ms": _num(percentile(ms_sorted, Fraction(99, 100))),
+                "max_ms": max(b["ms"]),
+            }
+        else:
+            timing_summary = {"count": 0, "total_ms": 0, "mean_ms": None, "p50_ms": None,
+                              "p99_ms": None, "max_ms": None}
+        rate = _num(Fraction(b["decision_cap_hits"], b["games"])) if b["games"] > 0 else None
+        return {
+            "games": b["games"],
+            "completed": b["completed"],
+            "halted": b["halted"],
+            "decision_cap_hits": b["decision_cap_hits"],
+            "decision_cap_hit_rate": rate,
+            "timing": timing_summary,
+        }
+
+    return {
+        "bands": {label: summarize(buckets[label]) for label, _, _ in BASICS_BANDS},
+        "all": summarize(all_bucket),
+    }
+
+
 def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
              sets: list[dict[str, Any]], *, a6_file: Path | bytes | None = None,
              peer_sets: list[dict[str, Any]] | None = None, expected_pilot: Any = None,
-             expected_picker: Any = None, expected_builders: dict[str, Any] | None = None) -> dict[str, Any]:
+             expected_picker: Any = None, expected_builders: dict[str, Any] | None = None,
+             d0_sha256: str | None = None) -> dict[str, Any]:
     """One read's report. `sets` are read_sets.open_plan_set results: one set, or for a gate's look 2
     the look-1 and look-2 sets. For dose and D13 the look is the mark ordinal (D13 may take one set
     per pilot)."""
@@ -802,7 +1142,12 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
                        "first": units.start, "end": units.stop}
     if level is not None:
         report["bootstrap"] = {"namespace": namespace, "resamples": resamples, "level": _num(level)}
-    report["games"] = _games(records)
+    scoped = _scoped_games(read, records)
+    report["games"] = _games_from_scoped(scoped)
+    a2_3, a2_1_warn = _halts_and_lengths(read, records, plans, scoped)
+    report["a2_3"] = a2_3
+    report["a2_1_warning"] = a2_1_warn
+    all_halted = report["games"]["played"] > 0 and report["games"]["completed"] == 0
 
     def block(stats: dict[str, Callable], unit_list: list[Any]) -> dict[str, dict[str, Any]]:
         series = {(name, sc): [fn(u, sc) for u in unit_list] for name, fn in stats.items() for sc in SCORINGS}
@@ -827,7 +1172,19 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         unit_list = units_one(records, units)
         stats = {"single_seat_edge": stat_edge}
     elif layout == "all":
-        report["verdict"] = None
+        report["denominators"] = {
+            "completion": {
+                "units_planned": len(units),
+                "units_defined": sum(any(g["scores"] is not None for g in records[i]["games"]) for i in units),
+                "units_omitted": sum(all(g["scores"] is None for g in records[i]["games"]) for i in units),
+                "games_planned": report["games"]["played"],
+                "games_completed": report["games"]["completed"],
+                "games_halted": report["games"]["halted"],
+            }
+        }
+        report["verdict"] = "void" if all_halted else None
+        if all_halted:
+            report["void"] = "all games halted"
         report["completion"] = {"games": report["games"],
                                 "mean_decisions_completed": _num(_mean([Fraction(g["attempts"][0]["decisions"])
                                                                         for r in records.values()
@@ -835,14 +1192,39 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
                                                                         if g["scores"] is not None]))}
         return report
     else:
-        return _read_d13(report, sets, units, namespace, resamples, level)
+        return _read_d13(report, sets, units, namespace, resamples, level, all_halted=all_halted)
 
     raw = block(stats, unit_list)
     report["statistics"] = {name: {sc: _render(raw[name][sc]) for sc in SCORINGS} for name in raw}
+    report["denominators"] = _denominators(read, layout, unit_list, raw, scoped)
     if layout in ("b", "c") and read != "dose":
         pools = [p for u in unit_list for p in (u if layout == "b" else [y for _, y in u] if read == "b_prime"
                                                 else [x + y for x, y in u])]
         report["pools"] = {"planned": len(pools), "empty": sum(all(w is None for w in p) for p in pools)}
+
+    if read == "dose":
+        if d0_sha256 is not None and not read_plans._is_sha(d0_sha256):
+            raise ReadError("d0_sha256 must be a sha256 hex digest")
+        if namespace == "dose-d8" and d0_sha256 is None:
+            raise ReadError("dose-d8 requires D0 provenance (d0_sha256)")
+        man0 = sets[0]["manifest"]
+        mark0 = next(iter(plans.values()))["mark"]
+        report["provenance"] = {
+            "label": "shakedown, under random play, provisional pins" if namespace in ("dose-d8", TEST) else "m5",
+            "d0_sha256": d0_sha256,
+            "panel_sha256": man0["panel_sha256"],
+            "panel_run": man0["run"],
+            "mark": mark0,
+            "panel_pairing_note": "marks on different panels are not paired",
+        }
+        if look == 0:
+            timing0 = sets[0].get("timing")
+            basic_ids0 = sets[0].get("basic_ids")
+            if timing0 is None:
+                raise ReadError("first dose (ordinal 0) requires timing side files exec-<e>/timing/pod-<pod_index>.jsonl")
+            if basic_ids0 is None:
+                raise ReadError("first dose (ordinal 0) requires pool basic land ids for basics bands")
+            report["first_dose_basics_bands"] = _dose_first_basics_bands(records, plans, timing0, basic_ids0)
 
     if read in GATES:
         primary = next(iter(stats))
@@ -855,6 +1237,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
             report["extension"] = {"fresh_units": [first + n0, first + 3 * n0], "pooled_units": 3 * n0}
     elif read == "aa":
         report["symmetry"] = aa_symmetry(records, units)
+        report["pair_by_row"] = _aa_pair_by_row(unit_list, units)
         zero = all(raw[name]["drop"]["estimate"] == 0 for name in raw)
         report["verdict"] = "symmetric" if report["symmetry"]["symmetric"] and zero else "failed"
         report["next"] = "symmetry receipt" if report["verdict"] == "symmetric" else "to the lead (A6.12)"
@@ -866,9 +1249,16 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         report["count"] = report["sizing"]["drop"]
         if read == "size_c":
             report["diagnostics"] = _c_diagnostics(unit_list)
-        report["verdict"] = None
+        report["verdict"] = "void" if all_halted else None
+        if all_halted:
+            report["void"] = "all games halted"
     else:
-        report["verdict"] = None
+        report["drop_interval_undefined"] = any(raw[name]["drop"]["interval"] is None for name in raw)
+        if all_halted:
+            report["verdict"] = "void"
+            report["void"] = "all games halted"
+        else:
+            report["verdict"] = None
     return report
 
 
@@ -893,22 +1283,44 @@ def _c_diagnostics(unit_list: list[list[tuple[list, list]]]) -> dict[str, Any]:
 
 
 def _read_d13(report: dict[str, Any], sets: list[dict[str, Any]], units: range, namespace: str, resamples: int,
-              level: Fraction) -> dict[str, Any]:
+              level: Fraction, *, all_halted: bool = False) -> dict[str, Any]:
     """D13: per contrast q, the mean of pool-opponent differences x minus y, draft-clustered, with
     both completions, per pilot set; and cross-pilot sign agreement on jointly defined differences."""
     per_pilot = []
     report["pilots"] = []
+    any_undef = False
     for s in sets:
         contrasts = {}
         diffs = {}
+        denoms = {}
         for q, kind, _, _ in read_plans.D13_CONTRASTS:
             unit_list = units_paired(s["records"], units, per_opponent=True, q=q)
             boot = bootstrap({sc: [stat_paired(u, sc) for u in unit_list] for sc in SCORINGS}, namespace,
                              resamples, level)
+            if boot["drop"]["interval"] is None:
+                any_undef = True
             contrasts[kind] = {sc: _render(boot[sc]) for sc in SCORINGS}
             diffs[q] = [stat_paired([p], "drop") for u in unit_list for p in u]
+            pools = [pair for u in unit_list for pair in u]
+            pools_def = sum(
+                (not all(w is None for w in x)) and (not all(w is None for w in y)) for x, y in pools
+            )
+            pools_empty = sum(all(w is None for w in x + y) for x, y in pools)
+            gp = sum(len(x) + len(y) for x, y in pools)
+            gc = sum(sum(w is not None for w in x + y) for x, y in pools)
+            denoms[kind] = {
+                "units_planned": len(unit_list),
+                "units_defined": boot["drop"]["units_defined"],
+                "units_omitted": len(unit_list) - boot["drop"]["units_defined"],
+                "pools_planned": len(pools),
+                "pools_complete": pools_def,
+                "pools_empty": pools_empty,
+                "games_planned": gp,
+                "games_completed": gc,
+                "games_halted": gp - gc,
+            }
         mark = next(iter(s["plans"].values()))["mark"]
-        report["pilots"].append({"mark": mark, "contrasts": contrasts})
+        report["pilots"].append({"mark": mark, "contrasts": contrasts, "denominators": denoms})
         per_pilot.append(diffs)
     agreement = []
     for a in range(len(per_pilot)):
@@ -918,7 +1330,12 @@ def _read_d13(report: dict[str, Any], sets: list[dict[str, Any]], units: range, 
                 same = sum((x > 0) - (x < 0) == (y > 0) - (y < 0) for x, y in pairs)
                 agreement.append({"pilots": [a, b], "contrast": kind, "same_sign": same, "jointly_defined": len(pairs)})
     report["agreement"] = agreement
-    report["verdict"] = None
+    report["drop_interval_undefined"] = any_undef
+    if all_halted:
+        report["verdict"] = "void"
+        report["void"] = "all games halted"
+    else:
+        report["verdict"] = None
     return report
 
 
@@ -939,6 +1356,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--peer-sets", nargs="+", type=Path,
                         help="peer (b)/(c) set directories for shared-prefix verification")
     parser.add_argument("--a6-file", type=Path, help="countersigned A6 declaration file (required for live reads)")
+    parser.add_argument("--d0-sha256", help="D0 declaration sha256 for dose-d8 provenance")
     parser.add_argument("--pool", type=Path)
     parser.add_argument("--constants", type=Path)
     parser.add_argument("--out", type=Path)
@@ -955,7 +1373,7 @@ def main(argv: list[str] | None = None) -> int:
                                           expected_pins=declaration.get("pins")) for d in args.peer_sets]
                  if args.peer_sets else None)
     text = serialize_report(run_read(declaration, decl_sha, args.read, args.look, sets,
-                                     a6_file=args.a6_file, peer_sets=peer_sets))
+                                     a6_file=args.a6_file, peer_sets=peer_sets, d0_sha256=args.d0_sha256))
     if args.out is None:
         sys.stdout.write(text)
     else:

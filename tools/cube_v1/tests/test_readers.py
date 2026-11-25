@@ -1249,6 +1249,124 @@ class PanelTests(unittest.TestCase):
                 read_sets.open_plan_set(set_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
                                         pinned_panel=digest)
 
+    def test_first_dose_timing_basics_bands_provenance_a23_and_wholly_halted_void(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = "fx-dose-provisional-d0"
+            stage1, outs = synth.write_prep_set(root, "dose_panel", "dose", f"{base}-prep-panel", range(0, 2), DECL_SHA)
+            man1 = read_sets.load_manifest(stage1)
+            panel = read_plans.assemble_panel("dose", "test", man1, 0, outs, pins=synth.PINS, builders=None,
+                                              **synth.DEALER)
+            panel_dir = root / "test" / "v1" / f"{base}-panel"
+            panel_dir.mkdir(parents=True)
+            text = read_plans.serialize(panel)
+            (panel_dir / "panel.json").write_text(text, encoding="utf-8", newline="\n")
+            digest = hashlib.sha256(text.encode()).hexdigest()
+
+            # Populate all 4 signed A6.17 basics bands across the 8 chairs (2 chairs = 16 games/pod per band).
+            chair_basics = {
+                (0, "current"): 10, (0, "initial"): 10, (1, "current"): 14, (1, "initial"): 14,  # 0-14
+                (2, "current"): 15, (2, "initial"): 15, (3, "current"): 19, (3, "initial"): 19,  # 15-19
+                (4, "current"): 20, (4, "initial"): 20, (5, "current"): 35, (5, "initial"): 35,  # 20-35
+                (6, "current"): 36, (6, "initial"): 36, (7, "current"): 40, (7, "initial"): 40,  # 36-40
+            }
+            _, pouts = synth.write_prep_set(root, "dose", "dose", f"{base}-prep-dose-0", range(0, 2), DECL_SHA,
+                                            panel_sha256=digest, basics_by_chair=chair_basics)
+            mark = {"kind": "dose", "label": "pods-512", "ordinal": 0}
+            plans = [synth.plan("dose", u, mark=mark, prep=pouts[u]) for u in range(2)]
+
+            # Band cap hits per pod: 0-14 gets 1 cap hit (game 0), 15-19 gets 0, 20-35 gets 2 (games 32,33),
+            # 36-40 gets 4 (games 48..51). Game 16 finishes with 9000 decisions (>8192 -> triggers a2_1_warning).
+            recs = {}
+            for p in plans:
+                rec = synth.record(p, lambda pl, gm, ps: (
+                    ("halt", {"kind": "decision_cap"}, 77, 16384)
+                    if gm["game"] in (0, 32, 33, 48, 49, 50, 51)
+                    else ("win" if gm["game"] % 2 == 0 else "draw")
+                ))
+                rec["games"][16]["attempts"][0]["decisions"] = 9000
+                recs[p["pod_index"]] = pod_record.validate_record(rec)
+
+            # Without timing side files, first dose (ordinal 0) must be refused.
+            no_timing_dir = synth.write_plan_set(
+                root, "dose", f"{base}-dose-0", plans, DECL_SHA,
+                executions=[{"records": recs, "timing": False}],
+                units=[0, 2], panel_sha256=digest, prep_set=f"test/v1/{base}-prep-dose-0/exec-0",
+            )
+            opened_no_t = read_sets.open_plan_set(no_timing_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                                  pinned_panel=digest)
+            with self.assertRaisesRegex(readers.ReadError, "timing side files"):
+                readers.run_read(decl_with(**{"dose.panel_sha256": digest}), DECL_SHA, "dose", 0, [opened_no_t])
+
+            # With timing side files (band-specific ms: 100, 200, 300, 400).
+            def band_ms(pod_index, game):
+                chair = game["game"] // 8
+                return (chair // 2 + 1) * 100
+
+            d0_sha = "a" * 64
+            with_timing_dir = synth.write_plan_set(
+                root, "dose", f"{base}-dose-0-restart-1", plans, DECL_SHA,
+                executions=[{"records": recs, "timing": band_ms}],
+                units=[0, 2], panel_sha256=digest, prep_set=f"test/v1/{base}-prep-dose-0/exec-0",
+            )
+            opened = read_sets.open_plan_set(with_timing_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                             pinned_panel=digest)
+            report = readers.run_read(decl_with(**{"dose.panel_sha256": digest}), DECL_SHA, "dose", 0, [opened],
+                                      d0_sha256=d0_sha)
+            self.assertIsNone(report["verdict"])
+            self.assertEqual(report["provenance"], {
+                "label": "shakedown, under random play, provisional pins",
+                "d0_sha256": d0_sha,
+                "panel_sha256": digest,
+                "panel_run": "v1",
+                "mark": mark,
+                "panel_pairing_note": "marks on different panels are not paired",
+            })
+            bands = report["first_dose_basics_bands"]["bands"]
+            self.assertEqual(list(bands.keys()), ["0-14", "15-19", "20-35", "36-40"])
+            for label, want_hits, want_ms in (("0-14", 2, 100), ("15-19", 0, 200),
+                                              ("20-35", 4, 300), ("36-40", 8, 400)):
+                b = bands[label]
+                self.assertEqual(b["games"], 32)
+                self.assertEqual(b["decision_cap_hits"], want_hits)
+                self.assertEqual(exact(b["decision_cap_hit_rate"]), F(want_hits, 32))
+                self.assertEqual(b["timing"]["count"], 32)
+                self.assertEqual(exact(b["timing"]["mean_ms"]), F(want_ms))
+                self.assertEqual(exact(b["timing"]["p50_ms"]), F(want_ms))
+                self.assertEqual(b["timing"]["max_ms"], want_ms)
+            self.assertEqual(report["denominators"]["current_minus_initial"], {
+                "units_planned": 2, "units_defined": 2, "units_omitted": 0,
+                "pools_planned": 16, "pools_complete": 16, "pools_empty": 0,
+                "games_planned": 128, "games_completed": 114, "games_halted": 14,
+            })
+            self.assertEqual(report["a2_3"]["by_stop_kind"], {"decision_cap": 14})
+            self.assertEqual(report["a2_3"]["by_card_charged"], {"77": 14})
+            self.assertEqual(report["a2_3"]["completed_over_8192"], 2)
+            self.assertTrue(report["a2_1_warning"])
+
+            # Corrupted timing side file (missing a game line) is refused by open_plan_set.
+            tpath = with_timing_dir / "exec-0" / "timing" / "pod-0.jsonl"
+            tlines = tpath.read_text(encoding="utf-8").splitlines()
+            tpath.write_text("\n".join(tlines[:-1]) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(read_sets.SetError, "timing/pod-0.jsonl"):
+                read_sets.open_plan_set(with_timing_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                        pinned_panel=digest)
+
+            # Wholly halted dose returns verdict 'void' (not None).
+            all_halt_recs = {p["pod_index"]: synth.record(p, lambda pl, gm, ps: "halt") for p in plans}
+            halt_dir = synth.write_plan_set(
+                root, "dose", f"{base}-dose-0-restart-2", plans, DECL_SHA,
+                executions=[{"records": all_halt_recs, "timing": band_ms}],
+                units=[0, 2], panel_sha256=digest, prep_set=f"test/v1/{base}-prep-dose-0/exec-0",
+            )
+            opened_h = read_sets.open_plan_set(halt_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                               pinned_panel=digest)
+            rep_h = readers.run_read(decl_with(**{"dose.panel_sha256": digest}), DECL_SHA, "dose", 0, [opened_h],
+                                     d0_sha256=d0_sha)
+            self.assertEqual((rep_h["verdict"], rep_h["void"]), ("void", "all games halted"))
+            self.assertTrue(rep_h["drop_interval_undefined"])
+            self.assertEqual(rep_h["games"], {"played": 128, "completed": 0, "halted": 128})
+
 
 # ---------------------------------------------------------------------------------------------
 # A6 statistics: reads (b), (c), (b')
@@ -1295,6 +1413,27 @@ class ReadCTests(unittest.TestCase):
             bprime = readers.run_read(DECL, DECL_SHA, "b_prime", 1, opened[:1])
             self.assertEqual([estimate(bprime, "stated_score", s) for s in readers.SCORINGS], [F(1, 2)] * 3)
             self.assertIsNone(bprime["verdict"])
+            # (b') top-level denominator counts only stated-arm games (32 per draft = 64, not 128).
+            self.assertEqual(bprime["games"], {"played": 64, "completed": 64, "halted": 0})
+            self.assertEqual(bprime["denominators"]["stated_score"], {
+                "units_planned": 2, "units_defined": 2, "units_omitted": 0,
+                "pools_planned": 16, "pools_complete": 16, "pools_empty": 0,
+                "games_planned": 64, "games_completed": 64, "games_halted": 0,
+            })
+            self.assertEqual(list(bprime["a2_3"]["by_arm"].keys()), ["stated"])
+
+    def test_b_prime_wholly_halted_stated_arm_is_void(self):
+        # Even when all candidate-arm games complete, all stated-arm games halting makes (b') void.
+        def outcome(p, g, pos):
+            return "halt" if g["game"] % 2 == 1 else "win"
+        with tempfile.TemporaryDirectory() as tmp:
+            opened = c_sets(Path(tmp), "edge-all-halted", outcome)
+            bprime = readers.run_read(DECL, DECL_SHA, "b_prime", 1, opened)
+            self.assertEqual((bprime["verdict"], bprime["void"]), ("void", "all games halted"))
+            self.assertTrue(bprime["drop_interval_undefined"])
+            self.assertEqual(bprime["games"], {"played": 64, "completed": 0, "halted": 64})
+            self.assertEqual(bprime["denominators"]["stated_score"]["games_planned"], 64)
+            self.assertEqual(bprime["denominators"]["stated_score"]["games_halted"], 64)
 
     def test_stated_halt_reverse_sign_disposition(self):
         """The reverse-sign fixture (A6.20, (c)): a stated-arm halt. The completions swap sides (a
@@ -1420,6 +1559,22 @@ class AATests(unittest.TestCase):
         for name in ("candidate_edge", "stated_edge", "interaction"):
             self.assertEqual(estimate(report, name), F(0))
             self.assertEqual(interval(report, name), [F(0), F(0)])
+        # A6.12 pair-by-row completions: pair 0 has 2 halted candidate-row games (game 4 in both mirrors).
+        self.assertEqual(len(report["pair_by_row"]), 4)
+        p0 = report["pair_by_row"][0]
+        self.assertEqual(p0["pair"], 0)
+        self.assertEqual((p0["candidate"]["games_planned"], p0["candidate"]["games_completed"],
+                          p0["candidate"]["games_halted"]), (32, 30, 2))
+        self.assertEqual([exact(p0["candidate"][s]) for s in readers.SCORINGS], [F(0), F(-1, 16), F(1, 16)])
+        self.assertEqual((p0["stated"]["games_planned"], p0["stated"]["games_completed"],
+                          p0["stated"]["games_halted"]), (32, 32, 0))
+        self.assertEqual([exact(p0["stated"][s]) for s in readers.SCORINGS], [F(0), F(0), F(0)])
+        self.assertEqual([exact(p0["interaction"][s]) for s in readers.SCORINGS], [F(0), F(-1, 16), F(1, 16)])
+        for idx in (1, 2, 3):
+            row = report["pair_by_row"][idx]
+            self.assertEqual(row["pair"], idx)
+            self.assertEqual(row["candidate"]["games_completed"], 32)
+            self.assertEqual([exact(row["candidate"][s]) for s in readers.SCORINGS], [F(0), F(0), F(0)])
 
     def test_unmirrored_halt_or_mismatched_halt_fails(self):
         report = self._read(self.symmetric(halt_in=(1,)), "unmirrored")
@@ -1699,7 +1854,7 @@ class DeterminismTests(unittest.TestCase):
             self.assertEqual(json.loads(outs[0])["verdict"], "win")
 
 
-REPORT_GOLDEN_SHA256 = "a454eb65d2a881117b89d60cc154752c8030c345cbcb36850bf80ea590ba942b"
+REPORT_GOLDEN_SHA256 = "fc0de35729ed279d8c255aad456b508dbd0d6143e840a6ab5179f2097c8d9026"
 
 
 class UniformPodRecordTests(unittest.TestCase):

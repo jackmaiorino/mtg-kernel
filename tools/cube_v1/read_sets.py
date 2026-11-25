@@ -28,6 +28,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import deal  # noqa: E402
 import pod_record  # noqa: E402
 import read_plans  # noqa: E402
 
@@ -576,6 +577,61 @@ def check_prep_dose_set(set_dir: Path, pinned_panel: str, *, pool: tuple[Any, st
     return accepted
 
 
+TIMING_KEYS = ("game", "attempt", "elapsed_ms", "host")
+
+
+def load_timing_side_files(set_dir: Path, execution: int, records: dict[int, dict[str, Any]]
+                           ) -> dict[int, dict[int, dict[str, Any]]] | None:
+    """Load and validate exec-<e>/timing/pod-<pod_index>.jsonl side files (READ-PLAN-v1 section 5).
+    Returns None when the timing directory is absent; raises SetError on malformed or incomplete files."""
+    timing_dir = Path(set_dir) / f"exec-{execution}" / "timing"
+    if not timing_dir.exists():
+        return None
+    if not timing_dir.is_dir():
+        raise SetError(f"{timing_dir} is not a directory")
+    out: dict[int, dict[int, dict[str, Any]]] = {}
+    for pod_index, rec in sorted(records.items()):
+        path = timing_dir / f"pod-{pod_index}.jsonl"
+        if not path.exists():
+            raise SetError(f"missing timing side file {path.name}")
+        per_game: dict[int, dict[str, Any]] = {}
+        try:
+            lines = path.read_bytes().decode("utf-8").splitlines()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise SetError(f"timing/{path.name} is unreadable: {exc}") from exc
+        for lineno, raw in enumerate(lines, 1):
+            if not raw.strip():
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise SetError(f"timing/{path.name}:{lineno} is not valid JSON: {exc}") from exc
+            if not isinstance(entry, dict) or tuple(entry.keys()) != TIMING_KEYS:
+                raise SetError(f"timing/{path.name}:{lineno} must have keys {TIMING_KEYS}")
+            game = entry["game"]
+            attempt = entry["attempt"]
+            elapsed_ms = entry["elapsed_ms"]
+            host = entry["host"]
+            if type(game) is not int or not (0 <= game <= pod_record.U32):
+                raise SetError(f"timing/{path.name}:{lineno}: game must be a u32")
+            if type(attempt) is not int or attempt != 0:
+                raise SetError(f"timing/{path.name}:{lineno}: read attempt must be 0")
+            if type(elapsed_ms) is not int or not (0 <= elapsed_ms <= pod_record.U64):
+                raise SetError(f"timing/{path.name}:{lineno}: elapsed_ms must be a u64")
+            if not isinstance(host, str) or not host:
+                raise SetError(f"timing/{path.name}:{lineno}: host must be a non-empty string")
+            if game in per_game:
+                raise SetError(f"timing/{path.name}:{lineno}: duplicate timing entry for game {game}")
+            per_game[game] = entry
+        expected_games = {g["game"] for g in rec["games"]}
+        if set(per_game) != expected_games:
+            raise SetError(
+                f"timing/{path.name} covers games {sorted(per_game)}, expected {sorted(expected_games)}"
+            )
+        out[pod_index] = per_game
+    return out
+
+
 def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] | None = None,
                   constants: tuple[Any, str] | None = None, pinned_panel: str | None = None,
                   card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None,
@@ -653,5 +709,14 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
             if a and b and (a["draft"]["pools"] != b["draft"]["pools"]
                             or [d["cards"] for d in a["decks"]] != [d["cards"] for d in b["decks"]]):
                 raise SetError(f"A/A pair {unit}: mirrors differ in pools or decks (A6.12)")
+    timing = (
+        load_timing_side_files(set_dir, chosen["execution"], chosen["records"])
+        if chosen["execution"] is not None else None
+    )
+    basic_ids = (
+        sorted(deal.validate_pool(pool[0])["basic_id_by_color"].values())
+        if pool is not None else None
+    )
     return {"manifest": man, "plans": checked, "execution": chosen["execution"], "records": chosen["records"],
-            "expired": chosen["expired"], "void": chosen["void"], "set_dir": set_dir}
+            "expired": chosen["expired"], "void": chosen["void"], "set_dir": set_dir,
+            "timing": timing, "basic_ids": basic_ids}

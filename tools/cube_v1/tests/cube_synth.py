@@ -76,22 +76,27 @@ def draft_record(draft_seed: int, pools: list[list[int]] | None = None) -> dict[
 ROW_VARIANT = {"candidate": 0, "current": 0, "b1_last": 0, "k1_last": 2, "initial": 3, "stated": 1}
 
 
-def build_from_pool(pool: list[int], row: str) -> list[int]:
-    """A 40-card deck of a pool: 23 nonbasic cards and 17 basics, varied by builder row."""
+def build_from_pool(pool: list[int], row: str, *, basics_count: int = 17) -> list[int]:
+    """A 40-card deck of a pool: (40 - basics_count) nonbasic cards and basics_count basics."""
     v = ROW_VARIANT[row]
     nonbasic = sorted(pool)
-    chosen = nonbasic[v: v + 23]
-    basics = [BASIC_BASE + (v % 5)] * 9 + [BASIC_BASE + ((v + 1) % 5)] * 8
+    nonbasic_n = 40 - basics_count
+    chosen = nonbasic[v: v + nonbasic_n]
+    first_n = (basics_count + 1) // 2
+    second_n = basics_count - first_n
+    basics = [BASIC_BASE + (v % 5)] * first_n + [BASIC_BASE + ((v + 1) % 5)] * second_n
     return sorted(chosen + basics)
 
 
-def prep_result(request: dict[str, Any], request_sha: str) -> dict[str, Any]:
+def prep_result(request: dict[str, Any], request_sha: str, *,
+                basics_by_chair: dict[tuple[int, str], int] | None = None) -> dict[str, Any]:
     draft = draft_record(request["seeds"]["draft_seed"])
     builds = []
     for b in request["builds"]:
         b_seed = None if b["row"] == "stated" else seeds_v1.build_seed(draft["draft_seed"], b["chair"], b["build"])
+        bc = 17 if basics_by_chair is None else basics_by_chair.get((b["chair"], b["row"]), 17)
         builds.append({**b, "build_seed": b_seed,
-                       "cards": build_from_pool(draft["pools"][b["chair"]], b["row"])})
+                       "cards": build_from_pool(draft["pools"][b["chair"]], b["row"], basics_count=bc)})
     return {"schema": read_plans.PLAN_SCHEMA, "kind": "prep_result", "request_sha256": request_sha,
             "draft": draft, "builds": builds}
 
@@ -149,10 +154,11 @@ def prep_request(prep_family: str, unit: int, *, pins: dict[str, Any] | None = N
 
 
 def prep_for(prep_family: str, unit: int, *, pins: dict[str, Any] | None = None,
-             picker: Any = ..., builders: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, dict[str, Any], str]:
+             picker: Any = ..., builders: dict[str, Any] | None = None,
+             basics_by_chair: dict[tuple[int, str], int] | None = None) -> tuple[dict[str, Any], str, dict[str, Any], str]:
     request = prep_request(prep_family, unit, pins=pins, picker=picker, builders=builders)
     req_sha = read_plans.doc_sha256(request)
-    result = prep_result(request, req_sha)
+    result = prep_result(request, req_sha, basics_by_chair=basics_by_chair)
     return request, req_sha, result, read_plans.doc_sha256(result)
 
 
@@ -262,13 +268,15 @@ def write_prep_set(root: Path, prep_family: str, manifest_family: str, set_name:
                    *, executions: list[dict[str, Any]] | None = None, reserved: list[int] | None = None,
                    panel_sha256: str | None = None, replaces: str | None = None,
                    retired: list[list[int]] | None = None, pins: dict[str, Any] | None = None,
-                   picker: Any = ..., builders: dict[str, Any] | None = None
+                   picker: Any = ..., builders: dict[str, Any] | None = None,
+                   basics_by_chair: dict[tuple[int, str], int] | None = None
                    ) -> tuple[Path, dict[int, tuple[dict[str, Any], str]]]:
     """A prep set with requests and executions. Each execution spec: {"ended", "units" (with markers),
     "receipt" (bool), "tamper" (unit -> callable on the result)}. Default: one complete execution."""
     requests, results = {}, {}
     for u in units:
-        request, req_sha, result, res_sha = prep_for(prep_family, u, pins=pins, picker=picker, builders=builders)
+        request, req_sha, result, res_sha = prep_for(prep_family, u, pins=pins, picker=picker, builders=builders,
+                                                     basics_by_chair=basics_by_chair)
         requests[u], results[u] = (request, req_sha), (result, res_sha)
     man = read_plans.build_manifest("prep", manifest_family, NS, set_name, decl_sha,
                                     [(u, requests[u][1]) for u in units], units=[units.start, units.stop],
@@ -334,6 +342,21 @@ def write_plan_set(root: Path, family: str, set_name: str, plans: list[dict[str,
             (exec_dir / "records" / f"pod-{i}.json").write_bytes(text.encode())
             listed.append({"pod_index": i, "sha256": hashlib.sha256(text.encode()).hexdigest(),
                            "status": rec["status"]})
+        timing_spec = spec.get("timing", True if family == "dose" else None)
+        if timing_spec:
+            (exec_dir / "timing").mkdir(parents=True, exist_ok=True)
+            for i, rec in sorted(spec["records"].items()):
+                lines = []
+                for g in rec["games"]:
+                    if callable(timing_spec):
+                        ms = timing_spec(i, g)
+                    elif isinstance(timing_spec, dict):
+                        ms = timing_spec.get((i, g["game"]), 100)
+                    else:
+                        ms = 100 + g["game"]
+                    lines.append(json.dumps({"game": g["game"], "attempt": 0, "elapsed_ms": ms,
+                                             "host": "fixture-host"}, separators=(",", ":")))
+                (exec_dir / "timing" / f"pod-{i}.jsonl").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
         receipt = {"execution": e, "plan_set_sha256": man["plan_set_sha256"], "binary": BINARY,
                    "platform": PLATFORM, "ended": spec.get("ended", "complete"), "records": listed}
         (exec_dir / "execution.json").write_bytes(read_plans.serialize(receipt).encode())
