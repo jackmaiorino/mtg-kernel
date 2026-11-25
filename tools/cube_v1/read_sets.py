@@ -746,11 +746,21 @@ def verify_d8_v3_against_root(root: Path, man: dict[str, Any], *,
                 f"{ns}/{man['run']}/{man['set']}: D0.3b shakedown manifest does not authorize "
                 f"restart run {ns}/{man['run']}"
             )
+        if man["declaration_sha256"] != restart_auth["a6_part2_sha256"]:
+            raise SetError(
+                f"{ns}/{man['run']}/{man['set']}: declaration_sha256 {man['declaration_sha256']!r} differs from "
+                f"authorized a6_part2_sha256 {restart_auth['a6_part2_sha256']!r} in D0.3b shakedown manifest"
+            )
         if man["replaces"] is not None:
             if restart_auth["replaces"].get(man["set"]) != man["replaces"]:
                 raise SetError(
                     f"{ns}/{man['run']}/{man['set']}: D0.3b shakedown manifest does not authorize "
                     f"replacing {man['replaces']!r} with {man['set']!r} in {ns}/{man['run']}"
+                )
+            if restart_auth["retired"].get(man["set"]) != man["retired"]:
+                raise SetError(
+                    f"{ns}/{man['run']}/{man['set']}: retired {man['retired']} differs from D0.3b "
+                    f"shakedown manifest authorized retired {restart_auth['retired'].get(man['set'])}"
                 )
 
     earlier_hwm = 0
@@ -786,7 +796,7 @@ def verify_d8_v3_against_root(root: Path, man: dict[str, Any], *,
     if man["replaces"] is None:
         if ns == "dose-d8" and n >= 2 and man["set"] != "prep-panel":
             base_name, _ = _set_base_and_k(man["set"])
-            is_full_restart = restart_auth is not None and restart_auth.get("restart_kind") == "full_shakedown_restart"
+            is_full_restart = restart_auth is not None and restart_auth.get("restart_kind") == "amendment"
             for _, prev_dir, prev_man in earlier_sets:
                 prev_base, _ = _set_base_and_k(prev_man["set"])
                 if prev_man["kind"] == man["kind"] and prev_base == base_name:
@@ -861,25 +871,156 @@ def verify_d8_v3_against_root(root: Path, man: dict[str, Any], *,
         )
 
 
-RESTART_KINDS = ("dose_only_same_build", "full_shakedown_restart", "aa_restart")
+RESTART_KINDS = ("amendment", "note")
+MANIFEST_ENTRY_HEADING_RE = re.compile(r"^## Entry ([1-9]\d*): ([A-Za-z0-9_-]+)[ \t]*\r?$")
+MANIFEST_TIME_ET_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ET$")
+MANIFEST_FENCE_OPEN_RE = re.compile(r"^```([^\r\n]*)\r?$")
+MANIFEST_FENCE_CLOSE_RE = re.compile(r"^```[ \t]*\r?$")
+
+
+def _parse_shakedown_manifest_entries(raw: bytes) -> list[dict[str, Any]]:
+    """Parse structured `## Entry <seq>: <kind>` fenced-json blocks per SHAKEDOWN-MANIFEST-FORMAT.md.
+    Prose, non-Entry headings and proposals are commentary and are never parsed as entries.
+    Validates seq continuity (1..k without gaps/duplicates), heading/block kind agreement,
+    time_et format, files map, and exact prefix_sha256 over raw manifest bytes before each heading."""
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SetError(f"shakedown manifest is not valid UTF-8: {exc}") from exc
+
+    raw_lines = raw.splitlines(keepends=True)
+    # Track exact byte offset of every line and locate top-level level-2 headings outside fences.
+    line_offsets: list[int] = []
+    pos = 0
+    for ln in raw_lines:
+        line_offsets.append(pos)
+        pos += len(ln)
+
+    headings: list[tuple[int, int, str]] = []
+    in_fence = False
+    for idx, raw_ln in enumerate(raw_lines):
+        ln = raw_ln.decode("utf-8").rstrip("\n")
+        if in_fence:
+            if MANIFEST_FENCE_CLOSE_RE.match(ln):
+                in_fence = False
+            continue
+        if MANIFEST_FENCE_OPEN_RE.match(ln):
+            in_fence = True
+            continue
+        if ln.startswith("## "):
+            headings.append((idx, line_offsets[idx], ln))
+    if in_fence:
+        raise SetError("shakedown manifest contains an unclosed fenced code block")
+
+    parsed: list[dict[str, Any]] = []
+    for h_pos, (line_idx, byte_off, h_line) in enumerate(headings):
+        if not (h_line == "## Entry" or h_line.startswith("## Entry ") or h_line.startswith("## Entry:")):
+            # Non-entry heading (commentary, proposal, notes): never parsed as authorization.
+            continue
+        hm = MANIFEST_ENTRY_HEADING_RE.match(h_line)
+        if hm is None:
+            raise SetError(f"malformed shakedown manifest entry heading: {h_line!r}")
+        heading_seq = int(hm.group(1))
+        heading_kind = hm.group(2)
+
+        next_line_idx = headings[h_pos + 1][0] if h_pos + 1 < len(headings) else len(raw_lines)
+        body_lines = [raw_lines[i].decode("utf-8") for i in range(line_idx + 1, next_line_idx)]
+        json_blocks: list[str] = []
+        block_fence_open = False
+        block_tag = ""
+        block_buf: list[str] = []
+        for bln in body_lines:
+            bln_no_nl = bln.rstrip("\n")
+            if not block_fence_open:
+                fm = MANIFEST_FENCE_OPEN_RE.match(bln_no_nl)
+                if fm is not None:
+                    block_fence_open = True
+                    block_tag = fm.group(1).strip()
+                    block_buf = []
+            else:
+                if MANIFEST_FENCE_CLOSE_RE.match(bln_no_nl):
+                    if block_tag == "json":
+                        json_blocks.append("".join(block_buf))
+                    block_fence_open = False
+                    block_tag = ""
+                    block_buf = []
+                else:
+                    block_buf.append(bln)
+        if block_fence_open:
+            raise SetError(f"shakedown manifest entry {heading_seq} has an unclosed fenced block")
+        if len(json_blocks) != 1:
+            raise SetError(
+                f"shakedown manifest entry {heading_seq} must contain exactly one fenced json block, "
+                f"found {len(json_blocks)}"
+            )
+        try:
+            entry = json.loads(json_blocks[0])
+        except json.JSONDecodeError as exc:
+            raise SetError(f"shakedown manifest entry {heading_seq} has invalid JSON: {exc}") from exc
+        if not isinstance(entry, dict):
+            raise SetError(f"shakedown manifest entry {heading_seq} JSON block must be an object")
+
+        seq = entry.get("seq")
+        if type(seq) is not int or seq != heading_seq:
+            raise SetError(
+                f"shakedown manifest entry {heading_seq} JSON seq {seq!r} does not match heading"
+            )
+        expected_seq = len(parsed) + 1
+        if seq != expected_seq:
+            raise SetError(
+                f"shakedown manifest seq discontinuity: expected {expected_seq}, got {seq}"
+            )
+        kind = entry.get("kind")
+        if not isinstance(kind, str) or kind != heading_kind:
+            raise SetError(
+                f"shakedown manifest entry {seq} JSON kind {kind!r} does not match heading {heading_kind!r}"
+            )
+        time_et = entry.get("time_et")
+        if not isinstance(time_et, str) or not MANIFEST_TIME_ET_RE.fullmatch(time_et):
+            raise SetError(f"shakedown manifest entry {seq} has invalid time_et {time_et!r}")
+        prefix_sha = entry.get("prefix_sha256")
+        expected_prefix = hashlib.sha256(raw[:byte_off]).hexdigest()
+        if not read_plans._is_sha(prefix_sha) or prefix_sha != expected_prefix:
+            raise SetError(
+                f"shakedown manifest entry {seq} prefix_sha256 {prefix_sha!r} differs from "
+                f"manifest prefix {expected_prefix}"
+            )
+        files = entry.get("files")
+        if not isinstance(files, dict):
+            raise SetError(f"shakedown manifest entry {seq} must carry a 'files' object")
+        for fpath, fsha in files.items():
+            if not isinstance(fpath, str) or not fpath or not read_plans._is_sha(fsha):
+                raise SetError(
+                    f"shakedown manifest entry {seq} has invalid files entry {fpath!r}: {fsha!r}"
+                )
+        parsed.append(entry)
+
+    if not parsed:
+        raise SetError("shakedown manifest contains no structured '## Entry <seq>: <kind>' entries")
+    return parsed
 
 
 def load_shakedown_manifest(manifest: Path | bytes, expected_sha256: str) -> dict[str, Any]:
-    """Q2.4 & New 2: Verify the shakedown manifest (D0.3b) against its pinned sha256 BEFORE trusting
-    any panel digest or restart authorization inside it. Returns:
-      {"panels": {run: panel_sha256}, "restarts": {(ns, run): {"restart_kind": ..., "replaces": {set: pred}}}}."""
+    """Q2.4 & R3: Verify the shakedown manifest (D0.3b, SHAKEDOWN-MANIFEST-FORMAT.md) against its
+    pinned sha256 BEFORE trusting any panel digest or restart authorization inside it. Only structured
+    fenced json blocks under `## Entry <seq>: <kind>` are read; prose never counts as authorization."""
     if not read_plans._is_sha(expected_sha256):
         raise SetError("shakedown manifest D0.3b pin must be a 64-char hex sha256")
-    raw = manifest if isinstance(manifest, (bytes, bytearray)) else Path(manifest).read_bytes()
+    manifest_dir: Path | None
+    if isinstance(manifest, (bytes, bytearray)):
+        raw = bytes(manifest)
+        manifest_dir = None
+    else:
+        mpath = Path(manifest)
+        raw = mpath.read_bytes()
+        manifest_dir = mpath.resolve().parent
     actual_sha = hashlib.sha256(raw).hexdigest()
     if actual_sha != expected_sha256:
         raise SetError(
             f"shakedown manifest sha256 {actual_sha} differs from D0.3b pin {expected_sha256}"
         )
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise SetError(f"shakedown manifest is not valid UTF-8: {exc}") from exc
+
+    entries = _parse_shakedown_manifest_entries(raw)
     panels: dict[str, str] = {}
     restarts: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -889,108 +1030,156 @@ def load_shakedown_manifest(manifest: Path | bytes, expected_sha256: str) -> dic
         except read_plans.PlanError as exc:
             raise SetError(f"shakedown manifest invalid dose-d8 run {run!r}: {exc}") from exc
         if not read_plans._is_sha(digest):
-            raise SetError(f"shakedown manifest invalid panel_sha256 for {run}: {digest!r}")
+            raise SetError(f"shakedown manifest invalid panel sha256 for {run}: {digest!r}")
         if run in panels and panels[run] != digest:
             raise SetError(f"shakedown manifest records conflicting panel digests for dose-d8 {run}")
         panels[run] = digest
 
-    def record_restart(ns: str, run: str, restart_kind: str | None = None,
-                       replaces_map: dict[str, str] | None = None) -> None:
-        if ns not in read_plans.D8_RESTART_NAMESPACES:
-            raise SetError(f"shakedown manifest invalid restart namespace {ns!r}")
-        try:
-            read_plans.check_run(ns, run)
-        except read_plans.PlanError as exc:
-            raise SetError(f"shakedown manifest invalid run {run!r} for {ns}: {exc}") from exc
-        if read_plans.run_number(run) < 2:
-            raise SetError(f"shakedown manifest restart run must be v2 or later, got {run!r}")
-        default_kind = "aa_restart" if ns == "read-d8-aa" else "dose_only_same_build"
-        kind = default_kind if restart_kind is None else restart_kind
-        if kind not in RESTART_KINDS:
-            raise SetError(f"shakedown manifest unknown restart_kind {kind!r}")
-        key = (ns, run)
-        slot = restarts.setdefault(key, {"restart_kind": kind, "replaces": {}})
-        if restart_kind is not None and slot["restart_kind"] != kind:
-            raise SetError(f"shakedown manifest conflicting restart_kind for {ns}/{run}")
-        for new_set, pred_ref in (replaces_map or {}).items():
-            if not isinstance(new_set, str) or not isinstance(pred_ref, str) or "/" not in pred_ref:
-                raise SetError(f"shakedown manifest invalid replaces entry {new_set!r}: {pred_ref!r}")
-            if new_set in slot["replaces"] and slot["replaces"][new_set] != pred_ref:
-                raise SetError(f"shakedown manifest conflicting replaces for {ns}/{run}/{new_set}")
-            slot["replaces"][new_set] = pred_ref
-
-    stripped = text.lstrip()
-    if stripped.startswith("{"):
-        try:
-            doc = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise SetError(f"shakedown manifest JSON error: {exc}") from exc
-        if not isinstance(doc, dict):
-            raise SetError("shakedown manifest JSON must be an object")
-        if isinstance(doc.get("dose_panels"), dict):
-            for run, digest in doc["dose_panels"].items():
-                record_panel(run, digest)
-        raw_restarts = doc.get("restarts")
-        if isinstance(raw_restarts, list):
-            for entry in raw_restarts:
-                if not isinstance(entry, dict):
-                    raise SetError("shakedown manifest restarts entries must be objects")
-                rep = entry.get("replaces")
-                rep_map = dict(rep) if isinstance(rep, dict) else {}
-                record_restart(entry["namespace"], entry["run"], entry.get("restart_kind"), rep_map)
-        elif isinstance(raw_restarts, dict):
-            for k, entry in raw_restarts.items():
-                if not isinstance(entry, dict):
-                    raise SetError("shakedown manifest restarts values must be objects")
-                ns = entry.get("namespace") or (k.split("/", 1)[0] if "/" in k else "dose-d8")
-                run = entry.get("run") or (k.split("/", 1)[1] if "/" in k else k)
-                rep = entry.get("replaces")
-                rep_map = dict(rep) if isinstance(rep, dict) else {}
-                record_restart(ns, run, entry.get("restart_kind"), rep_map)
-        for entry in doc.get("entries", []):
-            if not isinstance(entry, dict):
-                continue
-            ns = entry.get("namespace", "dose-d8")
+    for entry in entries:
+        seq = entry["seq"]
+        kind = entry["kind"]
+        if kind == "panel":
+            p_obj = entry.get("panel")
+            if isinstance(p_obj, dict):
+                prun = p_obj.get("run")
+                psha = p_obj.get("sha256")
+                if not isinstance(prun, str) or not isinstance(psha, str):
+                    raise SetError(f"shakedown manifest panel entry {seq} has invalid panel object")
+                record_panel(prun, psha)
+            elif "run" in entry and ("panel_sha256" in entry or "sha256" in entry):
+                record_panel(entry["run"], entry.get("panel_sha256") or entry.get("sha256"))
+            else:
+                raise SetError(f"shakedown manifest panel entry {seq} lacks panel run and sha256")
+        elif kind == "restart":
             run = entry.get("run")
-            if ns == "dose-d8" and "panel_sha256" in entry and run is not None:
-                record_panel(run, entry["panel_sha256"])
-            if entry.get("kind") == "restart" and run is not None:
-                rep = entry.get("replaces")
-                if isinstance(rep, dict):
-                    rep_map = dict(rep)
-                elif isinstance(rep, list):
-                    rep_map = {item["set"]: item["replaces"] for item in rep if isinstance(item, dict)}
-                else:
-                    rep_map = {}
-                record_restart(ns, run, entry.get("restart_kind"), rep_map)
-    else:
-        # Markdown SHAKEDOWN-MANIFEST.md format (D0.3b entries 3 and 8).
-        for block in re.split(r"(?m)^(?=#{1,6}\s)", text):
-            ns_found = [ns for ns in read_plans.D8_RESTART_NAMESPACES if ns in block]
-            if not ns_found:
-                continue
-            rm = re.search(r"\brun\s*[:=]?\s*`?(v[1-9]\d*)`?", block, re.IGNORECASE)
-            if not rm:
-                continue
-            run = rm.group(1)
-            if "dose-d8" in ns_found:
-                pm = re.search(r"panel(?:\.json|_sha256|\s+digest)(?:\s+sha256)?[\s:=`]*([0-9a-f]{64})", block, re.IGNORECASE)
-                if pm:
-                    record_panel(run, pm.group(1))
-            if read_plans.run_number(run) >= 2 and re.search(r"\brestart\b|\breplaces\b", block, re.IGNORECASE):
-                ns = ns_found[0]
-                km = re.search(r"\b(full_shakedown_restart|dose_only_same_build|aa_restart)\b", block)
-                rkind = km.group(1) if km else None
-                rep_map: dict[str, str] = {}
-                for m in re.finditer(
-                    r"`?([a-z0-9-]+-restart-[1-9]\d*)`?\s*(?:replaces|->|=)\s*`?(v[1-9]\d*/[a-z0-9-]+)`?",
-                    block,
-                ):
-                    rep_map[m.group(1)] = m.group(2)
-                record_restart(ns, run, rkind, rep_map)
-    if not panels and not restarts:
-        raise SetError("shakedown manifest records no dose-d8 panel digest or restart authorization")
-    return {"panels": panels, "restarts": restarts}
+            if not isinstance(run, str) or not read_plans.RUN_RE.fullmatch(run) or read_plans.run_number(run) < 2:
+                raise SetError(f"shakedown manifest restart entry {seq} requires run v2 or later, got {run!r}")
+            rkind = entry.get("restart_kind")
+            if rkind not in RESTART_KINDS:
+                raise SetError(
+                    f"shakedown manifest restart entry {seq} restart_kind must be 'amendment' or 'note', got {rkind!r}"
+                )
+            note_path = entry.get("note_path")
+            note_sha = entry.get("note_sha256")
+            sig_line = entry.get("signature_line")
+            a6_part2_sha = entry.get("a6_part2_sha256")
+            if not isinstance(note_path, str) or not note_path:
+                raise SetError(f"shakedown manifest restart entry {seq} requires non-empty note_path")
+            if not read_plans._is_sha(note_sha):
+                raise SetError(f"shakedown manifest restart entry {seq} requires valid note_sha256")
+            if (not isinstance(sig_line, str) or not sig_line or "\n" in sig_line or "\r" in sig_line
+                    or not sig_line.startswith("Research lead,")):
+                raise SetError(
+                    f"shakedown manifest restart entry {seq} signature_line must be a single non-empty line "
+                    f"starting with 'Research lead,', got {sig_line!r}"
+                )
+            if not read_plans._is_sha(a6_part2_sha):
+                raise SetError(f"shakedown manifest restart entry {seq} requires valid a6_part2_sha256")
+
+            note_p = Path(note_path)
+            if not note_p.is_absolute() and manifest_dir is not None:
+                note_p = manifest_dir / note_p
+            if not note_p.is_file():
+                raise SetError(f"shakedown manifest restart entry {seq} note_path {note_path!r} does not exist")
+            note_raw = note_p.read_bytes()
+            actual_note_sha = hashlib.sha256(note_raw).hexdigest()
+            if actual_note_sha != note_sha:
+                raise SetError(
+                    f"shakedown manifest restart entry {seq} note_path sha256 {actual_note_sha} "
+                    f"differs from note_sha256 {note_sha}"
+                )
+            try:
+                note_text = note_raw.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise SetError(f"shakedown manifest restart entry {seq} note file is not UTF-8: {exc}") from exc
+            if sig_line not in note_text.replace("\r\n", "\n").splitlines():
+                raise SetError(
+                    f"shakedown manifest restart entry {seq} signature_line does not appear verbatim in {note_path!r}"
+                )
+
+            panel_obj = entry.get("panel")
+            auth_namespaces: set[str] = set()
+            if panel_obj is not None:
+                if not isinstance(panel_obj, dict) or panel_obj.get("run") != run or not read_plans._is_sha(panel_obj.get("sha256")):
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq} panel must be null or {{run: {run!r}, sha256: <sha>}}"
+                    )
+                record_panel(run, panel_obj["sha256"])
+                auth_namespaces.add("dose-d8")
+
+            raw_ns = entry.get("namespaces")
+            if raw_ns is not None:
+                if not isinstance(raw_ns, list) or any(ns not in read_plans.D8_RESTART_NAMESPACES for ns in raw_ns):
+                    raise SetError(f"shakedown manifest restart entry {seq} has invalid namespaces {raw_ns!r}")
+                auth_namespaces.update(raw_ns)
+
+            replacements = entry.get("replacements")
+            if not isinstance(replacements, list):
+                raise SetError(f"shakedown manifest restart entry {seq} requires a 'replacements' list")
+            rep_by_ns: dict[str, dict[str, str]] = {}
+            ret_by_ns: dict[str, dict[str, list[list[int]]]] = {}
+            for r_idx, rep in enumerate(replacements):
+                if not isinstance(rep, dict):
+                    raise SetError(f"shakedown manifest restart entry {seq} replacements[{r_idx}] must be an object")
+                r_ns = rep.get("namespace")
+                r_set = rep.get("set")
+                r_pred = rep.get("replaces")
+                r_ret = rep.get("retired")
+                if r_ns not in read_plans.D8_RESTART_NAMESPACES:
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq} replacements[{r_idx}] invalid namespace {r_ns!r}"
+                    )
+                if not isinstance(r_set, str) or not r_set or read_plans.RESTART_SUFFIX_RE.fullmatch(r_set) is None:
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq} replacements[{r_idx}] invalid set {r_set!r}"
+                    )
+                if not isinstance(r_pred, str) or "/" not in r_pred:
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq} replacements[{r_idx}] invalid replaces {r_pred!r}"
+                    )
+                if not isinstance(r_ret, list):
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq} replacements[{r_idx}] retired must be a list"
+                    )
+                norm_ret = [_range(rng, f"entry {seq} replacements[{r_idx}].retired") for rng in r_ret]
+                auth_namespaces.add(r_ns)
+                ns_reps = rep_by_ns.setdefault(r_ns, {})
+                ns_rets = ret_by_ns.setdefault(r_ns, {})
+                if r_set in ns_reps and (ns_reps[r_set] != r_pred or ns_rets[r_set] != norm_ret):
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq} conflicting replacement for {r_ns}/{run}/{r_set}"
+                    )
+                ns_reps[r_set] = r_pred
+                ns_rets[r_set] = norm_ret
+
+            if not auth_namespaces:
+                raise SetError(
+                    f"shakedown manifest restart entry {seq} must authorize at least one namespace "
+                    "via panel, replacements or namespaces"
+                )
+            for ns in sorted(auth_namespaces):
+                key = (ns, run)
+                slot = restarts.setdefault(key, {
+                    "restart_kind": rkind,
+                    "a6_part2_sha256": a6_part2_sha,
+                    "note_path": note_path,
+                    "note_sha256": note_sha,
+                    "signature_line": sig_line,
+                    "replaces": {},
+                    "retired": {},
+                })
+                if (slot["restart_kind"], slot["a6_part2_sha256"], slot["note_sha256"]) != (
+                        rkind, a6_part2_sha, note_sha):
+                    raise SetError(f"shakedown manifest conflicting restart authorization for {ns}/{run}")
+                for s_name, pred_ref in rep_by_ns.get(ns, {}).items():
+                    ret_val = ret_by_ns[ns][s_name]
+                    if s_name in slot["replaces"] and (
+                            slot["replaces"][s_name] != pred_ref or slot["retired"][s_name] != ret_val):
+                        raise SetError(f"shakedown manifest conflicting replacement for {ns}/{run}/{s_name}")
+                    slot["replaces"][s_name] = pred_ref
+                    slot["retired"][s_name] = ret_val
+
+    return {"entries": entries, "panels": panels, "restarts": restarts}
 
 
 def load_shakedown_manifest_panels(manifest: Path | bytes, expected_sha256: str) -> dict[str, str]:
