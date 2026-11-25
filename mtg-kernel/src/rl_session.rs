@@ -14038,6 +14038,121 @@ mod tests {
 
     #[cfg(feature = "eternal-fixtures")]
     #[test]
+    fn limited_cast_mode_accepts_finished_optional_targets() {
+        use crate::engine::CastMode;
+        use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::mana::ManaColor;
+        use crate::surface_v2::PriorityModeV1;
+
+        fn choose(
+            session: &mut RlEpisodeSessionV1,
+            matches_action: impl Fn(&ActionSemanticV1) -> bool,
+        ) {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected a Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| matches_action(&action.semantic))
+                .expect("expected action in the Limited menu");
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap();
+        }
+
+        let forest = card_id_by_name("Forest").unwrap();
+        let force = card_id_by_name("Force of Vigor").unwrap();
+        let elves = card_id_by_name("Llanowar Elves").unwrap();
+        let mut deck = [forest; 40];
+        deck[..2].copy_from_slice(&[force, elves]);
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            8192,
+            16384,
+            ["custom-test-p0".into(), "custom-test-p1".into()],
+            [&deck, &[forest; 40]],
+            PriorityModeV1::EngineWindowsV1,
+            true,
+        )
+        .unwrap();
+        session.state.step = Step::Main1;
+        session.state.active_player = PlayerId::P1;
+        session.state.priority_player = PlayerId::P0;
+        session.state.players[0].mana_pool[ManaColor::G.pool_index()] = 4;
+        let [spell, pitch] = [force, elves].map(|card_def| {
+            let player = &session.state.players[0];
+            let object = player
+                .hand
+                .iter()
+                .chain(&player.library)
+                .copied()
+                .find(|&id| session.state.objects.get(id).card_def == card_def)
+                .unwrap();
+            if session.state.objects.get(object).zone != Zone::Hand {
+                propose_and_commit(
+                    &mut session.state,
+                    ProposedEvent::zone_change(object, Zone::Hand),
+                );
+            }
+            object
+        });
+        let ring = add_battlefield_object(&mut session.state, PlayerId::P1, "Sol Ring");
+        add_battlefield_object(&mut session.state, PlayerId::P1, "Choke");
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        choose(&mut session, |action| {
+            matches!(action, ActionSemanticV1::CastSpell { source, .. }
+                if flat_ref_matches_object_v1(source, spell))
+        });
+
+        let targeting = session.snapshot_v5();
+        for selected_count in [0, 1] {
+            session.restore_v5(&targeting);
+            let mut targets = Vec::new();
+            if selected_count == 1 {
+                targets.push(Target::Object(ring));
+                choose(&mut session, |action| {
+                    matches!(action, ActionSemanticV1::ChooseTarget { target, .. }
+                        if flat_target_matches_v1(target, Target::Object(ring)))
+                });
+            }
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::FinishTargetSelection { selected_count: count, .. }
+                    if *count == selected_count)
+            });
+            let payment = session.snapshot_v5();
+            for mode in [CastMode::Normal, CastMode::Alternative] {
+                session.restore_v5(&payment);
+                choose(&mut session, |action| {
+                    matches!(action, ActionSemanticV1::ChooseCastMode { mode: offered, .. }
+                        if *offered == mode)
+                });
+                if mode == CastMode::Alternative {
+                    assert_eq!(session.state.objects.get(pitch).zone, Zone::Exile);
+                    assert_eq!(
+                        session.state.players[0].mana_pool[ManaColor::G.pool_index()],
+                        4
+                    );
+                } else {
+                    assert_eq!(session.state.players[0].mana_pool, [0; 6]);
+                    assert_eq!(session.state.objects.get(pitch).zone, Zone::Hand);
+                }
+                assert_eq!(session.state.objects.get(spell).zone, Zone::Stack);
+                assert_eq!(session.state.stack.last().unwrap().targets, targets);
+            }
+        }
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
     fn limited_miracle_reveal_suspends_a_resolving_draw_then_discard() {
         fn choose(
             session: &mut RlEpisodeSessionV1,
