@@ -33,6 +33,9 @@ LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
 ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
 # The main merge of PR #991, with the game-test adapter for regret_census_v1 s4a-budget.
 GAME_TEST_ADAPTER_SOURCE = "a561d7a3a4ea1762cf0f2ec9d8f8c2ac244e3acc"
+# The old-catalog base (3ca7b1ad4, catalog 064a7c989255ab3c) plus PRs 988 and 991 by cherry-pick, tag
+# oldcatalog-screen-gametest-20261126: the game test's build source after main's catalog change (lead's ruling A).
+GAME_TEST_OLD_CATALOG_SOURCE = "2479c637d674b786bf6eb5104520baeb84d500e6"
 # The release/mull-c5719e1cf trainer that produced the frozen checkpoint for the parity gate.
 FROZEN_CHECKPOINT_SOURCE = "46f7ecfec16dd0483f14865ff5a1af37fe6c3420"
 # Speed pack3 on release/mull-c5719e1cf (guard branch only): exact backports of main's net-8 speed work.
@@ -69,6 +72,7 @@ SOURCES = (
     LONDON_VECTOR_SOURCE_MERGED,
     ANNOUNCE_STEP_SOURCE_MERGED,
     GAME_TEST_ADAPTER_SOURCE,
+    GAME_TEST_OLD_CATALOG_SOURCE,
     FROZEN_CHECKPOINT_SOURCE,
     *PACK3_SOURCES,
 )

@@ -132,7 +132,8 @@ class HostedInputTests(unittest.TestCase):
             return hosted.main(["--source-commit", source, "--work-root", "/fake-build", "--wall-seconds", "60"])
 
     def test_the_two_experiment_sources_reach_the_build(self):
-        for source in ("a561d7a3a4ea1762cf0f2ec9d8f8c2ac244e3acc", "46f7ecfec16dd0483f14865ff5a1af37fe6c3420"):
+        for source in ("a561d7a3a4ea1762cf0f2ec9d8f8c2ac244e3acc", "2479c637d674b786bf6eb5104520baeb84d500e6",
+                       "46f7ecfec16dd0483f14865ff5a1af37fe6c3420"):
             with self.subTest(source=source):
                 self.assertEqual(self.dispatch(source), 0)
                 self.run_build.assert_called_once_with(Path("/fake-build"), source, 60, DEFAULT_BINS)

@@ -11,6 +11,7 @@ Four later sources of the same release line are accepted the same way, each buil
 The guard also accepts these exact `source_commit` values for the signed experiment.
 
 - `a561d7a3a4ea1762cf0f2ec9d8f8c2ac244e3acc` is the `main` merge of PR #991 with the game-test adapter for `regret_census_v1 s4a-budget`.
+- `2479c637d674b786bf6eb5104520baeb84d500e6` is the old-catalog base (3ca7b1ad4 plus PRs #988 and #991 by cherry-pick; draft PR #997, never merged): the game test's build source after main's catalog change.
 - `46f7ecfec16dd0483f14865ff5a1af37fe6c3420` is the `release/mull-c5719e1cf` trainer that produced the frozen checkpoint for the parity gate.
 
 `hosted.py` holds the full exact allow-list, including this branch's `PACK3_SOURCES`.
