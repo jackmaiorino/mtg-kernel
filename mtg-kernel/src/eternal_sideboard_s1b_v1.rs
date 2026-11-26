@@ -805,10 +805,27 @@ pub(crate) fn pays_life_for_x(def: &CardDef) -> bool {
         && (def.name == TOXIC_DELUGE || crate::eternal_cube_c1c_v1::pays_life_for_x(def.name))
 }
 
-/// The most X Toxic Deluge may announce: its caster's life total.
-pub(crate) fn life_x_cap(def: &CardDef, player: PlayerId, state: &GameState) -> Option<u8> {
-    pays_life_for_x(def)
-        .then(|| u8::try_from(state.players[player.index()].life.max(0)).unwrap_or(u8::MAX))
+/// Life still available for the additional cost after the cast route's own
+/// life cost (CR 118.9d, 601.2f).
+pub(crate) fn life_x_cap(
+    def: &CardDef,
+    source: ObjectId,
+    player: PlayerId,
+    state: &GameState,
+) -> Option<u8> {
+    pays_life_for_x(def).then(|| {
+        let route_cost = if crate::eternal_e5a_v1::permissions::citadel_cast(state, source, player)
+        {
+            i32::from(def.mana_value)
+        } else {
+            0
+        };
+        let available = state.players[player.index()]
+            .life
+            .saturating_sub(route_cost)
+            .max(0);
+        u8::try_from(available).unwrap_or(u8::MAX)
+    })
 }
 
 // ---- Stage 3: Pyrokinesis, Stern Dismissal, Extirpate, Tourach, Leyline ------------------

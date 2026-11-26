@@ -2441,6 +2441,54 @@ fn spell_copy_origin_chain(
     Ok(())
 }
 
+/// The receipt identifies the nominal cost and the committed loss after
+/// replacements. Later life changes cannot authenticate a different cast.
+fn validate_cast_life_x(
+    state: &GameState,
+    item: &StackItem,
+    caster: PlayerId,
+) -> Result<(), String> {
+    let history = &state.engine.event_history;
+    let mut payments = history
+        .of_kinds_v2(&[EventKindV1::CastLifeXPaidV1])
+        .filter_map(|(at, event)| match event {
+            CommittedEvent::CastLifeXPaidV1 {
+                spell,
+                stack_item,
+                player,
+                amount,
+                loss,
+            } if *stack_item == item.v4.stack_item_id => {
+                Some((at, *spell, *player, *amount, *loss))
+            }
+            _ => None,
+        });
+    let Some((at, spell, player, amount, loss)) = payments.next() else {
+        return Err("spell lost its additional life payment".into());
+    };
+    let loss_matches = match loss {
+        None => amount == 0,
+        Some((index, lost)) => {
+            amount > 0
+                && index < at as u64
+                && usize::try_from(index)
+                    .ok()
+                    .and_then(|index| history.get(index))
+                    == Some(&CommittedEvent::LifeLoss {
+                        player,
+                        amount: lost,
+                    })
+        }
+    };
+    if !loss_matches
+        || (spell, player, amount) != (item.source, caster, item.v4.x_value)
+        || payments.next().is_some()
+    {
+        return Err("spell X disagrees with its additional life payment".into());
+    }
+    Ok(())
+}
+
 /// Binds a physical spell's mutable stack metadata to independently frozen
 /// evidence on the source object's current Stack incarnation. The route is
 /// captured before 601.2a moves the card, while `finalized_method` is only
@@ -2593,6 +2641,11 @@ fn validate_physical_spell_cast_origin(
         }
         (false, None) => {}
     }
+    let x_cost = CastXCost::of(def, item.kicked);
+    let free_x_valid = item.v4.x_value == 0 || x_cost != CastXCost::Mana;
+    if !is_pending_placeholder && x_cost == CastXCost::Life {
+        validate_cast_life_x(state, item, caster)?;
+    }
     let route_supports_method = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
             // A resolving instruction casts from exile for free (or paying its
@@ -2610,15 +2663,9 @@ fn validate_physical_spell_cast_origin(
                 && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, item.source);
             let free_graveyard = from_graveyard
                 && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, item.source);
-            // A free cast's X is 0, but a replicate, multikicker or splice
-            // count in the X slot counts additional costs paid.
             (origin.origin_zone == Zone::Exile || from_graveyard || from_hand)
                 && holder == caster
-                && ((from_graveyard && !free_graveyard)
-                    || paid_exile
-                    || item.v4.x_value == 0
-                    || announces_additional_cost_count(def)
-                    || (item.kicked && kicker_has_x(def)))
+                && ((from_graveyard && !free_graveyard) || paid_exile || free_x_valid)
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
                     || (is_pending_placeholder
                         && resolution_cast_v1::form_allowed(
@@ -2700,7 +2747,7 @@ fn validate_physical_spell_cast_origin(
                 && holder == item.controller
                 && source.owner == holder
                 && hand_generation == origin.origin_zone_change_count
-                && item.v4.x_value == 0
+                && free_x_valid
                 && omniscience_cast_v1::free_cast_for(state, item.source, holder)
                 && resolution_cast_v1::form_allowed(state, item.source, cast_method)
         }
@@ -2760,6 +2807,12 @@ fn validate_physical_spell_cast_origin(
             permission_zone_change_count,
         } => {
             origin.origin_zone == Zone::Library
+                && (free_x_valid
+                    || !crate::eternal_e5a_v1::permissions::citadel_cast(
+                        state,
+                        item.source,
+                        caster,
+                    ))
                 && source.owner == caster
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
@@ -2822,9 +2875,7 @@ fn validate_physical_spell_cast_origin(
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (!matches!(origin.route, SpellCastRouteV4::ExileFreePermission { .. })
-                    || ((item.v4.x_value == 0
-                        || announces_additional_cost_count(def)
-                        || (item.kicked && kicker_has_x(def)))
+                    || (free_x_valid
                         && !(cast_method == CastMethodV4::Omen
                             && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
                         && (matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Omen)
@@ -7204,9 +7255,6 @@ pub(crate) fn x_target_is_payable(
     let Ok(x) = u8::try_from(minimum) else {
         return false;
     };
-    if resolution_cast_v1::free_cast(state, source) && x != 0 {
-        return false;
-    }
     if let Some(pending) = state
         .engine
         .pending_cast
@@ -12320,13 +12368,39 @@ fn thornscape_white_kicker_payable(
     .is_some()
 }
 
-/// Whether the cast announces a count of additional cost payments in the X
-/// slot (replicate, multikicker, splice onto Arcane). The count is announced
-/// whether or not the mana cost is paid.
-fn announces_additional_cost_count(def: &card_def::CardDef) -> bool {
-    crate::eternal_cards_v1::replicate_cost(def.name).is_some()
-        || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
-        || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()
+/// CR 107.3b, 118.9d: replacing a mana cost fixes its mana X at zero,
+/// but leaves additional costs payable. The serialized X slot represents
+/// one of these costs, as determined by the spell definition and kicker.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CastXCost {
+    Mana,
+    Additional,
+    Life,
+}
+
+impl CastXCost {
+    fn of(def: &card_def::CardDef, kicker: bool) -> Self {
+        if crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
+            Self::Life
+        } else if crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+            || crate::eternal_cards_v1::replicate_cost(def.name).is_some()
+            || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
+            || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()
+            || (kicker && kicker_has_x(def))
+        {
+            Self::Additional
+        } else {
+            Self::Mana
+        }
+    }
+
+    fn seed(self, def: &card_def::CardDef, mana_replaced: bool) -> Option<u8> {
+        (self == Self::Mana
+            && (mana_replaced
+                || (def.cost.x_count == 0
+                    && supported_bestow(def).is_none_or(|b| b.cost.x_count == 0))))
+        .then_some(0)
+    }
 }
 
 /// Whether `def` has an X kicker cost ("Kicker {X}. X can't be 0." --
@@ -12339,17 +12413,11 @@ fn kicker_min_x(def: &card_def::CardDef, kicked: bool) -> u16 {
     u16::from(kicked && kicker_has_x(def))
 }
 
-/// Records the pay-or-skip answer of a hand cast under a free-cast
-/// permission. Skipping the mana cost makes X zero, except Sickening
-/// Dreams' X, which counts an additional cost's discards, a replicate,
-/// multikicker or splice count, which counts additional cost payments, and
-/// an X kicker cost (Thieving Skydiver, wave C8c).
+/// Records a hand cast's pay-or-skip answer, fixing mana X when waived.
 fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
-    let discard_x = state.engine.pending_cast.as_ref().is_some_and(|pending| {
+    let additional_x = state.engine.pending_cast.as_ref().is_some_and(|pending| {
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
-            || announces_additional_cost_count(def)
-            || kicker_has_x(def)
+        CastXCost::of(def, true) != CastXCost::Mana
     });
     let pending = state
         .engine
@@ -12357,7 +12425,7 @@ fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
         .as_mut()
         .expect("a pending cast is choosing its free cast");
     pending.hand_free_cast_v1 = Some(choice);
-    if choice == HandFreeCastV1::WithoutManaCost && pending.x_value.is_none() && !discard_x {
+    if choice == HandFreeCastV1::WithoutManaCost && pending.x_value.is_none() && !additional_x {
         pending.x_value = Some(0);
     }
 }
@@ -12529,7 +12597,14 @@ fn maximum_payable_x(
                 )
             })
             // Toxic Deluge: at most the life its caster has (wave S1b).
-            .or_else(|| crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.controller, state))
+            .or_else(|| {
+                crate::eternal_sideboard_s1b_v1::life_x_cap(
+                    def,
+                    pending.spell,
+                    pending.controller,
+                    state,
+                )
+            })
             .unwrap_or(u8::MAX);
     // Serra Paragon: X-cost permanent spells cast from graveyard via Serra
     // Paragon must keep spell mana value <= 3 (Vintage Cube wave C9b).
@@ -18462,12 +18537,7 @@ pub(crate) fn validate_pending_cast(
 
     let selected_cost =
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
-    // Replicate's, multikicker's and splice's payment counts are announced
-    // and validated like X, and so is Sickening Dreams' "discard X cards",
-    // even for a free cast. Thieving Skydiver's "Kicker {X}. X can't be 0."
-    // likewise announces X unless kicker was declined.
-    let replicate = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
-        || announces_additional_cost_count(def);
+    let additional_x = CastXCost::of(def, false) != CastXCost::Mana;
     let kicker_x_active = kicker_has_x(def) && pending.kicked != Some(false);
     let airbent_cast = cfg!(feature = "eternal-fixtures")
         && pending.origin_zone == Zone::Exile
@@ -18476,24 +18546,28 @@ pub(crate) fn validate_pending_cast(
             pending.spell,
             pending.controller,
         );
-    let expected_seed_x: Option<u8> = if !replicate
-        && !kicker_x_active
-        && (resolution_cast_v1::free_cast(state, pending.spell)
-            || airbent_cast
-            || (def.cost.x_count == 0
-                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
-    {
-        Some(0)
-    } else {
-        None
-    };
+    let citadel_cast = cfg!(feature = "eternal-fixtures")
+        && pending.origin_zone == Zone::Library
+        && crate::eternal_e5a_v1::permissions::citadel_cast(
+            state,
+            pending.spell,
+            pending.controller,
+        );
+    let route_fixes_x = resolution_cast_v1::free_cast(state, pending.spell)
+        || airbent_cast
+        || citadel_cast
+        || pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost);
+    let expected_seed_x =
+        CastXCost::of(def, pending.kicked != Some(false)).seed(def, route_fixes_x);
     if let Some(cost) = selected_cost {
-        if cost.x_count == 0 && !replicate && !kicker_x_active {
+        // A route-fixed X is known during announcement, before targets
+        // (CR 601.2b-d). Only a player-selected X advances the X menu.
+        if (cost.x_count == 0 || route_fixes_x) && !additional_x && !kicker_x_active {
             if pending.selected_x_v59() != Some(0) {
                 return Err("non-X cast carries a noncanonical X stage".to_string());
             }
         } else if cost.x_count > max_supported_x_symbols()
-            || ((replicate || kicker_x_active) && cost.x_count != 0)
+            || ((additional_x || kicker_x_active) && cost.x_count != 0)
         {
             return Err("pending cast has an unsupported number of X symbols".to_string());
         } else if kicker_x_active && pending.kicked.is_none() {
@@ -18501,6 +18575,11 @@ pub(crate) fn validate_pending_cast(
                 return Err("pending cast chose X before choosing kicker".to_string());
             }
         } else if let Some(x_value) = pending.selected_x_v59() {
+            if additional_x
+                && forced_cast_x(pending, def, state).is_some_and(|forced| forced != x_value)
+            {
+                return Err("announced X disagrees with its defining cost".into());
+            }
             if !crate::eternal_pauper_e8b_v1::splice_code_valid_for_hand(
                 def,
                 pending.spell,
@@ -18625,16 +18704,6 @@ pub(crate) fn validate_pending_cast(
     } else {
         Some(0)
     };
-    // Bolas's Citadel: a spell cast from the library this way pays life
-    // rather than its mana cost, so its own alternative cost (Force of Will's)
-    // is no choice; `begin_cast_ex` seeds the normal mode for it.
-    let citadel_cast = cfg!(feature = "eternal-fixtures")
-        && pending.origin_zone == Zone::Library
-        && crate::eternal_e5a_v1::permissions::citadel_cast(
-            state,
-            pending.spell,
-            pending.controller,
-        );
     let has_cast_mode_choice = def.alt_cost.is_some()
         && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none()
         && !citadel_cast
@@ -33229,19 +33298,13 @@ fn materialize_begin_cast_with_quote_v1(
         // still paid when the spell is cast without paying its mana cost
         // (118.9d, 601.2f); only X in the mana cost is then 0 (107.3b).
         // Sickening Dreams' "discard X cards" likewise announces X.
-        x_value: if !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
-            && !announces_additional_cost_count(def)
-            && !kicker_has_x(def)
-            && (without_mana_cost
+        x_value: CastXCost::of(def, true).seed(
+            def,
+            without_mana_cost
                 || citadel_cast
                 || airbent_cast
-                || (def.cost.x_count == 0
-                    && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
-        {
-            Some(0)
-        } else {
-            None
-        },
+                || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost),
+        ),
         wide_x_value_v59: None,
         chosen_creature_cost_zone: None,
         chosen_creature_cost: None,
@@ -33787,6 +33850,46 @@ fn finalize_owned_cast(
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);
     let stack_item_id = item.v4.stack_item_id;
+    // CR 601.2f-h: pay the nominal additional cost before publishing the cast.
+    // Life-loss replacements may change the resulting loss (CR 118.11).
+    if CastXCost::of(def, was_kicked) == CastXCost::Life {
+        let loss = if x_value > 0 {
+            let start = state.engine.event_history.len();
+            event::propose_and_commit(
+                state,
+                ProposedEvent::life_payment(pending.controller, i32::from(x_value)),
+            );
+            Some(
+                state
+                    .engine
+                    .event_history
+                    .range_v2(start..)
+                    .iter()
+                    .enumerate()
+                    .find_map(|(offset, event)| match event {
+                        CommittedEvent::LifeLoss { player, amount }
+                            if *player == pending.controller =>
+                        {
+                            Some(((start + offset) as u64, *amount))
+                        }
+                        _ => None,
+                    })
+                    .ok_or("additional life payment did not commit")?,
+            )
+        } else {
+            None
+        };
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::CastLifeXPaidV1 {
+                spell: pending.spell,
+                stack_item: stack_item_id,
+                player: pending.controller,
+                amount: x_value,
+                loss,
+            });
+    }
     mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
     tinybones_v72::paid(state, finalized_source_contract, stack_item_id);
     // Targeting validation re-authenticates a targeted spell's Storm
@@ -33839,14 +33942,6 @@ fn finalize_owned_cast(
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
-    // Toxic Deluge: "As an additional cost to cast this spell, pay X life."
-    #[cfg(feature = "eternal-fixtures")]
-    if x_value > 0 && crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
-        event::propose_and_commit(
-            state,
-            ProposedEvent::life_loss(pending.controller, i32::from(x_value)),
-        );
-    }
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     crate::fake_your_own_death_v50::spell_custody::publish_spell(state, stack_item_id)?;
     if matches!(

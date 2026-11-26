@@ -2956,3 +2956,211 @@ fn c1c_decks_finish_and_replay_through_public_sessions_both_seats() {
         );
     }
 }
+
+mod cast_x_routes {
+    use super::*;
+    use mtg_kernel::engine::{
+        FreeCastV1, PlayOrCast, PlayPermission, PlayPermissionExpiry, UnsupportedMechanic,
+    };
+
+    fn free_exile(state: &mut GameState, name: &str) -> ObjectId {
+        let object = put(state, P0, name, Zone::Exile);
+        state.engine.exile_play_permissions.push(PlayPermission {
+            object,
+            holder: P0,
+            zone_change_generation: state.objects.get(object).zone_change_count,
+            play_or_cast: PlayOrCast::Cast,
+            expiry: PlayPermissionExpiry::EndOfTurn,
+            without_mana_cost: FreeCastV1(true),
+            any_mana_type: Default::default(),
+        });
+        object
+    }
+
+    fn restore(state: &GameState) -> GameState {
+        serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
+    }
+
+    fn assert_refused(state: &GameState, spell: ObjectId) {
+        let mut state = restore(state);
+        for _ in 0..3 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source,
+                } => {
+                    assert_eq!(source, spell);
+                    return;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                other => panic!("forged X produced {other:?}"),
+            }
+        }
+        panic!("forged spell resolved");
+    }
+
+    fn forge_final_x(state: &GameState, spell: ObjectId, x: u16) {
+        let mut forged = restore(state);
+        let item = &mut forged.stack.last_mut().unwrap().v4;
+        item.x_value = x;
+        item.source_contract
+            .as_mut()
+            .unwrap()
+            .finalized_cast_binding
+            .as_mut()
+            .unwrap()
+            .x_value = x;
+        forged
+            .objects
+            .get_mut(spell)
+            .v4
+            .finalized_cast_binding
+            .as_mut()
+            .unwrap()
+            .x_value = x;
+        assert_refused(&forged, spell);
+    }
+
+    #[test]
+    fn free_deluge_pays_three_and_rejects_a_different_paid_x() {
+        let mut state = plains();
+        let creature = put(&mut state, P0, "Annoyed Altisaur", Zone::Battlefield);
+        let spell = free_exile(&mut state, "Toxic Deluge");
+        assert!(castable(&mut state, spell));
+        act(&mut state, Action::CastSpell(spell));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 21,
+                ..
+            }
+        ));
+        let mut state = restore(&state);
+        act(&mut state, Action::ChooseEffectOption(3));
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 17);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 3);
+        forge_final_x(&state, spell, 4);
+        let mut forged = restore(&state);
+        let loss = forged
+            .engine
+            .event_history
+            .iter_mut()
+            .find_map(|event| match event {
+                event::CommittedEvent::LifeLoss { player: P0, amount } => Some(amount),
+                _ => None,
+            })
+            .unwrap();
+        *loss = 2;
+        assert_refused(&forged, spell);
+        let mut state = restore(&state);
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, creature), (3, 2));
+    }
+
+    #[test]
+    fn citadel_reserves_life_for_both_costs() {
+        let mut state = plains();
+        state.players[0].life = 6;
+        put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+        let spell = put(&mut state, P0, "Toxic Deluge", Zone::Library);
+        act(&mut state, Action::CastSpell(spell));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 4,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(2));
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 1);
+    }
+
+    #[test]
+    fn free_covenant_pays_for_the_division() {
+        let mut state = plains();
+        let specter = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+        let wall = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let spell = free_exile(&mut state, "Fire Covenant");
+        cast_picking(
+            &mut state,
+            spell,
+            &[specter, wall, specter].map(Target::Object),
+        );
+        assert_eq!(life(&state, P0), 17);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 3);
+        settled(&mut state);
+        assert_eq!(zone(&state, specter), Zone::Graveyard);
+        assert_eq!(state.objects.get(wall).damage, 1);
+    }
+
+    #[test]
+    fn library_division_reserves_the_route_payment_before_each_target() {
+        let mut state = plains();
+        state.players[0].life = 4;
+        put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+        let wall = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let spell = put(&mut state, P0, "Fire Covenant", Zone::Library);
+        act(&mut state, Action::CastSpell(spell));
+        choose_target(&mut state, Target::Object(wall));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseTargets { legal_targets, can_finish: true, .. } if legal_targets.is_empty())
+        );
+        act(&mut state, Action::FinishEffectSelection);
+        // The route costs three life and the single assigned point costs one.
+        let _ = engine::advance_until_decision(&mut state);
+        assert_eq!(life(&state, P0), 0);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 1);
+    }
+
+    #[test]
+    fn mana_x_fixed_at_zero_before_targets_from_library_or_free_exile() {
+        for citadel in [true, false] {
+            let mut state = plains();
+            let spell = if citadel {
+                put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+                put(&mut state, P0, "Mind Twist", Zone::Library)
+            } else {
+                free_exile(&mut state, "Mind Twist")
+            };
+            let hand = put(&mut state, P1, "Island", Zone::Hand);
+            act(&mut state, Action::CastSpell(spell));
+            let mut state = restore(&state);
+            let mut forged = restore(&state);
+            forged.engine.pending_cast.as_mut().unwrap().x_value = Some(1);
+            assert_refused(&forged, spell);
+            choose_target(&mut state, Target::Player(P1));
+            cast_finished(&mut state);
+            assert_eq!(state.stack.last().unwrap().v4.x_value, 0);
+            assert_eq!(life(&state, P0), if citadel { 19 } else { 20 });
+            forge_final_x(&state, spell, 1);
+            settled(&mut state);
+            assert_eq!(zone(&state, hand), Zone::Hand);
+        }
+    }
+
+    #[test]
+    fn citadel_pest_infestation_offers_zero_targets_and_charges_one_life() {
+        let mut state = plains();
+        put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+        let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+        let spell = put(&mut state, P0, "Pest Infestation", Zone::Library);
+        act(&mut state, Action::CastSpell(spell));
+        if let Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } = next(&mut state)
+        {
+            assert!(legal_targets.is_empty() && can_finish);
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        cast_finished(&mut state);
+        assert!(state.stack.last().unwrap().targets.is_empty());
+        assert_eq!(life(&state, P0), 19);
+        settled(&mut state);
+        assert_eq!(zone(&state, ring), Zone::Battlefield);
+        assert_eq!(state.players[0].battlefield.len(), 1);
+    }
+}

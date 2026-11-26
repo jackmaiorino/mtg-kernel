@@ -95,16 +95,15 @@ pub(crate) fn covenant_forced_x(
         .then(|| u16::try_from(pending.targets_chosen.len()).unwrap_or(u16::MAX))
 }
 
-/// Whether `controller` is in the middle of casting Fire Covenant, whose
-/// picks are limited by the life it will pay.
-pub(crate) fn covenant_cast_in_progress(state: &GameState, controller: PlayerId) -> bool {
-    state.engine.pending_cast.as_ref().is_some_and(|pending| {
-        pending.controller == controller
-            && state
-                .objects
-                .try_get(pending.spell)
-                .is_some_and(|live| CARD_DEFS[live.card_def as usize].name == FIRE_COVENANT)
-    })
+/// Remaining life for a damage division during announcement. A finalized
+/// spell retains its division even if the caster's life changes later.
+pub(crate) fn pending_division_life(state: &GameState, controller: PlayerId) -> Option<u8> {
+    let pending = state.engine.pending_cast.as_ref()?;
+    let def = &CARD_DEFS[state.objects.try_get(pending.spell)?.card_def as usize];
+    if pending.controller != controller || covenant_forced_x(pending, def).is_none() {
+        return None;
+    }
+    crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.spell, controller, state)
 }
 
 const FIRE_COVENANT: &str = "Fire Covenant";
