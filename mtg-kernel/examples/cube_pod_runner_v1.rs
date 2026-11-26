@@ -389,6 +389,8 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
     {
         return Err("worker plan input pins differ from the verified ordered pool inputs".into());
     }
+    plan.preflight_seats(&loaded.seats)
+        .map_err(|e| e.to_string())?;
     let journal = PodProgressJournal::create(journal_path).map_err(|e| e.to_string())?;
     let run_opts = ReadPlanRunOptions {
         execution,
@@ -711,6 +713,10 @@ fn main() {
 }
 
 #[cfg(test)]
+#[path = "cube_pod_runner/preflight_tests.rs"]
+mod preflight_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -733,8 +739,8 @@ mod tests {
             .collect();
         assert!(!ids.is_sorted());
         ids.sort_unstable();
-        let dir = std::env::temp_dir().join(format!("d7-pool-{}", std::process::id()));
-        std::fs::create_dir(&dir).unwrap();
+        let temp = super::preflight_tests::TempDir::new("ordered-pool");
+        let dir = &temp.0;
         let pool = dir.join("pool.json");
         let fence = dir.join("fence.json");
         std::fs::write(&fence, "[]").unwrap();
@@ -770,7 +776,6 @@ mod tests {
         args.values
             .insert("--ordered-pool-pin".into(), sha256_hex(swapped.as_bytes()));
         assert!(load_pool(&args).err().unwrap().contains("ascending"));
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

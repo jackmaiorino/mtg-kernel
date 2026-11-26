@@ -620,6 +620,31 @@ pub struct ReadPlanV1 {
     pub paired_builds: Vec<PairedBuildRecord>,
 }
 
+fn preflight_learned_seats<'a>(
+    seats: &dyn SeatFactory,
+    chairs: &[PlanChair],
+    builders: impl Iterator<Item = &'a BuilderRef>,
+) -> Result<(), PodRunnerError> {
+    for chair in chairs {
+        if chair.picker.kind == SeatKind::Learned {
+            seats.make_picker(&chair.picker)?;
+        }
+    }
+    for builder in builders {
+        if builder.kind == BuilderKind::Learned {
+            seats.make_builder(builder)?;
+        }
+    }
+    Ok(())
+}
+
+impl ReadPlanV1 {
+    /// Resolve every required checkpoint before publishing execution artifacts.
+    pub fn preflight_seats(&self, seats: &dyn SeatFactory) -> Result<(), PodRunnerError> {
+        preflight_learned_seats(seats, &self.chairs, self.decks.iter().map(|d| &d.builder))
+    }
+}
+
 /// One declared build inside a [`PrepRequest`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -4760,6 +4785,7 @@ pub fn run_prep_set_execution_with_ended_claim(
                 out_path.display()
             )));
         }
+        preflight_learned_seats(seats, &req.chairs, req.builds.iter().map(|b| &b.builder))?;
         validated_units.push((unit_entry.clone(), req, out_path));
     }
 
@@ -5633,6 +5659,7 @@ fn preflight_plan_set_execution(
     set_dir: &Path,
     execution: u64,
     verification: &RuntimeVerification,
+    seats: &dyn SeatFactory,
 ) -> Result<ValidatedPlanSet, PodRunnerError> {
     if execution > 1 {
         return Err(plan_err(format!(
@@ -5768,6 +5795,7 @@ fn preflight_plan_set_execution(
                 pod_entry.pod_index
             )));
         }
+        plan.preflight_seats(seats)?;
         validated_plans.push((pod_entry.clone(), plan_path, plan));
     }
 
@@ -5792,7 +5820,7 @@ pub fn run_plan_set_execution(
     workers: usize,
     watchdog_override: Option<Duration>,
 ) -> Result<PlanExecutionReceipt, PodRunnerError> {
-    let preflight = preflight_plan_set_execution(set_dir, execution, verification)?;
+    let preflight = preflight_plan_set_execution(set_dir, execution, verification, seats)?;
     let exec_dir = set_dir.join(format!("exec-{execution}"));
     let records_dir = exec_dir.join("records");
     let timing_dir = exec_dir.join("timing");
@@ -5958,20 +5986,7 @@ pub fn supervise_plan_set_execution(
     verification: &RuntimeVerification,
     launcher: &dyn PodWorkerLauncher,
 ) -> Result<PlanExecutionReceipt, PodRunnerError> {
-    let preflight = preflight_plan_set_execution(set_dir, execution, verification)?;
-    // Resolve every checkpoint reference before the first worker can play.
-    for (_, _, plan) in &preflight.plans {
-        for chair in &plan.chairs {
-            if chair.picker.kind == SeatKind::Learned {
-                seats.make_picker(&chair.picker)?;
-            }
-        }
-        for deck in &plan.decks {
-            if deck.builder.kind == BuilderKind::Learned {
-                seats.make_builder(&deck.builder)?;
-            }
-        }
-    }
+    let preflight = preflight_plan_set_execution(set_dir, execution, verification, seats)?;
     let exec_dir = set_dir.join(format!("exec-{execution}"));
     let records_dir = exec_dir.join("records");
     let timing_dir = exec_dir.join("timing");
