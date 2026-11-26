@@ -777,6 +777,60 @@ fn shocklands_are_not_offered_the_payment_without_two_life() {
     }
 }
 
+/// The landfall triggers a shockland's entry creates wait for its as-enters
+/// life payment: the payment is the decision, and the triggers are placed
+/// after it is made.
+#[test]
+fn a_shockland_payment_precedes_its_targeted_landfall_trigger() {
+    let mut state = plains();
+    let cub = put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
+    let land = put(&mut state, P0, "Breeding Pool", Zone::Hand);
+    play(&mut state, land);
+    assert_eq!(state.engine.pending_triggers.len(), 1);
+    assert_eq!(state.engine.pending_triggers[0].source, cub);
+    expect_choice(&mut state, land, 2);
+    let mut early = state.clone();
+    assert!(engine::step(&mut early, Action::ChooseTarget(Target::Object(cub))).is_err());
+    assert_eq!(early, state);
+
+    act(&mut state, Action::ChooseEffectOption(1));
+    assert_eq!(life(&state, P0), 18);
+    assert!(!is_tapped(&state, land));
+    match next(&mut state) {
+        Decision::ChooseTargets { spell, .. } => assert_eq!(spell, cub),
+        other => panic!("the landfall trigger chooses its target next, got {other:?}"),
+    }
+}
+
+/// Two landfall triggers of one controller wait, unordered, for the same
+/// payment: ordering them cannot answer it, and they are ordered after it.
+#[test]
+fn a_shockland_payment_precedes_ordering_its_landfall_triggers() {
+    let mut state = plains();
+    let first = put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
+    let second = put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
+    let land = put(&mut state, P0, "Breeding Pool", Zone::Hand);
+    play(&mut state, land);
+    assert_eq!(state.engine.pending_triggers.len(), 2);
+    expect_choice(&mut state, land, 2);
+    let mut early = state.clone();
+    assert!(engine::step(&mut early, Action::OrderTriggers(vec![0, 1])).is_err());
+    assert_eq!(early, state);
+    assert!(state.stack.is_empty());
+
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert_eq!(life(&state, P0), 20);
+    assert!(is_tapped(&state, land));
+    match next(&mut state) {
+        Decision::OrderTriggers { pending, .. } => assert_eq!(
+            pending.iter().map(|trigger| trigger.source).collect::<Vec<_>>(),
+            [first, second]
+        ),
+        other => panic!("the landfall triggers are ordered next, got {other:?}"),
+    }
+    assert!(state.stack.is_empty());
+}
+
 #[test]
 fn a_shockland_or_passage_entering_under_blood_moon_has_no_entry_choice() {
     // Blood Moon makes the entering nonbasic land a Mountain with no

@@ -2,6 +2,11 @@
 //! here until the entire current batch is on the stack (CR 603.3b). An empty
 //! queue writes no `Hash` input and no serialized field, so every state that
 //! never holds such a capture keeps its previously pinned bytes.
+use super::{
+    pending_trigger_placement_choice, trigger_placement_waits_for_action,
+    validate_pending_trigger_identity,
+};
+use crate::state::GameState;
 use crate::trigger::PendingTrigger;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -22,6 +27,54 @@ impl QueueV1 {
     pub(super) fn extend(&mut self, triggers: impl IntoIterator<Item = PendingTrigger>) {
         self.0.extend(triggers);
     }
+}
+
+/// A restored queue must be one placement can leave. Only
+/// `push_trigger_onto_stack` fills it, with the captures its hooks made while
+/// that trigger was put on the stack, and the next trigger checkpoint empties
+/// it before priority or any other decision. So a non-empty queue has a
+/// non-empty stack (the trigger whose placement made the captures), no
+/// decision that outranks trigger placement, and only fresh captures:
+/// unordered and untargeted, with a valid source.
+pub(super) fn validate(state: &GameState) -> Result<(), String> {
+    let queue = &state.engine.waiting_placement_triggers.0;
+    if queue.is_empty() {
+        return Ok(());
+    }
+    if state.stack.is_empty() {
+        return Err("waiting placement captures have no placed trigger".into());
+    }
+    if trigger_placement_waits_for_action(state) {
+        return Err("waiting placement captures cannot wait behind another decision".into());
+    }
+    for trigger in queue {
+        if trigger.placement_ordered
+            || !trigger.targets.is_empty()
+            || !trigger.target_contracts.is_empty()
+        {
+            return Err("a waiting placement capture has already been placed".into());
+        }
+        validate_pending_trigger_identity(state, trigger)?;
+    }
+    Ok(())
+}
+
+/// `step` also needs the current batch's own placement choice. Without one
+/// (the batch's last trigger was just put on the stack) the queue drains at
+/// the next `advance_until_decision`, which has offered no action yet.
+pub(super) fn validate_for_step(state: &GameState) -> Result<(), String> {
+    validate(state)?;
+    if !state.engine.waiting_placement_triggers.is_empty()
+        && pending_trigger_placement_choice(state).is_none()
+    {
+        return Err("advance to the waiting trigger checkpoint before acting".into());
+    }
+    Ok(())
+}
+
+#[cfg(all(test, feature = "eternal-fixtures"))]
+pub(crate) fn queued_for_test(state: &mut GameState) -> &mut Vec<PendingTrigger> {
+    &mut state.engine.waiting_placement_triggers.0
 }
 
 impl Hash for QueueV1 {

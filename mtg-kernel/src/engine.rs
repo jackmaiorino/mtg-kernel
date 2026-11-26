@@ -98,6 +98,8 @@ pub(crate) mod niv_mizzet_resolution_v1;
 pub mod ordinary_cleanup_v1;
 pub mod time_stop_v1;
 mod waiting_placement_v1;
+#[cfg(all(test, feature = "eternal-fixtures"))]
+pub(crate) use waiting_placement_v1::queued_for_test as waiting_placement_triggers_for_test;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -15716,6 +15718,13 @@ fn advance_until_decision_historical(state: &mut GameState) -> Decision {
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
+    // A halted state only ever returns its halt, so keep its own source.
+    if state.engine.halted.is_none() && waiting_placement_v1::validate(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if halt_on_invalid_battlefield_pt(state) {
         let (mechanic, source) = state.engine.halted.expect("PT refusal halted");
         return Decision::Halted { mechanic, source };
@@ -20628,8 +20637,15 @@ fn pending_trigger_placement_choice(state: &GameState) -> Option<TriggerPlacemen
     })
 }
 
+/// The decisions `advance_until_decision` serves ahead of trigger placement
+/// that can be pending together with a placement batch. While one is pending
+/// it is the decision: the batch waits and no placement action answers it.
 fn trigger_placement_waits_for_action(state: &GameState) -> bool {
     state.engine.pending_land_play.is_some()
+        // Shockland, Multiversal Passage and other as-enters choices, and the
+        // first-draw Miracle reveal (eternal waves).
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::e3::entry_choice_pending(state))
         || state.engine.pending_spell_copy.is_some()
         || state.engine.pending_effect.is_some()
         || state.engine.pending_discard.is_some()
@@ -20637,6 +20653,38 @@ fn trigger_placement_waits_for_action(state: &GameState) -> bool {
         || state.engine.pending_activation.is_some()
         || state.engine.pending_optional_cost.is_some()
         || state.engine.pending_optional_cost_sacrifice.is_some()
+}
+
+/// The placement marks of the leading same-controller group. Ordering marks
+/// a whole group at once (`apply_order_triggers`); otherwise only the lone
+/// trigger being placed is marked (`drain_pending_triggers_or_decide`), and
+/// targets are chosen only for a marked trigger. Captures made during
+/// placement wait outside `pending_triggers`, so no group is ever partly
+/// marked and no unmarked trigger carries targets.
+fn validate_trigger_placement_group(state: &GameState) -> Result<(), String> {
+    let Some(first) = state.engine.pending_triggers.first() else {
+        return Ok(());
+    };
+    let group = state
+        .engine
+        .pending_triggers
+        .iter()
+        .take_while(|trigger| trigger.controller == first.controller);
+    let mut ordered = false;
+    let mut unordered = false;
+    for trigger in group {
+        if trigger.placement_ordered {
+            ordered = true;
+        } else if !trigger.targets.is_empty() || !trigger.target_contracts.is_empty() {
+            return Err("an unordered pending trigger already carries targets".into());
+        } else {
+            unordered = true;
+        }
+    }
+    if ordered && unordered {
+        return Err("a pending trigger group is only partly ordered".into());
+    }
+    Ok(())
 }
 
 /// Place a checkpoint's triggers in APNAP order, pausing for its choices.
@@ -20667,6 +20715,14 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             if state.engine.pending_triggers.is_empty() {
                 return None;
             }
+        }
+        if validate_trigger_placement_group(state).is_err() {
+            let source = state.engine.pending_triggers[0].source;
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+            return Some(Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            });
         }
         let choice = pending_trigger_placement_choice(state);
         if let Some(TriggerPlacementChoice::Order(group_len)) = choice {
@@ -20806,10 +20862,6 @@ pub(crate) fn pending_trigger_choose_mode_active_v1(state: &GameState) -> bool {
         || !matches!(muldrotha_v1::decision(state), Ok(None))
         || trigger_placement_waits_for_action(state)
     {
-        return false;
-    }
-    #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_cards_v1::e3::entry_choice_decision(state).is_some() {
         return false;
     }
     let Some(first) = state.engine.pending_triggers.first() else {
@@ -29221,6 +29273,9 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    // Restored trigger placement state, before any route can mutate.
+    waiting_placement_v1::validate_for_step(state)?;
+    validate_trigger_placement_group(state)?;
     if crate::graveyard_order_v1::owns_operation(state) {
         return crate::graveyard_order_v1::step(state, action);
     }
