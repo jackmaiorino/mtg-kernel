@@ -2258,10 +2258,6 @@ pub(crate) fn entry_choice_pending(state: &GameState) -> bool {
 
 /// Answers the pending as-enters choice.
 pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<(), String> {
-    if crate::eternal_legacy_e5b_v1::pending_decision(state).is_some() {
-        crate::eternal_legacy_e5b_v1::answer_pending_decision(state, option)?;
-        return Ok(());
-    }
     if crate::eternal_legacy_e7a_v1::answer_entry_choice(state, option)? {
         return Ok(());
     }

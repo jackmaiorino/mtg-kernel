@@ -14151,6 +14151,415 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn limited_miracle_reveal_suspends_a_resolving_draw_then_discard() {
+        fn choose(
+            session: &mut RlEpisodeSessionV1,
+            accept: impl Fn(&ActionSemanticV1) -> bool,
+        ) -> RlSessionResponseV1 {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected a Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| accept(&action.semantic))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "test action missing from step {}: {:?}",
+                        decision.step, decision.legal_actions
+                    )
+                });
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap()
+        }
+
+        let island = card_id_by_name("Island").unwrap();
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            100,
+            100,
+            ["miracle-p0".into(), "miracle-p1".into()],
+            [&[island; 40], &[island; 40]],
+            crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+            true,
+        )
+        .unwrap();
+        let state = &mut session.state;
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.players[1].draws_this_turn = 0;
+        state.players[1].mana_pool[crate::mana::ManaColor::B.pool_index()] = 2;
+        let dack = add_battlefield_object(state, PlayerId::P0, "Dack Fayden");
+        crate::planeswalker_v1::after_zone_change(state, dack, None);
+        let second = state.players[1].library[0];
+        let miracle = add_battlefield_object(state, PlayerId::P1, "Metamorphosis Fanatic");
+        assert_eq!(state.players[1].battlefield.pop(), Some(miracle));
+        state.objects.get_mut(miracle).zone = Zone::Library;
+        state.players[1].library.insert(0, miracle);
+        session.current = None;
+        session.advance_to_decision_or_terminal();
+
+        choose(&mut session, |action| {
+            matches!(action, ActionSemanticV1::ActivateAbility { source, ability_index: 0, .. }
+                if source.arena_id == dack.0)
+        });
+        choose(&mut session, |action| {
+            matches!(
+                action,
+                ActionSemanticV1::ChooseTarget {
+                    target: crate::rl::TargetRefV1::Player {
+                        player: crate::rl::PlayerSeatV1::P1
+                    },
+                    ..
+                }
+            )
+        });
+        for _ in 0..2 {
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Pass { .. })
+            });
+        }
+
+        let decision = session.current_response();
+        let mut snapshot = session.snapshot_v5();
+        let state_bytes = serde_json::to_vec(&session.state).unwrap();
+        snapshot.0.state = serde_json::from_slice(&state_bytes).unwrap();
+        let before_second_draw = session.state.players[1].library.first() == Some(&second);
+        assert!(before_second_draw);
+        assert!(session.state.engine.pending_discard.is_none());
+        assert_eq!(session.state.players[1].draws_this_turn, 1);
+        let mut refused = snapshot.0.state.clone();
+        assert_eq!(
+            crate::engine::step(&mut refused, crate::engine::Action::Pass).unwrap_err(),
+            "only the active miracle reveal may be answered",
+        );
+        assert_eq!(serde_json::to_vec(&refused).unwrap(), state_bytes);
+
+        let mut forged = snapshot.0.state.clone();
+        let frames = &mut forged.engine.pending_effect.as_mut().unwrap().frames;
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { path, .. }) =
+            frames.last_mut()
+        else {
+            panic!("expected a bound first-draw remainder");
+        };
+        path[0] = 1; // Dack's discard leaf cannot authenticate a draw.
+        assert!(crate::effect::validate_pending_effect_choice(&forged).is_err());
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut forged),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        let mut forged_offer = snapshot.0.state.clone();
+        let ordinary = forged_offer.players[1]
+            .hand
+            .iter()
+            .copied()
+            .find(|&card| card != miracle)
+            .unwrap();
+        forged_offer.eternal_v1.as_mut().unwrap().e5b.miracle_offers[0] =
+            crate::state::ObjectLinkV4 {
+                object: ordinary,
+                zone_change_count: forged_offer.objects.get(ordinary).zone_change_count,
+            };
+        assert_eq!(
+            crate::engine::step(
+                &mut forged_offer.clone(),
+                crate::engine::Action::ChooseEffectOption(0)
+            )
+            .unwrap_err(),
+            "miracle offer lost its first-draw receipt",
+        );
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut forged_offer),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        // The same frame for a first draw this resolution did not stop at,
+        // such as a declined draw-step miracle: its history has no marker.
+        let is_marker = |event: &crate::event::CommittedEvent| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::MiracleDrawSuspendedV1 { .. }
+            )
+        };
+        let mut earlier_draw = snapshot.0.state.clone();
+        assert_eq!(
+            earlier_draw
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| is_marker(event))
+                .count(),
+            1
+        );
+        let unmarked: Vec<_> = earlier_draw
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| !is_marker(event))
+            .cloned()
+            .collect();
+        earlier_draw.engine.event_history = unmarked.into();
+        assert!(crate::effect::validate_pending_effect_choice(&earlier_draw).is_err());
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut earlier_draw),
+            crate::engine::Decision::Halted { .. }
+        ));
+        // A marker of another stack item does not bind this resolution.
+        let mut other_item = snapshot.0.state.clone();
+        let remarked: Vec<_> = other_item
+            .engine
+            .event_history
+            .iter()
+            .cloned()
+            .map(|mut event| {
+                if let crate::event::CommittedEvent::MiracleDrawSuspendedV1 {
+                    stack_item_id, ..
+                } = &mut event
+                {
+                    *stack_item_id = crate::ids::StackItemId(stack_item_id.0 + 1000);
+                }
+                event
+            })
+            .collect();
+        other_item.engine.event_history = remarked.into();
+        assert!(crate::effect::validate_pending_effect_choice(&other_item).is_err());
+
+        let mut wrong_zone = snapshot.0.state.clone();
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { drawn, .. }) = wrong_zone
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .last_mut()
+        else {
+            unreachable!()
+        };
+        drawn.expected_zone = Zone::Graveyard;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_zone).is_err());
+
+        let mut wrong_draw_count = snapshot.0.state.clone();
+        wrong_draw_count.players[1].draws_this_turn = 2;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_draw_count).is_err());
+
+        let mut wrong_card = snapshot.0.state.clone();
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { drawn, .. }) = wrong_card
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .last_mut()
+        else {
+            unreachable!()
+        };
+        drawn.object = ordinary;
+        drawn.expected_zone_change_count = wrong_card.objects.get(ordinary).zone_change_count;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_card).is_err());
+
+        let mut wrong_tail = snapshot.0.state.clone();
+        wrong_tail
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .remove(0);
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_tail).is_err());
+
+        let mut overlapping_choice = snapshot.0.state.clone();
+        overlapping_choice
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .choice = Some(crate::effect::PendingEffectChoice::ChooseOption {
+            player: PlayerId::P1,
+            path: Vec::new(),
+            options: Vec::new(),
+            purpose: crate::effect::EffectOptionChoicePurpose::Generic,
+        });
+        assert!(crate::effect::validate_pending_effect_choice(&overlapping_choice).is_err());
+
+        let mut overlapping_discard = snapshot.0.state.clone();
+        overlapping_discard.engine.pending_discard = Some(crate::engine::PendingDiscard {
+            player: PlayerId::P1,
+            count: 1,
+            resume: crate::engine::DiscardResume::None,
+        });
+        assert!(crate::effect::validate_pending_effect_choice(&overlapping_discard).is_err());
+
+        // `step` refuses what `advance` refuses: a later live offer that is
+        // not a first draw, even while the first offer is.
+        let mut second_offer = snapshot.0.state.clone();
+        second_offer
+            .eternal_v1
+            .as_mut()
+            .unwrap()
+            .e5b
+            .miracle_offers
+            .push(crate::state::ObjectLinkV4 {
+                object: ordinary,
+                zone_change_count: second_offer.objects.get(ordinary).zone_change_count,
+            });
+        assert_eq!(
+            crate::engine::step(
+                &mut second_offer.clone(),
+                crate::engine::Action::ChooseEffectOption(0)
+            )
+            .unwrap_err(),
+            "miracle offer lost its first-draw receipt",
+        );
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut second_offer),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        // A restored terminal discard this resolution never reached: Dack's
+        // discard staged at the reveal, its second draw skipped, while the
+        // draw's captures defer. Only the interpreter's receipt proves the
+        // discard was reached.
+        let mut skipped_draw = snapshot.0.state.clone();
+        let original_hand: Vec<_> = skipped_draw.players[1]
+            .hand
+            .iter()
+            .map(|&object| crate::effect::EffectObjectBinding {
+                object,
+                expected_zone: Zone::Hand,
+                expected_zone_change_count: skipped_draw.objects.get(object).zone_change_count,
+            })
+            .collect();
+        let pending = skipped_draw.engine.pending_effect.as_mut().unwrap();
+        assert!(matches!(
+            pending.frames.pop(),
+            Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { .. })
+        ));
+        let Some(crate::effect::EffectFrame::Program {
+            op: crate::effect::EffectOp::DiscardCards { count, .. },
+            path,
+        }) = pending.frames.last()
+        else {
+            panic!("Dack's discard leaf follows its draw");
+        };
+        let skipped_discard = crate::engine::PendingDiscard {
+            player: PlayerId::P1,
+            count: *count,
+            resume: crate::engine::DiscardResume::FinishEffectContinuation {
+                stack_item_id: pending.resolving_item.v4.stack_item_id,
+                path: path.clone(),
+                original_hand,
+            },
+        };
+        skipped_draw.engine.pending_discard = Some(skipped_discard.clone());
+        assert!(crate::eternal_vintage_e7b_v1::dredge::deferring_captures(
+            &skipped_draw
+        ));
+        assert!(
+            crate::effect::validate_resumable_discard(&skipped_draw, &skipped_discard).is_err()
+        );
+
+        // A spent remainder cannot be replayed. Narset, Parter of Veils
+        // prevents the second draw, so P1 still has drawn only the miracle
+        // card; the resumption marker records that the stop was spent.
+        let mut prevented = snapshot.0.state.clone();
+        let narset =
+            add_battlefield_object(&mut prevented, PlayerId::P0, "Narset, Parter of Veils");
+        crate::planeswalker_v1::after_zone_change(&mut prevented, narset, None);
+        let stopped = prevented
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .frames
+            .clone();
+        crate::engine::step(&mut prevented, crate::engine::Action::ChooseEffectOption(0)).unwrap();
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut prevented),
+            crate::engine::Decision::Discard { .. }
+        ));
+        assert_eq!(prevented.players[1].draws_this_turn, 1);
+        assert_eq!(prevented.players[1].library.first(), Some(&second));
+        let mut replayed = prevented.clone();
+        replayed.engine.pending_discard = None;
+        replayed.engine.pending_effect.as_mut().unwrap().frames = stopped;
+        assert!(crate::effect::validate_pending_effect_choice(&replayed).is_err());
+
+        for option in [0, 1] {
+            session.restore_v5(&snapshot);
+            assert_eq!(session.current_response(), decision);
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::ChooseEffectOption { source, option_index, .. }
+                    if source.arena_id == miracle.0 && *option_index == option)
+            });
+            assert!(session.state.players[1].hand.contains(&second));
+            assert_eq!(session.state.players[1].draws_this_turn, 2);
+            assert_eq!(
+                session
+                    .state
+                    .known_hand_cards(PlayerId::P0, PlayerId::P1)
+                    .iter()
+                    .any(|entry| entry.object == miracle),
+                option == 1,
+            );
+            assert_eq!(session.state.stack.len(), 1);
+            assert_eq!(session.state.stack[0].source, dack);
+            // Dack's discard is its last instruction: it waits inside the
+            // resolution only while the draw's captures are deferred.
+            let mut terminal_without_capture = session.state.clone();
+            let discard = terminal_without_capture
+                .engine
+                .pending_discard
+                .clone()
+                .expect("Dack's terminal discard waits inside its resolution");
+            assert!(
+                crate::effect::validate_resumable_discard(&terminal_without_capture, &discard)
+                    .is_ok()
+            );
+            crate::eternal_vintage_e7b_v1::dredge::stop_deferring(&mut terminal_without_capture);
+            assert!(
+                crate::effect::validate_resumable_discard(&terminal_without_capture, &discard)
+                    .is_err()
+            );
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Discard { cards, .. }
+                    if cards.iter().any(|card| card.arena_id == miracle.0))
+            });
+            assert_eq!(session.state.objects.get(miracle).zone, Zone::Hand);
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Discard { .. })
+            });
+            assert_eq!(session.state.objects.get(miracle).zone, Zone::Graveyard);
+            assert_eq!(session.state.stack.len(), usize::from(option == 1));
+            if option == 1 {
+                assert_eq!(session.state.stack[0].source, miracle);
+                for _ in 0..2 {
+                    choose(&mut session, |action| {
+                        matches!(action, ActionSemanticV1::Pass { .. })
+                    });
+                }
+                let RlSessionResponseV1::Decision(after) = session.current_response() else {
+                    panic!("expected priority after the miracle trigger");
+                };
+                assert!(after.legal_actions.iter().all(|action| {
+                    !matches!(&action.semantic, ActionSemanticV1::ChooseEffectOption { source, .. }
+                        if source.arena_id == miracle.0)
+                }));
+                assert_eq!(session.state.objects.get(miracle).zone, Zone::Graveyard);
+            }
+        }
+    }
+
     #[cfg(feature = "limited-fdn-fixtures")]
     mod limited_trigger_order_tests {
         use super::*;
