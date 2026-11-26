@@ -5961,21 +5961,6 @@ pub(crate) fn had_card_def(
     })
 }
 
-/// Whether any object (optionally excluding `exclude_object`) ever had
-/// `card_def` recorded in `copied_card_defs`.
-pub(crate) fn any_copied_card_def(
-    state: &GameState,
-    card_def: u16,
-    exclude_object: Option<ObjectId>,
-) -> bool {
-    state.standard_v1.as_ref().is_some_and(|standard| {
-        standard
-            .copied_card_defs
-            .iter()
-            .any(|&(id, _, def)| Some(id) != exclude_object && def == card_def)
-    })
-}
-
 /// Ends the copy at `index`: a later copy of the same creature inherits the
 /// values it saved; otherwise the creature gets them back.
 fn end_aegis_copy(state: &mut GameState, index: usize) {

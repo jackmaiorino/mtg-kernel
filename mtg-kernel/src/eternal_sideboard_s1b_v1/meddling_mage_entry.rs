@@ -416,6 +416,18 @@ impl MetamorphCopyV1 {
                 ))
     }
 
+    fn is_discard_companion_event(ev: &CommittedEvent, discard_at: usize) -> bool {
+        matches!(
+            ev,
+            CommittedEvent::TinybonesV72 { journal }
+                if matches!(
+                    journal.as_ref(),
+                    crate::engine::tinybones_v72::JournalV72::Discarded(record)
+                        if record.move_history_index == discard_at as u64
+                )
+        )
+    }
+
     fn discard_matches(&self, state: &GameState, entry: usize, controller: PlayerId) -> bool {
         use crate::copy_entry_v1::EntryAnswer;
         let Some(EntryAnswer::Discard(selected)) = self.entry_answer else {
@@ -427,18 +439,39 @@ impl MetamorphCopyV1 {
         let Some(live) = state.objects.try_get(land.source) else {
             return false;
         };
-        let start = self.cast_at.or(self.vial.map(|v| v.chosen_at));
-        let Some(receipt_at) = self
-            .show_and_tell
-            .map(|show| show.chosen_at)
-            .or(self.prepared_at)
-        else {
-            return false;
+        let history = &state.engine.event_history;
+        // CR 614.12: positively bind the Mox Diamond land discard to this exact
+        // producer's resolution rather than an earlier unrelated discard while
+        // the producer sat on the stack.
+        let receipt_at = if let Some(show) = self.show_and_tell {
+            let Some(cast_at) = self.cast_at else {
+                return false;
+            };
+            if cast_at >= at || at >= show.chosen_at || show.chosen_at >= entry {
+                return false;
+            }
+            show.chosen_at
+        } else if let Some(vial) = self.vial {
+            let Some(prepared_at) = self.prepared_at else {
+                return false;
+            };
+            if vial.chosen_at.checked_add(1) != Some(at)
+                || at >= prepared_at
+                || prepared_at.checked_add(1) != Some(entry)
+            {
+                return false;
+            }
+            prepared_at
+        } else {
+            let (Some(cast_at), Some(prepared_at)) = (self.cast_at, self.prepared_at) else {
+                return false;
+            };
+            if cast_at >= at || at >= prepared_at || prepared_at.checked_add(1) != Some(entry) {
+                return false;
+            }
+            prepared_at
         };
-        if start.is_none_or(|start| start >= at)
-            || at >= receipt_at
-            || receipt_at >= entry
-            || land.zone != Zone::Hand
+        if land.zone != Zone::Hand
             || land.owner != controller
             || land.controller != controller
             || live.owner != land.owner
@@ -447,7 +480,7 @@ impl MetamorphCopyV1 {
                 .is_some_and(|def| def.has_type(CardType::Land))
             || !crate::engine::source_card_def_matches(state, land, live.card_def)
             || !matches!(
-                state.engine.event_history.get(at),
+                history.get(at),
                 Some(CommittedEvent::ZoneChange {
                     object,
                     from: Zone::Hand,
@@ -458,41 +491,16 @@ impl MetamorphCopyV1 {
         {
             return false;
         }
-        // CR 614.12: the discard must occur inside this producer's resolution
-        // immediately before its choice/preparation receipt, with no
-        // intervening stack departures, casts, or other zone changes.
-        if state.engine.event_history[at + 1..receipt_at]
+        // Only companion receipts for this exact discard (e.g. Tinybones's
+        // discard journal) may appear between the land discard and the
+        // immediately following preparation / Show and Tell choice receipt.
+        if !history[at + 1..receipt_at]
             .iter()
-            .any(|ev| {
-                matches!(
-                    ev,
-                    CommittedEvent::ZoneChange { .. }
-                        | CommittedEvent::SpellCast { .. }
-                        | CommittedEvent::Tap { .. }
-                        | CommittedEvent::Draw { .. }
-                        | CommittedEvent::CreateToken { .. }
-                        | CommittedEvent::MeddlingMageEntryV1 { .. }
-                )
-            })
+            .all(|ev| Self::is_discard_companion_event(ev, at))
         {
             return false;
         }
-        if let Some(vial) = self.vial {
-            if state.engine.event_history[vial.chosen_at + 1..at]
-                .iter()
-                .any(|ev| {
-                    matches!(
-                        ev,
-                        CommittedEvent::ZoneChange { .. }
-                            | CommittedEvent::SpellCast { .. }
-                            | CommittedEvent::MeddlingMageEntryV1 { .. }
-                    )
-                })
-            {
-                return false;
-            }
-        }
-        let changes = state.engine.event_history[at..]
+        let changes = history[at..]
             .iter()
             .filter(
                 |ev| matches!(ev, CommittedEvent::ZoneChange { object, .. } if *object == land.source),
@@ -900,7 +908,7 @@ fn copy_entry_matches(
         _ => return false,
     };
     let prepared_matches = match copy.prepared_at {
-        Some(at) => copy.needs_prepared_receipt() && anchor <= at && at < entry &&
+        Some(at) => copy.needs_prepared_receipt() && anchor <= at && at.checked_add(1) == Some(entry) &&
             matches!(history.get(at), Some(CommittedEvent::MeddlingMageEntryV1 { journal })
                 if matches!(journal.as_ref(), JournalV1::NoncastCopyPrepared { copy: original } if original == copy))
             && !history[at + 1..entry].iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == copy.copied.source)),

@@ -456,15 +456,254 @@ pub(crate) fn cannot_transform_in_place(state: &GameState, object: ObjectId) -> 
     )
 }
 
-fn game_has_card_name(state: &GameState, name: &str, exclude_object: Option<ObjectId>) -> bool {
+fn zone_and_zcc_at(
+    state: &GameState,
+    object: ObjectId,
+    at: usize,
+) -> Option<(crate::state::Zone, u32)> {
+    let live = state.objects.try_get(object)?;
+    let after = state.engine.event_history.get(at + 1..)?;
+    if after.iter().any(|ev| {
+        matches!(ev, event::CommittedEvent::CreateToken { object: created, .. } if *created == object)
+    }) {
+        return None;
+    }
+    let mut first_from = None;
+    let mut changes: u32 = 0;
+    for ev in after {
+        if let event::CommittedEvent::ZoneChange {
+            object: moved,
+            from,
+            ..
+        } = ev
+        {
+            if *moved == object {
+                if first_from.is_none() {
+                    first_from = Some(*from);
+                }
+                changes = changes.checked_add(1)?;
+            }
+        }
+    }
+    let zcc_at = live.zone_change_count.checked_sub(changes)?;
+    Some((first_from.unwrap_or(live.zone), zcc_at))
+}
+
+fn object_was_named_on_battlefield_at(
+    state: &GameState,
+    object: ObjectId,
+    name: &str,
+    at: usize,
+) -> bool {
     let Some(target_id) = card_id_by_name(name) else {
         return false;
     };
-    state
-        .objects
+    let Some((crate::state::Zone::Battlefield, zcc_at)) = zone_and_zcc_at(state, object, at) else {
+        return false;
+    };
+    let Some(live) = state.objects.try_get(object) else {
+        return false;
+    };
+    live.card_def == target_id
+        || crate::standard_cards_v1::had_card_def(state, object, zcc_at, target_id)
+}
+
+fn any_permanent_named_on_battlefield_at(
+    state: &GameState,
+    name: &str,
+    exclude: Option<ObjectId>,
+    at: usize,
+) -> bool {
+    let Some(target_id) = card_id_by_name(name) else {
+        return false;
+    };
+    state.objects.iter().any(|(id, live)| {
+        if Some(id) == exclude {
+            return false;
+        }
+        let Some((crate::state::Zone::Battlefield, zcc_at)) = zone_and_zcc_at(state, id, at) else {
+            return false;
+        };
+        live.card_def == target_id
+            || crate::standard_cards_v1::had_card_def(state, id, zcc_at, target_id)
+    })
+}
+
+fn any_permanent_on_battlefield_by(
+    state: &GameState,
+    name: &str,
+    exclude: Option<ObjectId>,
+    entry: usize,
+) -> bool {
+    if any_permanent_named_on_battlefield_at(state, name, exclude, entry) {
+        return true;
+    }
+    let Some(target_id) = card_id_by_name(name) else {
+        return false;
+    };
+    // Also accept a permanent that had been on the battlefield earlier in the
+    // game (before `entry`), e.g. a Phantasmal Image that died after a token
+    // copied it. Never matches an unused card that never left library/hand.
+    state.engine.event_history[..entry]
         .iter()
-        .any(|(id, obj)| Some(id) != exclude_object && obj.card_def == target_id)
-        || crate::standard_cards_v1::any_copied_card_def(state, target_id, exclude_object)
+        .enumerate()
+        .any(|(at, ev)| {
+            let obj = match ev {
+                event::CommittedEvent::ZoneChange {
+                    object,
+                    from: crate::state::Zone::Battlefield,
+                    ..
+                }
+                | event::CommittedEvent::ZoneChange {
+                    object,
+                    to: crate::state::Zone::Battlefield,
+                    ..
+                }
+                | event::CommittedEvent::CreateToken { object, .. } => *object,
+                _ => return false,
+            };
+            if Some(obj) == exclude {
+                return false;
+            }
+            let check_at = match ev {
+                event::CommittedEvent::ZoneChange {
+                    from: crate::state::Zone::Battlefield,
+                    ..
+                } => at.saturating_sub(1),
+                _ => at,
+            };
+            let Some((crate::state::Zone::Battlefield, zcc_at)) =
+                zone_and_zcc_at(state, obj, check_at)
+            else {
+                return false;
+            };
+            state.objects.try_get(obj).is_some_and(|live| {
+                live.card_def == target_id
+                    || crate::standard_cards_v1::had_card_def(state, obj, zcc_at, target_id)
+            })
+        })
+}
+
+fn has_cleanup_boundary_after(state: &GameState, entry: usize) -> bool {
+    state.engine.event_history[entry + 1..].iter().any(|ev| {
+        matches!(
+            ev,
+            event::CommittedEvent::BeginningEndStep { .. }
+                | event::CommittedEvent::UpkeepBegan { .. }
+        )
+    })
+}
+
+fn has_upkeep_between(state: &GameState, start: usize, end: usize) -> bool {
+    start < end
+        && state.engine.event_history[start..end]
+            .iter()
+            .any(|ev| matches!(ev, event::CommittedEvent::UpkeepBegan { .. }))
+}
+
+fn donor_targeted_after(state: &GameState, donor: AbilitySourceContractV4, entry: usize) -> bool {
+    state.engine.event_history[entry + 1..].iter().any(|ev| {
+        matches!(
+            ev,
+            event::CommittedEvent::Targeted {
+                target,
+                target_zone_change_count,
+                ..
+            } if *target == donor.source && *target_zone_change_count == donor.zone_change_count
+        )
+    })
+}
+
+/// Reconstructs the donor's exact `face_index` as of `entry` by inverting each
+/// committed in-place `Transformed` event for the same battlefield incarnation
+/// after `entry` (CR 707.2, 712.8).
+fn reconstruct_face_at_entry(
+    state: &GameState,
+    donor: ObjectId,
+    current_face: u8,
+    entry: usize,
+) -> Option<u8> {
+    if current_face > 1 {
+        return None;
+    }
+    let mut face = current_face;
+    for ev in state.engine.event_history[entry + 1..].iter().rev() {
+        if let event::CommittedEvent::Transformed { object, face_index } = ev {
+            if *object == donor {
+                if *face_index != face || *face_index > 1 {
+                    return None;
+                }
+                face = 1 - face;
+            }
+        }
+    }
+    Some(face)
+}
+
+/// Authenticates that `donor` was actually covered by Saheeli, Sublime
+/// Artificer's -2 temporary copy effect at `entry` — either via a live
+/// `saheeli_copies` record on the same incarnation, or (after cleanup or
+/// departure unwound it) via an actual same-turn two-target activation targeting
+/// `(donor.source, donor.zone_change_count)` while Saheeli was on the
+/// battlefield. Never accepts an unused Saheeli in a library or hand.
+fn donor_saheeli_covered_at_entry(
+    state: &GameState,
+    donor: AbilitySourceContractV4,
+    donor_same_incarnation: bool,
+    entry: usize,
+) -> bool {
+    if donor_same_incarnation && crate::eternal_cube_c8b_v1::has_saheeli_copy(state, donor.source) {
+        return true;
+    }
+    if donor_same_incarnation && !has_cleanup_boundary_after(state, entry) {
+        return false;
+    }
+    if !crate::standard_cards_v1::had_card_def(
+        state,
+        donor.source,
+        donor.zone_change_count,
+        donor.card_def,
+    ) {
+        return false;
+    }
+    let history = &state.engine.event_history[..entry];
+    history.iter().enumerate().any(|(at, ev)| {
+        let event::CommittedEvent::Targeted {
+            target,
+            target_zone_change_count,
+            targeting_stack_item,
+            targeting_controller,
+        } = ev
+        else {
+            return false;
+        };
+        if *target != donor.source
+            || *target_zone_change_count != donor.zone_change_count
+            || has_upkeep_between(state, at + 1, entry)
+        {
+            return false;
+        }
+        let has_second_target = history.iter().any(|other_ev| {
+            matches!(
+                other_ev,
+                event::CommittedEvent::Targeted {
+                    target: other_target,
+                    targeting_stack_item: other_item,
+                    targeting_controller: other_controller,
+                    ..
+                } if *other_item == *targeting_stack_item
+                    && *other_controller == *targeting_controller
+                    && *other_target != donor.source
+            )
+        });
+        has_second_target
+            && any_permanent_named_on_battlefield_at(
+                state,
+                crate::eternal_cube_c8b_v1::SAHEELI,
+                None,
+                at,
+            )
+    })
 }
 
 fn donor_had_name(
@@ -539,34 +778,153 @@ fn copy_mods_structurally_valid(
     mods.added_subtypes == expected_subtypes
 }
 
-fn game_has_type_granter_for(
+/// Authenticates that a non-artifact, non-creature donor was actually granted
+/// Artifact or Creature at `entry` by a real battlefield effect or same-turn
+/// targeting activation (never by an unused card in a library or hand).
+fn donor_type_granted_at_entry(
     state: &GameState,
+    donor: AbilitySourceContractV4,
     def: &crate::card_def::CardDef,
     face_index: u8,
+    donor_same_incarnation: bool,
+    entry: usize,
 ) -> bool {
     use crate::card_def::CardType;
-    if game_has_card_name(state, "Liquimetal Coating", None)
-        || game_has_card_name(state, "Mycosynth Lattice", None)
-    {
+    let can_have_expired_eot = !donor_same_incarnation || has_cleanup_boundary_after(state, entry);
+
+    // Static battlefield permanents that were on the battlefield at `entry`
+    // (covers cases where the static permanent left play after `entry`).
+    if any_permanent_named_on_battlefield_at(state, "Mycosynth Lattice", None, entry) {
         return true;
     }
     let types = def.types_for_face(face_index);
     if types.contains(&CardType::Enchantment)
-        && (game_has_card_name(state, "Opalescence", None) || def.name == "Lurking Skirge")
+        && !def.subtypes_for_face(face_index).contains(&Subtype::Aura)
+        && any_permanent_named_on_battlefield_at(state, "Opalescence", Some(donor.source), entry)
     {
         return true;
     }
-    if types.contains(&CardType::Planeswalker) && def.name == "Kaito, Bane of Nightmares" {
-        return true;
+    if any_permanent_named_on_battlefield_at(state, "Unable to Scream", None, entry)
+        || any_permanent_named_on_battlefield_at(state, "Swift Reconfiguration", None, entry)
+    {
+        let aura_could_have_enchanted_donor = ["Unable to Scream", "Swift Reconfiguration"]
+            .into_iter()
+            .filter_map(card_id_by_name)
+            .any(|aura_id| {
+                state.objects.iter().any(|(id, live)| {
+                    let Some((crate::state::Zone::Battlefield, zcc_at)) =
+                        zone_and_zcc_at(state, id, entry)
+                    else {
+                        return false;
+                    };
+                    let is_aura = live.card_def == aura_id
+                        || crate::standard_cards_v1::had_card_def(state, id, zcc_at, aura_id);
+                    is_aura
+                        && (!donor_same_incarnation
+                            || live.zone != crate::state::Zone::Battlefield
+                            || live.v4.attached_to.is_some_and(|host| {
+                                host.object == donor.source
+                                    && host.zone_change_count == donor.zone_change_count
+                            }))
+                })
+            });
+        if aura_could_have_enchanted_donor {
+            return true;
+        }
     }
-    if types.contains(&CardType::Land)
-        && (!def.activated_abilities.is_empty()
-            || game_has_card_name(state, "Life // Death", None)
-            || game_has_card_name(state, "Badgermole Cub", None)
-            || game_has_card_name(state, "Nissa, Who Shakes the World", None))
+
+    // Until-end-of-turn Liquimetal Coating: requires an actual Liquimetal
+    // Coating on the battlefield that tapped and targeted this exact donor
+    // incarnation in the same turn before `entry`, and could only have worn off
+    // if the donor left play or a cleanup boundary passed after `entry`.
+    let history = &state.engine.event_history[..entry];
+    if can_have_expired_eot
+        && history.iter().enumerate().any(|(tap_at, ev)| {
+            let event::CommittedEvent::Tap { object: coating } = ev else {
+                return false;
+            };
+            tap_at + 1 < entry
+                && !has_upkeep_between(state, tap_at + 2, entry)
+                && object_was_named_on_battlefield_at(state, *coating, "Liquimetal Coating", tap_at)
+                && matches!(
+                    history.get(tap_at + 1),
+                    Some(event::CommittedEvent::Targeted {
+                        target,
+                        target_zone_change_count,
+                        ..
+                    }) if *target == donor.source && *target_zone_change_count == donor.zone_change_count
+                )
+        })
     {
         return true;
     }
+
+    // Permanent incarnation-bound type changes (Oko Elk, Lurking Skirge,
+    // Badgermole Cub earthbend, Nissa +1) remain live while `donor_same_incarnation`
+    // is true, so they only need historical fallback once the donor has left play.
+    if !donor_same_incarnation {
+        if history.iter().enumerate().any(|(at, ev)| {
+            matches!(
+                ev,
+                event::CommittedEvent::Targeted {
+                    target,
+                    target_zone_change_count,
+                    ..
+                } if *target == donor.source && *target_zone_change_count == donor.zone_change_count
+            ) && (any_permanent_named_on_battlefield_at(state, "Oko, Thief of Crowns", None, at)
+                || (types.contains(&CardType::Land)
+                    && (any_permanent_named_on_battlefield_at(state, "Badgermole Cub", None, at)
+                        || any_permanent_named_on_battlefield_at(
+                            state,
+                            "Nissa, Who Shakes the World",
+                            None,
+                            at,
+                        ))))
+        }) {
+            return true;
+        }
+        if types.contains(&CardType::Enchantment) && face_index == 0 && def.name == "Lurking Skirge"
+        {
+            return true;
+        }
+    }
+
+    if types.contains(&CardType::Planeswalker)
+        && face_index == 0
+        && def.name == "Kaito, Bane of Nightmares"
+    {
+        let active_at_entry = history
+            .iter()
+            .rev()
+            .find_map(|ev| match ev {
+                event::CommittedEvent::UpkeepBegan { player } => Some(*player),
+                _ => None,
+            })
+            .unwrap_or(state.active_player);
+        if active_at_entry == donor.controller {
+            return true;
+        }
+    }
+
+    if types.contains(&CardType::Land) && can_have_expired_eot {
+        if def.animation.is_some() {
+            return true;
+        }
+        if let Some(life_id) = card_id_by_name("Life // Death") {
+            let life_cast = history.iter().enumerate().any(|(at, ev)| {
+                matches!(
+                    ev,
+                    event::CommittedEvent::SpellCast { spell, controller }
+                        if *controller == donor.controller
+                            && state.objects.try_get(*spell).is_some_and(|o| o.card_def == life_id)
+                ) && !has_upkeep_between(state, at + 1, entry)
+            });
+            if life_cast {
+                return true;
+            }
+        }
+    }
+
     false
 }
 
@@ -674,30 +1032,6 @@ pub(crate) fn validate_completed_copy(
     if !copy_mods_structurally_valid(def, face_index, mods) {
         return false;
     }
-    let saheeli_in_game = game_has_card_name(state, crate::eternal_cube_c8b_v1::SAHEELI, None);
-    if mods.illusion_sacrifice
-        && !game_has_card_name(state, crate::eternal_cube_c8b_v1::PHANTASMAL_IMAGE, None)
-    {
-        return false;
-    }
-    if mods.override_name.as_deref() == Some(crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN)
-        && !game_has_card_name(state, crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN, None)
-    {
-        return false;
-    }
-    if mods.override_name.as_deref() == Some(crate::eternal_cube_c8c_v1::ABSORBING_MAN)
-        && !game_has_card_name(state, crate::eternal_cube_c8c_v1::ABSORBING_MAN, None)
-    {
-        return false;
-    }
-    if mods.added_artifact
-        && !saheeli_in_game
-        && !game_has_card_name(state, "Phyrexian Metamorph", Some(copy.physical.source))
-        && !game_has_card_name(state, crate::eternal_cube_c8b_v1::VAULTBORN_TYRANT, None)
-    {
-        return false;
-    }
-
     let Some(donor_live) = state.objects.try_get(copy.copied.source) else {
         return false;
     };
@@ -727,7 +1061,63 @@ pub(crate) fn validate_completed_copy(
         donor_same_incarnation,
         "Phyrexian Metamorph",
     );
-    let saheeli_covered = saheeli_in_game && mods.added_artifact;
+    let donor_saheeli_live = donor_same_incarnation
+        && crate::eternal_cube_c8b_v1::has_saheeli_copy(state, copy.copied.source);
+    let donor_saheeli_covered =
+        donor_saheeli_covered_at_entry(state, copy.copied, donor_same_incarnation, entry);
+    let saheeli_covered = donor_saheeli_covered && mods.added_artifact;
+
+    if mods.illusion_sacrifice
+        && !donor_was_image
+        && !any_permanent_on_battlefield_by(
+            state,
+            crate::eternal_cube_c8b_v1::PHANTASMAL_IMAGE,
+            None,
+            entry,
+        )
+    {
+        return false;
+    }
+    if mods.override_name.as_deref() == Some(crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN)
+        && !donor_was_spider
+        && !any_permanent_on_battlefield_by(
+            state,
+            crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN,
+            None,
+            entry,
+        )
+    {
+        return false;
+    }
+    if mods.override_name.as_deref() == Some(crate::eternal_cube_c8c_v1::ABSORBING_MAN)
+        && !donor_was_absorbing
+        && !any_permanent_on_battlefield_by(
+            state,
+            crate::eternal_cube_c8c_v1::ABSORBING_MAN,
+            None,
+            entry,
+        )
+    {
+        return false;
+    }
+    if mods.added_artifact
+        && !donor_was_metamorph
+        && !donor_saheeli_covered
+        && !any_permanent_on_battlefield_by(
+            state,
+            "Phyrexian Metamorph",
+            Some(copy.physical.source),
+            entry,
+        )
+        && !any_permanent_on_battlefield_by(
+            state,
+            crate::eternal_cube_c8b_v1::VAULTBORN_TYRANT,
+            None,
+            entry,
+        )
+    {
+        return false;
+    }
 
     if !saheeli_covered {
         if donor_was_image && !mods.illusion_sacrifice {
@@ -760,7 +1150,8 @@ pub(crate) fn validate_completed_copy(
     }
 
     if donor_same_incarnation
-        && !saheeli_in_game
+        && !(donor_saheeli_covered
+            && (!donor_saheeli_live || donor_targeted_after(state, copy.copied, entry)))
         && donor_live.card_def == copy.copied.card_def
         && !crate::standard_cards_v1::active_aegis_copy(state, copy.copied.source)
         && !crate::eternal_legacy_e7a_v1::active_copy(state, copy.copied.source)
@@ -788,12 +1179,9 @@ pub(crate) fn validate_completed_copy(
         } else if mods != &live_vals.mods {
             return false;
         }
-        let donor_transformed_after = state.engine.event_history[entry + 1..].iter().any(|ev| {
-            matches!(ev, event::CommittedEvent::Transformed { object, .. } if *object == copy.copied.source)
-        });
-        if !donor_transformed_after
-            && !crate::eternal_cube_c8c_v1::is_absorbing_copy(state, copy.copied.source)
-            && face_index != donor_live.v4.face_index
+        if !crate::eternal_cube_c8c_v1::is_absorbing_copy(state, copy.copied.source)
+            && reconstruct_face_at_entry(state, copy.copied.source, donor_live.v4.face_index, entry)
+                != Some(face_index)
         {
             return false;
         }
@@ -825,7 +1213,16 @@ pub(crate) fn validate_completed_copy(
         let live_eligible = donor_same_incarnation
             && (crate::engine::object_has_type(state, copy.copied.source, CardType::Artifact)
                 || crate::engine::object_has_type(state, copy.copied.source, CardType::Creature));
-        if !live_eligible && !game_has_type_granter_for(state, def, face_index) {
+        if !live_eligible
+            && !donor_type_granted_at_entry(
+                state,
+                copy.copied,
+                def,
+                face_index,
+                donor_same_incarnation,
+                entry,
+            )
+        {
             return false;
         }
     }
