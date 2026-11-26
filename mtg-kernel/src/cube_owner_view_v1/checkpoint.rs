@@ -1,42 +1,47 @@
-//! Checkpoint header contract (D6 / `m4-interfaces/v2` change 2) and
-//! deterministic stand-in seats for D16 before D3 and D6 merge.
+//! D6 checkpoint loading (`load_checkpoint_read_only_v1`), D3 learned seat
+//! factory (`ModelSeatForward`, `LearnedSeatPicker`, `LearnedSeatBuilder`),
+//! `m4-interfaces/v2` change 2 `head_updates` validation, and the `--fixture`
+//! test stand-in path.
 //!
-//! ## D6 checkpoint fields D16 reads
-//!
-//! From `checkpoint.json` (schema `mtg-kernel-cube-draft-build-checkpoint/v1`):
-//! - `schema`: `"mtg-kernel-cube-draft-build-checkpoint/v1"`
-//! - `model_identity`: string identifying the model architecture
-//! - `parameter_layout_sha256`: 64-hex sha256 of the parameter layout
-//! - `card_index_sha256`: 64-hex sha256 of the card index
-//! - `cube_table_sha256`: 64-hex sha256 of the cube table
-//! - `card_database_hash`: string hash of the card database
-//! - `training_math`: string describing the arithmetic and sampler identities
-//! - `segment`: string segment name (for example `"b1"`, `"k1"`, `"i1"`)
-//! - `update`: u64 checkpoint update number (for example `32`, `64`, `96`, `128`)
-//! - `state_sha256`: 64-hex canonical state sha256
-//! - `head_updates`: last key in the checkpoint header (`m4-interfaces/v2`
-//!   change 2), a JSON object with keys `pick`, `value`, `count`, `pointer`,
-//!   `type_set`, `split` in that exact order, each an unquoted decimal u64.
-//!
-//! Extra weight/optimizer/league keys written by D6 are ignored by the header
-//! reader so real D6 checkpoints parse without schema friction.
+//! Real checkpoints load through D6's `load_checkpoint_read_only_v1(path, table)`
+//! against a verified D1 `CubeTableV1`. That verifies the checkpoint schema,
+//! canonical `state_sha256`, `card_index_sha256`, `cube_table_sha256`,
+//! `card_database_sha256`, `parameter_layout_sha256`, and model parameter
+//! restoration, and we additionally enforce `m4-interfaces/v2` change 2's raw
+//! JSON check that `head_updates` is the final top-level key with exact key
+//! order `pick`, `value`, `count`, `pointer`, `type_set`, `split` as unquoted
+//! decimal u64 integers.
 
 use crate::card_def::CARD_DEFS;
+use crate::cube_draft_build_v1::card_index::CubeTableV1;
+use crate::cube_draft_build_v1::model::{ModelCardRowsV1, ModelV1};
 use crate::cube_draft_v1::{
     basic_land_ids, card_colour_bits, land_colour_bits, DECK_CARDS, PACK_SIZE, POOL_CARDS, ROUNDS,
 };
-use crate::cube_owner_view_v1::if2::{
+use crate::cube_learned_seat_v1::{
+    LearnedSeatBuilder, LearnedSeatPicker, ModelSeatForward, SeatForward,
+};
+use crate::cube_seat_v1::{
     canonical_deck, BuildOutcome, BuildRows, DecisionKind, DecisionRow, PickOutcome, SeatBuilder,
     SeatError, SeatPickView, SeatPicker, LEARNED_SAMPLER_ID,
+};
+use crate::cube_training_driver_v1::{
+    load_checkpoint_read_only_v1, Checkpoint as D6Checkpoint, CHECKPOINT_SCHEMA,
 };
 use crate::m4_sampler_v1::{sample_v1, GRID_SIZE};
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
+use std::fs;
+use std::path::Path;
+use std::sync::Arc;
 
-/// Schema string for M4 draft-and-build checkpoints (design note section 6j).
-pub const CHECKPOINT_SCHEMA_V1: &str = "mtg-kernel-cube-draft-build-checkpoint/v1";
+pub use crate::cube_draft_build_v1::model::training::HeadUpdates;
+pub use crate::cube_training_driver_v1::Segment;
+
+/// Schema string for M4 draft-and-build checkpoints (`mtg-kernel-cube-draft-build-checkpoint/v1`).
+pub const CHECKPOINT_SCHEMA_V1: &str = CHECKPOINT_SCHEMA;
 
 /// Exact key order required by `m4-interfaces/v2` change 2 for `head_updates`.
 pub const HEAD_UPDATE_KEYS: [&str; 6] = ["pick", "value", "count", "pointer", "type_set", "split"];
@@ -44,6 +49,39 @@ pub const HEAD_UPDATE_KEYS: [&str; 6] = ["pick", "value", "count", "pointer", "t
 /// Human-facing head display names in `m4-interfaces/v2` change 2 order.
 pub const HEAD_DISPLAY_NAMES: [&str; 6] =
     ["pick", "value", "count", "pointer", "type set", "split"];
+
+/// Returns all six `(display_name, json_key, count)` entries of a `HeadUpdates`
+/// struct in `m4-interfaces/v2` change 2 order.
+pub fn head_updates_entries(hu: HeadUpdates) -> [(&'static str, &'static str, u64); 6] {
+    [
+        (HEAD_DISPLAY_NAMES[0], HEAD_UPDATE_KEYS[0], hu.pick),
+        (HEAD_DISPLAY_NAMES[1], HEAD_UPDATE_KEYS[1], hu.value),
+        (HEAD_DISPLAY_NAMES[2], HEAD_UPDATE_KEYS[2], hu.count),
+        (HEAD_DISPLAY_NAMES[3], HEAD_UPDATE_KEYS[3], hu.pointer),
+        (HEAD_DISPLAY_NAMES[4], HEAD_UPDATE_KEYS[4], hu.type_set),
+        (HEAD_DISPLAY_NAMES[5], HEAD_UPDATE_KEYS[5], hu.split),
+    ]
+}
+
+/// D0.21 training-state label for one head's `head_updates` count.
+///
+/// A count of zero is labelled `"untrained"`. A count `N > 0` is labelled
+/// `"trained for N updates under random play"`.
+pub fn format_head_training_label(updates: u64) -> String {
+    if updates == 0 {
+        "untrained".to_owned()
+    } else {
+        format!("trained for {updates} updates under random play")
+    }
+}
+
+/// Canonical snake_case string for D6's [`Segment`].
+pub fn segment_name(segment: Segment) -> &'static str {
+    match segment {
+        Segment::BuilderOnly => "builder_only",
+        Segment::PickPhase => "pick_phase",
+    }
+}
 
 /// Errors while parsing or validating a checkpoint header for D16.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +108,7 @@ impl fmt::Display for CheckpointHeaderError {
                 write!(f, "invalid head_updates key order or encoding: {detail}")
             }
             Self::HeadUpdatesNotLast(detail) => {
-                write!(f, "head_updates must be the last header key: {detail}")
+                write!(f, "head_updates must be the final top-level key: {detail}")
             }
         }
     }
@@ -78,52 +116,9 @@ impl fmt::Display for CheckpointHeaderError {
 
 impl std::error::Error for CheckpointHeaderError {}
 
-/// Per-head committed optimizer update counts (`m4-interfaces/v2` change 2).
-///
-/// Field declaration order matches the frozen JSON key order:
-/// `pick`, `value`, `count`, `pointer`, `type_set`, `split`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HeadUpdates {
-    pub pick: u64,
-    pub value: u64,
-    pub count: u64,
-    pub pointer: u64,
-    pub type_set: u64,
-    pub split: u64,
-}
-
-impl HeadUpdates {
-    /// Returns all six `(display_name, json_key, count)` entries in frozen order.
-    pub fn entries(self) -> [(&'static str, &'static str, u64); 6] {
-        [
-            (HEAD_DISPLAY_NAMES[0], HEAD_UPDATE_KEYS[0], self.pick),
-            (HEAD_DISPLAY_NAMES[1], HEAD_UPDATE_KEYS[1], self.value),
-            (HEAD_DISPLAY_NAMES[2], HEAD_UPDATE_KEYS[2], self.count),
-            (HEAD_DISPLAY_NAMES[3], HEAD_UPDATE_KEYS[3], self.pointer),
-            (HEAD_DISPLAY_NAMES[4], HEAD_UPDATE_KEYS[4], self.type_set),
-            (HEAD_DISPLAY_NAMES[5], HEAD_UPDATE_KEYS[5], self.split),
-        ]
-    }
-}
-
-/// D0.21 training-state label for one head's `head_updates` count.
-///
-/// A count of zero is labelled `"untrained"`. A count `N > 0` is labelled
-/// `"trained for N updates under random play"`.
-pub fn format_head_training_label(updates: u64) -> String {
-    if updates == 0 {
-        "untrained".to_owned()
-    } else {
-        format!("trained for {updates} updates under random play")
-    }
-}
-
-/// D6 checkpoint header fields consumed by D16.
-///
-/// Unknown top-level keys (such as weights, Adam moments, league snapshots and
-/// column scales) are allowed when deserializing so a full D6 checkpoint file
-/// can be passed directly.
+/// Verified checkpoint metadata fields consumed by D16, matching D6's
+/// `Checkpoint` JSON format (`card_database_sha256`, `segment`, `run`,
+/// `update`, `head_updates` as the final top-level key).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointHeader {
     pub schema: String,
@@ -131,22 +126,53 @@ pub struct CheckpointHeader {
     pub parameter_layout_sha256: String,
     pub card_index_sha256: String,
     pub cube_table_sha256: String,
-    pub card_database_hash: String,
+    pub card_database_sha256: String,
     pub training_math: String,
-    pub segment: String,
+    pub sampler: String,
+    pub segment: Segment,
+    pub run: String,
     pub update: u64,
     pub state_sha256: String,
     pub head_updates: HeadUpdates,
 }
 
 impl CheckpointHeader {
-    /// Parses a flat top-level checkpoint JSON document and validates every
-    /// header field and `m4-interfaces/v2` change 2's `head_updates` key order
-    /// and unquoted decimal integer encoding.
-    ///
-    /// Top-level `head_updates` is required and no other known header key may
-    /// follow it. When D6's typed checkpoint loader lands, this fixture header
-    /// scanner will be replaced by D6's loader.
+    /// Extracts and validates D16's header view from a verified D6 [`D6Checkpoint`].
+    pub fn from_d6_checkpoint(checkpoint: &D6Checkpoint) -> Result<Self, CheckpointHeaderError> {
+        let card_index_sha256 = checkpoint.card_index_sha256.clone().ok_or_else(|| {
+            CheckpointHeaderError::InvalidField {
+                field: "card_index_sha256",
+                detail: "checkpoint lacks card_index_sha256 pin".to_owned(),
+            }
+        })?;
+        let cube_table_sha256 = checkpoint.cube_table_sha256.clone().ok_or_else(|| {
+            CheckpointHeaderError::InvalidField {
+                field: "cube_table_sha256",
+                detail: "checkpoint lacks cube_table_sha256 pin".to_owned(),
+            }
+        })?;
+        let header = Self {
+            schema: checkpoint.schema.clone(),
+            model_identity: checkpoint.model_identity.clone(),
+            parameter_layout_sha256: checkpoint.parameter_layout_sha256.clone(),
+            card_index_sha256,
+            cube_table_sha256,
+            card_database_sha256: checkpoint.card_database_sha256.clone(),
+            training_math: checkpoint.training_math.clone(),
+            sampler: checkpoint.sampler.clone(),
+            segment: checkpoint.segment,
+            run: checkpoint.run.clone(),
+            update: checkpoint.update,
+            state_sha256: checkpoint.state_sha256.clone(),
+            head_updates: checkpoint.head_updates,
+        };
+        header.validate()?;
+        Ok(header)
+    }
+
+    /// Parses a top-level checkpoint JSON document and validates every header
+    /// field and `m4-interfaces/v2` change 2's `head_updates` placement (final
+    /// top-level key), exact 6-key order, and unquoted decimal u64 encoding.
     pub fn from_json_str(text: &str) -> Result<Self, CheckpointHeaderError> {
         let header: Self = serde_json::from_str(text)
             .map_err(|err| CheckpointHeaderError::Json(err.to_string()))?;
@@ -155,7 +181,7 @@ impl CheckpointHeader {
         Ok(header)
     }
 
-    /// Validates schema string and hash field formats.
+    /// Validates schema string, sampler identity, and hash field formats.
     pub fn validate(&self) -> Result<(), CheckpointHeaderError> {
         if self.schema != CHECKPOINT_SCHEMA_V1 {
             return Err(CheckpointHeaderError::InvalidSchema(self.schema.clone()));
@@ -164,9 +190,15 @@ impl CheckpointHeader {
         check_sha256_hex("parameter_layout_sha256", &self.parameter_layout_sha256)?;
         check_sha256_hex("card_index_sha256", &self.card_index_sha256)?;
         check_sha256_hex("cube_table_sha256", &self.cube_table_sha256)?;
-        check_non_empty("card_database_hash", &self.card_database_hash)?;
+        check_non_empty("card_database_sha256", &self.card_database_sha256)?;
         check_non_empty("training_math", &self.training_math)?;
-        check_non_empty("segment", &self.segment)?;
+        if self.sampler != LEARNED_SAMPLER_ID {
+            return Err(CheckpointHeaderError::InvalidField {
+                field: "sampler",
+                detail: format!("expected {LEARNED_SAMPLER_ID:?}, got {:?}", self.sampler),
+            });
+        }
+        check_non_empty("run", &self.run)?;
         check_sha256_hex("state_sha256", &self.state_sha256)?;
         Ok(())
     }
@@ -198,8 +230,7 @@ fn check_sha256_hex(field: &'static str, value: &str) -> Result<(), CheckpointHe
 
 /// Inspects raw top-level JSON text to enforce `m4-interfaces/v2` change 2 on
 /// `head_updates`:
-/// 1. `head_updates` is present as a top-level key and no known header key
-///    appears after it.
+/// 1. `head_updates` is the final key of the top-level JSON object.
 /// 2. Keys inside `head_updates` appear in the exact order
 ///    `pick`, `value`, `count`, `pointer`, `type_set`, `split`.
 /// 3. Each count is encoded as an unquoted decimal integer.
@@ -213,27 +244,15 @@ pub fn validate_head_updates_raw_json(text: &str) -> Result<(), CheckpointHeader
             CheckpointHeaderError::HeadUpdatesOrder("missing top-level head_updates key".to_owned())
         })?;
 
-    // Every known header field must appear before head_updates so that
-    // head_updates is the last key of the checkpoint header (IF2 change 2).
-    const HEADER_KEYS: [&str; 10] = [
-        "schema",
-        "model_identity",
-        "parameter_layout_sha256",
-        "card_index_sha256",
-        "cube_table_sha256",
-        "card_database_hash",
-        "training_math",
-        "segment",
-        "update",
-        "state_sha256",
-    ];
-    for entry in &top_entries[head_updates_idx + 1..] {
-        if HEADER_KEYS.contains(&entry.key.as_str()) {
-            return Err(CheckpointHeaderError::HeadUpdatesNotLast(format!(
-                "header key {:?} appears after head_updates",
-                entry.key
-            )));
-        }
+    if head_updates_idx + 1 != top_entries.len() {
+        let trailing: Vec<&str> = top_entries[head_updates_idx + 1..]
+            .iter()
+            .map(|e| e.key.as_str())
+            .collect();
+        return Err(CheckpointHeaderError::HeadUpdatesNotLast(format!(
+            "keys {:?} appear after head_updates",
+            trailing
+        )));
     }
 
     let head_obj_slice =
@@ -426,15 +445,10 @@ impl<'a> RawJsonScanner<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// Seat factory trait (abstraction point for D3 + D6 wiring)
+// Seat factory trait and real D3 + D6 implementation
 // ---------------------------------------------------------------------------
 
 /// Supplies the checkpoint's learned [`SeatPicker`] and [`SeatBuilder`].
-///
-/// When D3 (`LearnedSeatPicker`, `LearnedSeatBuilder`) and D6 (checkpoint
-/// loader) merge, one concrete implementation wraps `Arc<ModelV1>` loaded from
-/// the checkpoint file. Until then, [`StandInCheckpoint`] implements this trait
-/// using the real pinned `m4_sampler_v1::sample_v1` routine.
 pub trait OwnerViewSeatFactory {
     fn make_learned_picker(&self) -> Box<dyn SeatPicker>;
     fn make_learned_builder(&self) -> Box<dyn SeatBuilder>;
@@ -443,18 +457,69 @@ pub trait OwnerViewSeatFactory {
     }
 }
 
+/// Real seat factory backed by D3's [`ModelSeatForward`], [`LearnedSeatPicker`],
+/// and [`LearnedSeatBuilder`] over a verified D2 [`ModelV1`] loaded by D6's
+/// `load_checkpoint_read_only_v1`.
+pub struct LearnedCheckpointSeats {
+    forward: Arc<dyn SeatForward>,
+}
+
+impl LearnedCheckpointSeats {
+    /// Precomputes both trunk card-hidden tables once for `model` and `rows`.
+    pub fn from_model(
+        model: Arc<ModelV1>,
+        rows: Arc<ModelCardRowsV1>,
+        threads: usize,
+    ) -> Result<Self, SeatError> {
+        let forward: Arc<dyn SeatForward> = Arc::new(ModelSeatForward::new(model, rows, threads)?);
+        Ok(Self { forward })
+    }
+}
+
+impl OwnerViewSeatFactory for LearnedCheckpointSeats {
+    fn make_learned_picker(&self) -> Box<dyn SeatPicker> {
+        Box::new(LearnedSeatPicker::new(Arc::clone(&self.forward)))
+    }
+
+    fn make_learned_builder(&self) -> Box<dyn SeatBuilder> {
+        Box::new(LearnedSeatBuilder::new(Arc::clone(&self.forward)))
+    }
+
+    fn is_stand_in(&self) -> bool {
+        false
+    }
+}
+
+/// Loads a real D6 checkpoint through D6's [`load_checkpoint_read_only_v1`]
+/// against a verified D1 [`CubeTableV1`], checks IF2 change 2's raw JSON
+/// `head_updates` final-key format, and builds D3's [`LearnedCheckpointSeats`].
+pub fn load_real_checkpoint_v1(
+    path: &Path,
+    table: &CubeTableV1,
+    threads: usize,
+) -> Result<(CheckpointHeader, LearnedCheckpointSeats), String> {
+    let raw_text = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read checkpoint {}: {err}", path.display()))?;
+    validate_head_updates_raw_json(&raw_text)
+        .map_err(|err| format!("invalid checkpoint {}: {err}", path.display()))?;
+    let (checkpoint, model, rows) = load_checkpoint_read_only_v1(path, table)
+        .map_err(|err| format!("failed to load checkpoint {}: {err}", path.display()))?;
+    let header = CheckpointHeader::from_d6_checkpoint(&checkpoint)
+        .map_err(|err| format!("invalid checkpoint header {}: {err}", path.display()))?;
+    let seats = LearnedCheckpointSeats::from_model(model, rows, threads)
+        .map_err(|err| format!("failed to build D3 seats from {}: {err}", path.display()))?;
+    Ok((header, seats))
+}
+
 // ---------------------------------------------------------------------------
-// Small fixture checkpoint and stand-in learned seats (uses real D2a sampler)
+// Test-only fixture checkpoint and stand-in seats (CLI `--fixture` path only)
 // ---------------------------------------------------------------------------
 
-/// Small deterministic fixture parameters embedded in a stand-in checkpoint
-/// JSON file for exercising D16 before D3 and D6 merge.
-///
-/// Never used in training or reads. When a head's `head_updates` count is zero,
-/// the stand-in produces exact `0.0f32` logits for that head (matching D2's
-/// zero-initialised last layer). When non-zero, it produces deterministic
-/// finite `f32` logits driven solely by `fixture_seed` and the checkpoint's
-/// `head_updates`, sampled through the real pinned `m4_sampler_v1::sample_v1`.
+/// Model identity string used exclusively by test fixture checkpoints.
+pub const FIXTURE_MODEL_IDENTITY_V1: &str = "m4-draft-build-standin-fixture/v1";
+
+/// Small deterministic fixture parameters embedded in a test fixture checkpoint
+/// JSON file (used only when `--fixture` is passed explicitly).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixtureStandInParams {
@@ -481,15 +546,11 @@ impl Default for FixtureStandInParams {
     }
 }
 
-/// Model identity string used exclusively by stand-in fixture checkpoints.
-pub const FIXTURE_MODEL_IDENTITY_V1: &str = "m4-draft-build-standin-fixture/v1";
-
-/// Complete small fixture checkpoint JSON (D6 header plus required stand-in
-/// parameters).
+/// Small fixture checkpoint JSON matching D6's top-level format (`card_database_sha256`,
+/// `segment`, `run`, `update`, and `head_updates` as the final top-level key).
 ///
-/// `fixture_standin` has no serde default: a real checkpoint JSON that omits
-/// `fixture_standin` is refused instead of silently falling back to synthetic
-/// weights.
+/// `fixture_standin` has no serde default: a real D6 checkpoint JSON that omits
+/// `fixture_standin` is refused on the `--fixture` path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FixtureCheckpointFile {
     pub schema: String,
@@ -497,31 +558,35 @@ pub struct FixtureCheckpointFile {
     pub parameter_layout_sha256: String,
     pub card_index_sha256: String,
     pub cube_table_sha256: String,
-    pub card_database_hash: String,
+    pub card_database_sha256: String,
     pub training_math: String,
-    pub segment: String,
+    pub sampler: String,
+    pub segment: Segment,
+    pub run: String,
     pub update: u64,
     pub state_sha256: String,
-    pub head_updates: HeadUpdates,
     pub fixture_standin: FixtureStandInParams,
+    pub head_updates: HeadUpdates,
 }
 
 impl FixtureCheckpointFile {
     /// Constructs a small deterministic fixture checkpoint for any of the six
-    /// shakedown checkpoints (or any custom `segment`, `update`, `head_updates`).
+    /// shakedown checkpoints.
     pub fn for_shakedown_fixture(
-        segment: &str,
+        segment: Segment,
+        run: &str,
         update: u64,
         head_updates: HeadUpdates,
-        card_database_hash: &str,
+        card_database_sha256: &str,
     ) -> Self {
-        let fixture_seed = fixture_digest_u64(&format!("fixture-seed:{segment}:{update}"));
+        let seg_str = segment_name(segment);
+        let fixture_seed = fixture_digest_u64(&format!("fixture-seed:{seg_str}:{run}:{update}"));
         let fixture_standin = FixtureStandInParams {
             fixture_seed,
             ..FixtureStandInParams::default()
         };
         let state_sha256 = fixture_digest_hex(&format!(
-            "state:{segment}:{update}:{}:{}:{}:{}:{}:{}:{fixture_seed}",
+            "state:{seg_str}:{run}:{update}:{}:{}:{}:{}:{}:{}:{fixture_seed}",
             head_updates.pick,
             head_updates.value,
             head_updates.count,
@@ -535,14 +600,15 @@ impl FixtureCheckpointFile {
             parameter_layout_sha256: fixture_digest_hex("fixture-parameter-layout-v1"),
             card_index_sha256: fixture_digest_hex("fixture-card-index-v1"),
             cube_table_sha256: fixture_digest_hex("fixture-cube-table-v1"),
-            card_database_hash: card_database_hash.to_owned(),
-            training_math: "portable-math-v1+m4-ln-atanh23-f64-v1+softmax-cdf-splitmix64-v2"
-                .to_owned(),
-            segment: segment.to_owned(),
+            card_database_sha256: card_database_sha256.to_owned(),
+            training_math: "portable-math-v1+m4-ln-atanh23-f64-v1".to_owned(),
+            sampler: LEARNED_SAMPLER_ID.to_owned(),
+            segment,
+            run: run.to_owned(),
             update,
             state_sha256,
-            head_updates,
             fixture_standin,
+            head_updates,
         }
     }
 
@@ -554,9 +620,11 @@ impl FixtureCheckpointFile {
             parameter_layout_sha256: self.parameter_layout_sha256.clone(),
             card_index_sha256: self.card_index_sha256.clone(),
             cube_table_sha256: self.cube_table_sha256.clone(),
-            card_database_hash: self.card_database_hash.clone(),
+            card_database_sha256: self.card_database_sha256.clone(),
             training_math: self.training_math.clone(),
-            segment: self.segment.clone(),
+            sampler: self.sampler.clone(),
+            segment: self.segment,
+            run: self.run.clone(),
             update: self.update,
             state_sha256: self.state_sha256.clone(),
             head_updates: self.head_updates,
@@ -600,8 +668,7 @@ fn fixture_digest_u64(label: &str) -> u64 {
     u64::from_le_bytes(bytes)
 }
 
-/// Stand-in seat factory backed by [`FixtureStandInParams`] and the real pinned
-/// D2a sampler (`m4_sampler_v1::sample_v1`).
+/// Stand-in seat factory for test fixture runs (`--fixture` only).
 #[derive(Debug, Clone)]
 pub struct StandInCheckpoint {
     pub header: CheckpointHeader,
@@ -703,8 +770,6 @@ impl SeatPicker for StandInLearnedPicker {
         let mut pack_sorted = view.pack.to_vec();
         pack_sorted.sort_unstable();
 
-        // Untrained pick head emits exact 0.0f32 logits; trained stand-in emits
-        // deterministic finite logits that respect card id and pool colour overlap.
         let mut pool_colour_counts = [0u32; 5];
         for &id in view.pool {
             let bits = card_colour_bits(id) | land_colour_bits(id);
@@ -781,7 +846,6 @@ impl SeatBuilder for StandInLearnedBuilder {
             ));
         }
 
-        // Step 1: basics count B in 0..=40.
         let count_options: Vec<u16> = (0..=DECK_CARDS as u16).collect();
         let sharpness = (self.params.count_sharpness_milli as f32) / 1000.0f32;
         let count_logits: Vec<f32> = count_options
@@ -804,7 +868,6 @@ impl SeatBuilder for StandInLearnedBuilder {
         )?;
         let basics = count_row.chosen;
 
-        // Step 2: 40 - B pointer steps without replacement.
         let nonbasics_needed = (DECK_CARDS as usize) - usize::from(basics);
         let mut remaining = sorted_pool.clone();
         let mut chosen_cards = Vec::with_capacity(DECK_CARDS as usize);
@@ -829,7 +892,6 @@ impl SeatBuilder for StandInLearnedBuilder {
             pointer_rows.push(row);
         }
 
-        // Step 3 and 4: basic type set T and order-symmetric split.
         let mut type_set_row = None;
         let mut split_rows = Vec::new();
         if basics > 0 {

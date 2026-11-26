@@ -10,23 +10,27 @@
 //! 4. Distributions of `B` (`0..=40`) and `|T|` (`0..=5`) over 3,200 sampled
 //!    builds from drafts 200 to 299 (`k = 0..=3`).
 //!
-//! No game is played. Every page is a pure function of its checkpoint and its
-//! own `owner-view` seeds, never depending on a dose read or on another page.
+//! Real checkpoints load through D6's `load_checkpoint_read_only_v1` against a
+//! verified D1 `CubeTableV1` and sample through D3's `ModelSeatForward`,
+//! `LearnedSeatPicker` and `LearnedSeatBuilder` behind D5's `cube_seat_v1`
+//! interfaces. No game is played. Every page is a pure function of its
+//! checkpoint and its own `owner-view` seeds, never depending on a dose read
+//! or on another page.
 
 pub mod checkpoint;
 pub mod cli;
 pub mod html;
-pub mod if2;
 pub mod sample_plan;
 
 #[cfg(test)]
 mod tests;
 
 pub use checkpoint::{
-    format_head_training_label, validate_head_updates_raw_json, CheckpointHeader,
-    CheckpointHeaderError, FixtureCheckpointFile, FixtureStandInParams, HeadUpdates,
-    OwnerViewSeatFactory, StandInCheckpoint, CHECKPOINT_SCHEMA_V1, FIXTURE_MODEL_IDENTITY_V1,
-    HEAD_DISPLAY_NAMES, HEAD_UPDATE_KEYS,
+    format_head_training_label, head_updates_entries, load_real_checkpoint_v1, segment_name,
+    validate_head_updates_raw_json, CheckpointHeader, CheckpointHeaderError, FixtureCheckpointFile,
+    FixtureStandInParams, HeadUpdates, LearnedCheckpointSeats, OwnerViewSeatFactory, Segment,
+    StandInCheckpoint, CHECKPOINT_SCHEMA_V1, FIXTURE_MODEL_IDENTITY_V1, HEAD_DISPLAY_NAMES,
+    HEAD_UPDATE_KEYS,
 };
 pub use html::{format_probability, render_owner_view_html};
 pub use sample_plan::{

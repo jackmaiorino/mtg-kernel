@@ -8,6 +8,7 @@
 //! - Plain English with no em-dash characters.
 
 use crate::cube_draft_v1::BASIC_LAND_NAMES;
+use crate::cube_owner_view_v1::checkpoint::segment_name;
 use crate::cube_owner_view_v1::sample_plan::{
     CardSummary, FirstPickRankRow, OwnerViewPageData, PickerMode, FIRST_PICK_MIN_PACKS,
 };
@@ -53,7 +54,7 @@ pub fn render_owner_view_html(data: &OwnerViewPageData) -> String {
         escape_html(&data.law_boundary_notice)
     );
     if data.used_stand_in_seats {
-        out.push_str("<p class=\"banner banner-standin\"><strong>Stand-in notice:</strong> Rendered with fixture stand-in seats through the pinned m4_sampler_v1 routine (D3 learned seats and D6 checkpoint weights not yet wired).</p>\n");
+        out.push_str("<p class=\"banner banner-standin\"><strong>Stand-in notice:</strong> Rendered with test fixture stand-in seats through the pinned m4_sampler_v1 routine (--fixture path).</p>\n");
     }
     out.push_str("</header>\n\n");
 
@@ -67,10 +68,12 @@ pub fn render_owner_view_html(data: &OwnerViewPageData) -> String {
     write_kv(&mut out, "Checkpoint schema", &data.checkpoint.schema);
     write_kv(
         &mut out,
-        "Checkpoint segment / update",
+        "Checkpoint segment / run / update",
         &format!(
-            "{} / update {}",
-            data.checkpoint.segment, data.checkpoint.update
+            "{} / {} / update {}",
+            segment_name(data.checkpoint.segment),
+            data.checkpoint.run,
+            data.checkpoint.update
         ),
     );
     write_kv(
@@ -96,8 +99,8 @@ pub fn render_owner_view_html(data: &OwnerViewPageData) -> String {
     );
     write_kv(
         &mut out,
-        "Card database hash",
-        &data.checkpoint.card_database_hash,
+        "Card database sha256",
+        &data.checkpoint.card_database_sha256,
     );
     write_kv(&mut out, "Training math", &data.checkpoint.training_math);
     write_kv(&mut out, "Interfaces", &data.interfaces_version);

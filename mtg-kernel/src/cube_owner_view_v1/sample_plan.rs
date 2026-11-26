@@ -11,9 +11,10 @@ use crate::cube_draft_v1::{
     POOL_CARDS, SEATS,
 };
 use crate::cube_owner_view_v1::checkpoint::{
-    format_head_training_label, CheckpointHeader, OwnerViewSeatFactory,
+    format_head_training_label, head_updates_entries, segment_name, CheckpointHeader,
+    OwnerViewSeatFactory, Segment,
 };
-use crate::cube_owner_view_v1::if2::{
+use crate::cube_seat_v1::{
     run_seat_draft, BuildRows, DecisionRow, PassDirection, SeatError, SeatPickView, SeatPicker,
     UniformSeatPicker, M4_INTERFACES_VERSION,
 };
@@ -83,9 +84,11 @@ pub enum OwnerViewError {
     },
     CheckpointMismatch {
         run_id: String,
-        expected_segment: String,
+        expected_segment: Segment,
+        expected_training_run: String,
         expected_update: u64,
-        got_segment: String,
+        got_segment: Segment,
+        got_training_run: String,
         got_update: u64,
     },
     InvalidCheckpoint(String),
@@ -118,12 +121,16 @@ impl fmt::Display for OwnerViewError {
             Self::CheckpointMismatch {
                 run_id,
                 expected_segment,
+                expected_training_run,
                 expected_update,
                 got_segment,
+                got_training_run,
                 got_update,
             } => write!(
                 f,
-                "checkpoint mismatch for run {run_id:?}: expected segment {expected_segment:?} update {expected_update}, got segment {got_segment:?} update {got_update}"
+                "checkpoint mismatch for run {run_id:?}: expected segment {:?} training run {expected_training_run:?} update {expected_update}, got segment {:?} training run {got_training_run:?} update {got_update}",
+                segment_name(*expected_segment),
+                segment_name(*got_segment)
             ),
             Self::InvalidCheckpoint(msg) => write!(f, "invalid checkpoint header: {msg}"),
             Self::InvalidPool(msg) => write!(f, "invalid ordered pool: {msg}"),
@@ -278,12 +285,13 @@ pub enum PickerMode {
 }
 
 /// Declared mapping from each of the six D0.13 / D0.21 shakedown owner-view
-/// run ids to its expected checkpoint segment, checkpoint update and picker
-/// mode.
+/// run ids to its expected checkpoint segment, training run id, checkpoint
+/// update, and picker mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwnerViewPageSpec {
     pub run_id: &'static str,
-    pub expected_segment: &'static str,
+    pub expected_segment: Segment,
+    pub expected_training_run: &'static str,
     pub expected_update: u64,
     pub picker_mode: PickerMode,
 }
@@ -293,37 +301,43 @@ pub struct OwnerViewPageSpec {
 pub const SHAKEDOWN_PAGE_SPECS: [OwnerViewPageSpec; 6] = [
     OwnerViewPageSpec {
         run_id: "b1-u0032",
-        expected_segment: "b1",
+        expected_segment: Segment::BuilderOnly,
+        expected_training_run: "b1",
         expected_update: 32,
         picker_mode: PickerMode::UniformFixture,
     },
     OwnerViewPageSpec {
         run_id: "b1-u0064",
-        expected_segment: "b1",
+        expected_segment: Segment::BuilderOnly,
+        expected_training_run: "b1",
         expected_update: 64,
         picker_mode: PickerMode::UniformFixture,
     },
     OwnerViewPageSpec {
         run_id: "b1-u0096",
-        expected_segment: "b1",
+        expected_segment: Segment::BuilderOnly,
+        expected_training_run: "b1",
         expected_update: 96,
         picker_mode: PickerMode::UniformFixture,
     },
     OwnerViewPageSpec {
         run_id: "b1-u0128",
-        expected_segment: "b1",
+        expected_segment: Segment::BuilderOnly,
+        expected_training_run: "b1",
         expected_update: 128,
         picker_mode: PickerMode::UniformFixture,
     },
     OwnerViewPageSpec {
         run_id: "k1-u0064",
-        expected_segment: "k1",
+        expected_segment: Segment::PickPhase,
+        expected_training_run: "k1",
         expected_update: 64,
         picker_mode: PickerMode::LearnedPickHead,
     },
     OwnerViewPageSpec {
         run_id: "k1-u0128",
-        expected_segment: "k1",
+        expected_segment: Segment::PickPhase,
+        expected_training_run: "k1",
         expected_update: 128,
         picker_mode: PickerMode::LearnedPickHead,
     },
@@ -671,13 +685,16 @@ pub fn generate_owner_view_data(
         .validate()
         .map_err(|err| OwnerViewError::InvalidCheckpoint(err.to_string()))?;
     if checkpoint.segment != page_spec.expected_segment
+        || checkpoint.run != page_spec.expected_training_run
         || checkpoint.update != page_spec.expected_update
     {
         return Err(OwnerViewError::CheckpointMismatch {
             run_id: run_id.to_owned(),
-            expected_segment: page_spec.expected_segment.to_owned(),
+            expected_segment: page_spec.expected_segment,
+            expected_training_run: page_spec.expected_training_run.to_owned(),
             expected_update: page_spec.expected_update,
-            got_segment: checkpoint.segment.clone(),
+            got_segment: checkpoint.segment,
+            got_training_run: checkpoint.run.clone(),
             got_update: checkpoint.update,
         });
     }
@@ -706,9 +723,7 @@ pub fn generate_owner_view_data(
     let basic_ids = basic_land_ids()?;
 
     // Head labels directly from checkpoint.head_updates (IF2 change 2, D0.21).
-    let head_labels: Vec<HeadLabelRow> = checkpoint
-        .head_updates
-        .entries()
+    let head_labels: Vec<HeadLabelRow> = head_updates_entries(checkpoint.head_updates)
         .into_iter()
         .map(|(display_name, head_key, updates)| HeadLabelRow {
             head_key: head_key.to_owned(),
