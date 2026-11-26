@@ -378,6 +378,7 @@ fn build(
             text_color_changes: None,
             turn_schedule: None,
             ward_payments: None,
+            staged_escape: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,

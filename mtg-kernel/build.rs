@@ -75,6 +75,7 @@ mod build_eternal_p3e_v1;
 mod build_eternal_p3f_v1;
 mod build_eternal_p3g_v1;
 mod build_eternal_p3h_v1;
+mod build_eternal_p3i_v1;
 mod build_eternal_pf1a_v1;
 mod build_eternal_pf1b_v1;
 mod build_eternal_pf1c_v1;
@@ -4962,7 +4963,7 @@ fn enters_battlefield_tapped(card: &CardJson) -> bool {
     card.mechanics
         .iter()
         .any(|mechanic| mechanic == "enters_tapped")
-        && card.name != "Gingerbread Cabin"
+        && !matches!(card.name.as_str(), "Gingerbread Cabin" | "Sneaky Snacker")
 }
 
 fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
@@ -5046,7 +5047,7 @@ fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Blasphemous Edict" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 0, x_count: 0 })], condition: AltCostCondition::BattlefieldCreatureCountAtLeast(13) })",
         "Flourishing Bloom-Kin" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips:&[], generic:3, x_count:0 })], condition:AltCostCondition::DisguiseFromHand })",
-        "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeLands(2)], condition: AltCostCondition::Always })",
+        "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeControlled { count: 2, filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain) }], condition: AltCostCondition::Always })",
         "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",
         "Snuff Out" => "Some(AltCostDef { components: &[CostComponent::PayLife(4)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp) })",
         "Knight-Errant of Eos" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 })], condition: AltCostCondition::Always })",
@@ -5125,7 +5126,7 @@ fn flashback_for(name: &str) -> String {
             )
         }
         "Lava Dart" => {
-            "Some(FlashbackDef { cost: &[CostComponent::SacrificeLands(1)] })".to_string()
+            "Some(FlashbackDef { cost: &[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain) }] })".to_string()
         }
         "Deep Analysis" => {
             let (pips, generic, x_count) = parse_cost("{1}{U}");

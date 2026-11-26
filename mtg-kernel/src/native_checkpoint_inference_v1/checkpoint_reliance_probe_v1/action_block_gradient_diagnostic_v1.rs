@@ -7963,7 +7963,7 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     // Re-baselined again for the Phase 1 card lane merge (2026-09): merging
     // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
     // branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
-    // 0x064a_7c98_9255_ab3c), same root cause. Old (wave-1) value:
+    // 0x064a_..._ab3c (catalog v34)), same root cause. Old (wave-1) value:
     // "ae853cabe8cb59c0aa44e93e142d11963d4cc57893a1d9b27ffe7fedc6366a71".
     //
     // Re-baselined again 2026-09-16 (lead/phase1-golden-repins-v1, root cause
@@ -7989,7 +7989,7 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     // supplies the resulting joined-body digest; strict framing stays fixed.
     assert_eq!(
         historical_frame.sha256_v1(),
-        "011d1d9bf3f7cfb49860fa74d00fafc551f6b79419c01b01c6a56ad9dd6882a4",
+        "96adbd00ec3e6a34859f211f3aa6cb26fce6111cf9a57eb1ae11f8eeeb0dd56d",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );
     assert!(frame

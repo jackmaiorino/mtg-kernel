@@ -1,9 +1,14 @@
 {
- "note": "Seconds per plan unit of eternal_integration on hosted Linux runners, measured in the eight parts of run 45478368582 (2026-11-24, the first run in parts; each part ran on its own runner, some on the slower of the two hosted processors and some on the faster). A unit's time runs from its 'Running integration module' line to the next one, or to the part's inventory line. The two tests under 'isolated' are units of their own.",
+ "note": "Seconds per plan unit of eternal_integration on hosted Linux runners, measured in the eight parts of run 45478368582 (2026-11-24, the first run in parts; each part ran on its own runner, some on the slower of the two hosted processors and some on the faster). A unit's time runs from its 'Running integration module' line to the next one, or to the part's inventory line. The two tests under 'isolated' are units of their own. Entries added on main since that run (cube_b_census_v1, cube_deck_signal_v1, cube_draft_build_v1, cube_pod_runner_v1, cube_training_driver_v1, eternal_premodern_p3i_v1) keep their estimates until a hosted timing in parts is recorded.",
  "eternal_integration": {
   "bonder_owned_draws_v1": 1,
+  "cube_b_census_v1": 60,
+  "cube_deck_signal_v1": 60,
+  "cube_draft_build_v1": 1,
   "cube_draft_v1": 11,
   "cube_foreign_adventure_v1": 43,
+  "cube_pod_runner_v1": 60,
+  "cube_training_driver_v1": 60,
   "denial_owned_draws_v1": 1,
   "eternal_bo3_v1": 233,
   "eternal_bo3_v1::playable_75_decks_play_best_of_three_with_random_sideboarding": 705,
@@ -72,6 +77,7 @@
   "eternal_premodern_p3f_v1": 1,
   "eternal_premodern_p3g_v1": 1,
   "eternal_premodern_p3h_v1": 34,
+  "eternal_premodern_p3i_v1": 58,
   "eternal_public_extra_turns_v1": 43,
   "eternal_public_shroud_v1": 1,
   "eternal_sideboard_s1a_v1": 1,

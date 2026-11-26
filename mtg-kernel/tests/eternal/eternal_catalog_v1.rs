@@ -473,32 +473,6 @@ fn is_companion_action(action: &Value) -> bool {
         })
 }
 
-/// Whether the public session can follow this action. Policy observation v5
-/// fails closed while an Escape cast stages its graveyard exile (Sleep of the
-/// Dead, and every nonland card under Underworld Breach), so these games
-/// never begin either; the engine paths are covered by the rules tests.
-/// Every other action is admitted: schema 5 reports shroud (Sylvan
-/// Safekeeper's ability, Argothian Enchantress, Sterling Grove, Solitary
-/// Confinement) and the turn schedule once an extra turn is scheduled
-/// (Emrakul, the Aeons Torn's cast trigger, Time Walk, Time Vault's ability).
-fn session_can_follow(action: &Value, decision: &Value) -> bool {
-    let s = &action["semantic"];
-    if !matches!(
-        s["action_kind"].as_str(),
-        Some("cast_spell" | "activate_ability")
-    ) {
-        return true;
-    }
-    let Some(id) = s["source"]["card_db_id"].as_u64() else {
-        return true;
-    };
-    let id = id as usize;
-    s["action_kind"] != "cast_spell"
-        || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
-        || (CARD_DEFS[id].escape.is_none()
-            && !controls_named(decision, &s["actor"], "Underworld Breach"))
-}
-
 /// Counts the decision's reported Ward payments (pending and queued) by
 /// cost kind: generic mana, then life.
 fn count_ward_payments(decision: &Value, counts: &mut [usize; 2]) {
@@ -968,6 +942,9 @@ pub(crate) struct Game {
     /// acting player holds a card with that single spell name, which no
     /// action casts.
     pub(crate) mage_held_names: usize,
+    /// Decisions taken while an Escape cast is staged, whose observation
+    /// carries its `staged_escape` record.
+    pub(crate) staged_escape_decisions: usize,
     /// Decisions whose observation reports a Ward payment, by cost kind:
     /// generic mana, then life.
     pub(crate) ward_payments: [usize; 2],
@@ -1017,6 +994,7 @@ pub(crate) fn play_observed(
     let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
     let mut circle_choices = 0;
     let (mut mage_choices, mut mage_held_names) = ([0; 2], 0);
+    let mut staged_escape_decisions = 0;
     let mut ward_payments = [0; 2];
     let mut miracle_reveals = BTreeSet::new();
     let mut companion_actions = 0;
@@ -1085,11 +1063,21 @@ last actions:
                 circle_choices,
                 mage_choices,
                 mage_held_names,
+                staged_escape_decisions,
                 ward_payments,
             };
         }
         let decision = &reply["decision"];
         collect_overloaded_spells(decision, &mut overloaded_spells);
+        // The schema 5 record is an object while an Escape cast is staged
+        // and otherwise absent from the reply bytes, never null.
+        let staged = decision["observation"]["projection"]["staged_escape"].is_object();
+        assert_eq!(
+            raw.contains("\"staged_escape\""),
+            staged,
+            "seed={seed}: {raw}"
+        );
+        staged_escape_decisions += usize::from(staged);
         count_ward_payments(decision, &mut ward_payments);
         // No noncreature spell over the caster's lands is offered while an
         // opponent controls Lavinia, Azorius Renegade (wave S1l).
@@ -1123,11 +1111,13 @@ last actions:
                     .any(|name| mage_names.contains(name)),
             );
         }
+        // The public session follows every action: schema 5 reports shroud,
+        // the turn schedule once an extra turn is scheduled, Ward payments
+        // and a staged Escape cast.
         let actions: Vec<&Value> = decision["legal_actions"]
             .as_array()
             .unwrap()
             .iter()
-            .filter(|action| session_can_follow(action, decision))
             .collect();
         if let [only] = actions[..] {
             if is_attacker_inclusion(only, false)
@@ -1289,14 +1279,7 @@ fn expand_rows(rows: &[CustomCardCountV1]) -> Vec<u16> {
 fn register_for_ordered_game_one(deck: &SnapshotDeck) -> EternalRegisteredDeckV1 {
     let format = EternalFormatV1::from_snapshot_key(&deck.format).unwrap();
     let mainboard = expand_rows(&deck.deck.cards);
-    // PLAYABLE plays game one only. Before step C2 lands Alter Reality,
-    // Replenish's sideboard cannot register, so fall back to an empty
-    // sideboard whenever a sideboard card is not yet Full.
-    let sideboard = if deck.sideboard.iter().all(|row| fully_supported(&row.name)) {
-        expand_rows(&deck.sideboard)
-    } else {
-        Vec::new()
-    };
+    let sideboard = expand_rows(&deck.sideboard);
     let companion = deck
         .deck
         .companion
@@ -1365,6 +1348,7 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // with ranked actions and once with seeded random actions.
     let mut random_activations = 0;
     let mut companion_actions = 0;
+    let mut staged_escape_decisions = 0;
     let mut ward_payments = [0; 2];
     // Every deck casts a spell in its two ranked games (one per seat); a
     // single shuffle can leave one seat without a castable spell.
@@ -1419,7 +1403,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
                     mage_choices: [0; 2],
                     mage_held_names: 0,
                     // The ordered-graveyard session is not the schema 5
-                    // contract and reports no Ward payments.
+                    // contract and reports no Ward payments or staged
+                    // Escape casts.
+                    staged_escape_decisions: 0,
                     ward_payments: [0; 2],
                 };
             }
@@ -1445,6 +1431,7 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
             continue;
         };
         companion_actions += game.companion_actions;
+        staged_escape_decisions += game.staged_escape_decisions;
         ward_payments[0] += game.ward_payments[0];
         ward_payments[1] += game.ward_payments[1];
         if let Policy::Ranked = policy {
@@ -1483,6 +1470,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
         companion_actions > 0,
         "no game put a companion into its owner's hand"
     );
+    // Escape casts are followed (Underworld Breach, Uro, Sleep of the Dead).
+    println!("staged Escape decisions: {staged_escape_decisions}");
+    assert!(staged_escape_decisions > 0, "no game staged an Escape cast");
     // Spells and abilities target Ward permanents freely, and the session
     // follows each Ward payment (generic, life).
     println!("ward payment decisions (generic, life): {ward_payments:?}");

@@ -206,7 +206,7 @@ fn action_candidates(
 
 #[test]
 fn definitions_ids_and_generic_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
+    assert_eq!(KERNEL_CARDDB_HASH, 0x0777_a480_28de_38d7);
     for (name, expected_id) in [
         ("Cleansing Wildfire", 15),
         ("Duress", 24),

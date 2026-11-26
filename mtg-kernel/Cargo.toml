@@ -175,7 +175,15 @@ path = "src/bin/native_checkpoint_export_v1.rs"
 required-features = ["native-training-store-v2-production"]
 
 [[example]]
+name = "cube_b_census_v1"
+required-features = ["eternal-fixtures"]
+
+[[example]]
 name = "cube_census_v1"
+required-features = ["eternal-fixtures"]
+
+[[example]]
+name = "cube_deck_signal_v1"
 required-features = ["eternal-fixtures"]
 
 [[example]]
@@ -200,6 +208,10 @@ required-features = ["experimental-burn-net8-packed-cuda-v1"]
 
 [[example]]
 name = "cube_card_ids_v1"
+required-features = ["eternal-fixtures"]
+
+[[example]]
+name = "cube_pod_runner_v1"
 required-features = ["eternal-fixtures"]
 
 [[example]]
