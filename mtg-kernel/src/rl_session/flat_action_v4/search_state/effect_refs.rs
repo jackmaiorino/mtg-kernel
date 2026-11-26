@@ -459,6 +459,8 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
+            #[cfg(feature = "eternal-fixtures")]
+            MiracleDrawRemainderV1 { drawn, .. } => self.b(drawn),
             GenesisWaveV1 { choice, cards } => {
                 !matches!(
                     self.scope,
@@ -2121,6 +2123,12 @@ fn conflicts_in_scope(
                 s.raw(source.source) || source.attached_to.is_some_and(|link| s.raw(link.object))
             }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
+            // The suspended draw's hand card, which its pending frame binds.
+            MiracleDrawSuspendedV1 { drawn, .. } => s.raw(drawn.object),
+            MiracleDrawResumedV1 { .. } => false,
+            // The waiting discard's bound hand, which its pending discard binds.
+            ResolutionDiscardWaitsV1 { hand, .. } => hand.iter().any(|link| s.raw(link.object)),
+            ResolutionDrawChoiceOfferedV1 { .. } | ResolutionDrawChoiceAnsweredV1 { .. } => false,
             MonarchTrigger { binding } => s.raw(binding.source.source),
             KrenkoPaidV1 { .. }
             | KrenkoPaymentInputV1 { .. }

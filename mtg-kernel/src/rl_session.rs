@@ -14151,6 +14151,415 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn limited_miracle_reveal_suspends_a_resolving_draw_then_discard() {
+        fn choose(
+            session: &mut RlEpisodeSessionV1,
+            accept: impl Fn(&ActionSemanticV1) -> bool,
+        ) -> RlSessionResponseV1 {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected a Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| accept(&action.semantic))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "test action missing from step {}: {:?}",
+                        decision.step, decision.legal_actions
+                    )
+                });
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap()
+        }
+
+        let island = card_id_by_name("Island").unwrap();
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            100,
+            100,
+            ["miracle-p0".into(), "miracle-p1".into()],
+            [&[island; 40], &[island; 40]],
+            crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+            true,
+        )
+        .unwrap();
+        let state = &mut session.state;
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.players[1].draws_this_turn = 0;
+        state.players[1].mana_pool[crate::mana::ManaColor::B.pool_index()] = 2;
+        let dack = add_battlefield_object(state, PlayerId::P0, "Dack Fayden");
+        crate::planeswalker_v1::after_zone_change(state, dack, None);
+        let second = state.players[1].library[0];
+        let miracle = add_battlefield_object(state, PlayerId::P1, "Metamorphosis Fanatic");
+        assert_eq!(state.players[1].battlefield.pop(), Some(miracle));
+        state.objects.get_mut(miracle).zone = Zone::Library;
+        state.players[1].library.insert(0, miracle);
+        session.current = None;
+        session.advance_to_decision_or_terminal();
+
+        choose(&mut session, |action| {
+            matches!(action, ActionSemanticV1::ActivateAbility { source, ability_index: 0, .. }
+                if source.arena_id == dack.0)
+        });
+        choose(&mut session, |action| {
+            matches!(
+                action,
+                ActionSemanticV1::ChooseTarget {
+                    target: crate::rl::TargetRefV1::Player {
+                        player: crate::rl::PlayerSeatV1::P1
+                    },
+                    ..
+                }
+            )
+        });
+        for _ in 0..2 {
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Pass { .. })
+            });
+        }
+
+        let decision = session.current_response();
+        let mut snapshot = session.snapshot_v5();
+        let state_bytes = serde_json::to_vec(&session.state).unwrap();
+        snapshot.0.state = serde_json::from_slice(&state_bytes).unwrap();
+        let before_second_draw = session.state.players[1].library.first() == Some(&second);
+        assert!(before_second_draw);
+        assert!(session.state.engine.pending_discard.is_none());
+        assert_eq!(session.state.players[1].draws_this_turn, 1);
+        let mut refused = snapshot.0.state.clone();
+        assert_eq!(
+            crate::engine::step(&mut refused, crate::engine::Action::Pass).unwrap_err(),
+            "only the active miracle reveal may be answered",
+        );
+        assert_eq!(serde_json::to_vec(&refused).unwrap(), state_bytes);
+
+        let mut forged = snapshot.0.state.clone();
+        let frames = &mut forged.engine.pending_effect.as_mut().unwrap().frames;
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { path, .. }) =
+            frames.last_mut()
+        else {
+            panic!("expected a bound first-draw remainder");
+        };
+        path[0] = 1; // Dack's discard leaf cannot authenticate a draw.
+        assert!(crate::effect::validate_pending_effect_choice(&forged).is_err());
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut forged),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        let mut forged_offer = snapshot.0.state.clone();
+        let ordinary = forged_offer.players[1]
+            .hand
+            .iter()
+            .copied()
+            .find(|&card| card != miracle)
+            .unwrap();
+        forged_offer.eternal_v1.as_mut().unwrap().e5b.miracle_offers[0] =
+            crate::state::ObjectLinkV4 {
+                object: ordinary,
+                zone_change_count: forged_offer.objects.get(ordinary).zone_change_count,
+            };
+        assert_eq!(
+            crate::engine::step(
+                &mut forged_offer.clone(),
+                crate::engine::Action::ChooseEffectOption(0)
+            )
+            .unwrap_err(),
+            "miracle offer lost its first-draw receipt",
+        );
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut forged_offer),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        // The same frame for a first draw this resolution did not stop at,
+        // such as a declined draw-step miracle: its history has no marker.
+        let is_marker = |event: &crate::event::CommittedEvent| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::MiracleDrawSuspendedV1 { .. }
+            )
+        };
+        let mut earlier_draw = snapshot.0.state.clone();
+        assert_eq!(
+            earlier_draw
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| is_marker(event))
+                .count(),
+            1
+        );
+        let unmarked: Vec<_> = earlier_draw
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| !is_marker(event))
+            .cloned()
+            .collect();
+        earlier_draw.engine.event_history = unmarked.into();
+        assert!(crate::effect::validate_pending_effect_choice(&earlier_draw).is_err());
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut earlier_draw),
+            crate::engine::Decision::Halted { .. }
+        ));
+        // A marker of another stack item does not bind this resolution.
+        let mut other_item = snapshot.0.state.clone();
+        let remarked: Vec<_> = other_item
+            .engine
+            .event_history
+            .iter()
+            .cloned()
+            .map(|mut event| {
+                if let crate::event::CommittedEvent::MiracleDrawSuspendedV1 {
+                    stack_item_id, ..
+                } = &mut event
+                {
+                    *stack_item_id = crate::ids::StackItemId(stack_item_id.0 + 1000);
+                }
+                event
+            })
+            .collect();
+        other_item.engine.event_history = remarked.into();
+        assert!(crate::effect::validate_pending_effect_choice(&other_item).is_err());
+
+        let mut wrong_zone = snapshot.0.state.clone();
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { drawn, .. }) = wrong_zone
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .last_mut()
+        else {
+            unreachable!()
+        };
+        drawn.expected_zone = Zone::Graveyard;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_zone).is_err());
+
+        let mut wrong_draw_count = snapshot.0.state.clone();
+        wrong_draw_count.players[1].draws_this_turn = 2;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_draw_count).is_err());
+
+        let mut wrong_card = snapshot.0.state.clone();
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { drawn, .. }) = wrong_card
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .last_mut()
+        else {
+            unreachable!()
+        };
+        drawn.object = ordinary;
+        drawn.expected_zone_change_count = wrong_card.objects.get(ordinary).zone_change_count;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_card).is_err());
+
+        let mut wrong_tail = snapshot.0.state.clone();
+        wrong_tail
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .remove(0);
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_tail).is_err());
+
+        let mut overlapping_choice = snapshot.0.state.clone();
+        overlapping_choice
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .choice = Some(crate::effect::PendingEffectChoice::ChooseOption {
+            player: PlayerId::P1,
+            path: Vec::new(),
+            options: Vec::new(),
+            purpose: crate::effect::EffectOptionChoicePurpose::Generic,
+        });
+        assert!(crate::effect::validate_pending_effect_choice(&overlapping_choice).is_err());
+
+        let mut overlapping_discard = snapshot.0.state.clone();
+        overlapping_discard.engine.pending_discard = Some(crate::engine::PendingDiscard {
+            player: PlayerId::P1,
+            count: 1,
+            resume: crate::engine::DiscardResume::None,
+        });
+        assert!(crate::effect::validate_pending_effect_choice(&overlapping_discard).is_err());
+
+        // `step` refuses what `advance` refuses: a later live offer that is
+        // not a first draw, even while the first offer is.
+        let mut second_offer = snapshot.0.state.clone();
+        second_offer
+            .eternal_v1
+            .as_mut()
+            .unwrap()
+            .e5b
+            .miracle_offers
+            .push(crate::state::ObjectLinkV4 {
+                object: ordinary,
+                zone_change_count: second_offer.objects.get(ordinary).zone_change_count,
+            });
+        assert_eq!(
+            crate::engine::step(
+                &mut second_offer.clone(),
+                crate::engine::Action::ChooseEffectOption(0)
+            )
+            .unwrap_err(),
+            "miracle offer lost its first-draw receipt",
+        );
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut second_offer),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        // A restored terminal discard this resolution never reached: Dack's
+        // discard staged at the reveal, its second draw skipped, while the
+        // draw's captures defer. Only the interpreter's receipt proves the
+        // discard was reached.
+        let mut skipped_draw = snapshot.0.state.clone();
+        let original_hand: Vec<_> = skipped_draw.players[1]
+            .hand
+            .iter()
+            .map(|&object| crate::effect::EffectObjectBinding {
+                object,
+                expected_zone: Zone::Hand,
+                expected_zone_change_count: skipped_draw.objects.get(object).zone_change_count,
+            })
+            .collect();
+        let pending = skipped_draw.engine.pending_effect.as_mut().unwrap();
+        assert!(matches!(
+            pending.frames.pop(),
+            Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { .. })
+        ));
+        let Some(crate::effect::EffectFrame::Program {
+            op: crate::effect::EffectOp::DiscardCards { count, .. },
+            path,
+        }) = pending.frames.last()
+        else {
+            panic!("Dack's discard leaf follows its draw");
+        };
+        let skipped_discard = crate::engine::PendingDiscard {
+            player: PlayerId::P1,
+            count: *count,
+            resume: crate::engine::DiscardResume::FinishEffectContinuation {
+                stack_item_id: pending.resolving_item.v4.stack_item_id,
+                path: path.clone(),
+                original_hand,
+            },
+        };
+        skipped_draw.engine.pending_discard = Some(skipped_discard.clone());
+        assert!(crate::eternal_vintage_e7b_v1::dredge::deferring_captures(
+            &skipped_draw
+        ));
+        assert!(
+            crate::effect::validate_resumable_discard(&skipped_draw, &skipped_discard).is_err()
+        );
+
+        // A spent remainder cannot be replayed. Narset, Parter of Veils
+        // prevents the second draw, so P1 still has drawn only the miracle
+        // card; the resumption marker records that the stop was spent.
+        let mut prevented = snapshot.0.state.clone();
+        let narset =
+            add_battlefield_object(&mut prevented, PlayerId::P0, "Narset, Parter of Veils");
+        crate::planeswalker_v1::after_zone_change(&mut prevented, narset, None);
+        let stopped = prevented
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .frames
+            .clone();
+        crate::engine::step(&mut prevented, crate::engine::Action::ChooseEffectOption(0)).unwrap();
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut prevented),
+            crate::engine::Decision::Discard { .. }
+        ));
+        assert_eq!(prevented.players[1].draws_this_turn, 1);
+        assert_eq!(prevented.players[1].library.first(), Some(&second));
+        let mut replayed = prevented.clone();
+        replayed.engine.pending_discard = None;
+        replayed.engine.pending_effect.as_mut().unwrap().frames = stopped;
+        assert!(crate::effect::validate_pending_effect_choice(&replayed).is_err());
+
+        for option in [0, 1] {
+            session.restore_v5(&snapshot);
+            assert_eq!(session.current_response(), decision);
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::ChooseEffectOption { source, option_index, .. }
+                    if source.arena_id == miracle.0 && *option_index == option)
+            });
+            assert!(session.state.players[1].hand.contains(&second));
+            assert_eq!(session.state.players[1].draws_this_turn, 2);
+            assert_eq!(
+                session
+                    .state
+                    .known_hand_cards(PlayerId::P0, PlayerId::P1)
+                    .iter()
+                    .any(|entry| entry.object == miracle),
+                option == 1,
+            );
+            assert_eq!(session.state.stack.len(), 1);
+            assert_eq!(session.state.stack[0].source, dack);
+            // Dack's discard is its last instruction: it waits inside the
+            // resolution only while the draw's captures are deferred.
+            let mut terminal_without_capture = session.state.clone();
+            let discard = terminal_without_capture
+                .engine
+                .pending_discard
+                .clone()
+                .expect("Dack's terminal discard waits inside its resolution");
+            assert!(
+                crate::effect::validate_resumable_discard(&terminal_without_capture, &discard)
+                    .is_ok()
+            );
+            crate::eternal_vintage_e7b_v1::dredge::stop_deferring(&mut terminal_without_capture);
+            assert!(
+                crate::effect::validate_resumable_discard(&terminal_without_capture, &discard)
+                    .is_err()
+            );
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Discard { cards, .. }
+                    if cards.iter().any(|card| card.arena_id == miracle.0))
+            });
+            assert_eq!(session.state.objects.get(miracle).zone, Zone::Hand);
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Discard { .. })
+            });
+            assert_eq!(session.state.objects.get(miracle).zone, Zone::Graveyard);
+            assert_eq!(session.state.stack.len(), usize::from(option == 1));
+            if option == 1 {
+                assert_eq!(session.state.stack[0].source, miracle);
+                for _ in 0..2 {
+                    choose(&mut session, |action| {
+                        matches!(action, ActionSemanticV1::Pass { .. })
+                    });
+                }
+                let RlSessionResponseV1::Decision(after) = session.current_response() else {
+                    panic!("expected priority after the miracle trigger");
+                };
+                assert!(after.legal_actions.iter().all(|action| {
+                    !matches!(&action.semantic, ActionSemanticV1::ChooseEffectOption { source, .. }
+                        if source.arena_id == miracle.0)
+                }));
+                assert_eq!(session.state.objects.get(miracle).zone, Zone::Graveyard);
+            }
+        }
+    }
+
     #[cfg(feature = "limited-fdn-fixtures")]
     mod limited_trigger_order_tests {
         use super::*;
@@ -14344,6 +14753,370 @@ mod tests {
             assert_eq!(session.physical_decision_count(), 0);
             assert!(session.state.stack.is_empty());
             assert_eq!(session.state.engine.pending_triggers.len(), 9);
+        }
+
+        #[cfg(feature = "eternal-fixtures")]
+        #[test]
+        fn limited_trigger_batch_waits_for_both_original_targets_and_restores() {
+            use crate::engine::{self, Action};
+
+            let island = card_id_by_name("Island").unwrap();
+            let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+                7,
+                123,
+                8192,
+                16384,
+                ["custom-test-p0".into(), "custom-test-p1".into()],
+                [&[island; 40], &[island; 40]],
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                true,
+            )
+            .unwrap();
+            let state = &mut session.state;
+            state.step = Step::Main1;
+            state.active_player = PlayerId::P0;
+            state.priority_player = PlayerId::P0;
+            add_battlefield_object(state, PlayerId::P0, "Nadu, Winged Wisdom");
+            let first = add_battlefield_object(state, PlayerId::P0, "Scythecat Cub");
+            let second = add_battlefield_object(state, PlayerId::P0, "Scythecat Cub");
+            let land = state.players[0].hand[0];
+            propose_and_commit(state, ProposedEvent::zone_change(land, Zone::Battlefield));
+            let triggers = crate::trigger::collect_and_process(state);
+            assert_eq!(triggers.len(), 2);
+            assert_eq!(triggers[0].source, first);
+            assert_eq!(triggers[1].source, second);
+            state.engine.pending_triggers.extend(triggers);
+            session.surface = PolicySurfaceV5::new_with_priority_mode_v1(
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                SuppressionAuditMode::Off,
+            );
+            session.current = None;
+            session.terminal = None;
+            session.advance_to_decision_or_terminal();
+
+            let answer = |session: &mut RlEpisodeSessionV1,
+                          matches: &dyn Fn(&ActionSemanticV1) -> bool| {
+                let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                    panic!("expected a Limited decision");
+                };
+                let action = decision
+                    .legal_actions
+                    .iter()
+                    .find(|action| matches(&action.semantic))
+                    .unwrap_or_else(|| {
+                        panic!("unexpected Limited menu: {:?}", decision.legal_actions)
+                    });
+                session
+                    .step(
+                        decision.episode_id,
+                        decision.step,
+                        action.selected_index,
+                        &action.stable_id,
+                    )
+                    .unwrap();
+            };
+            let in_order = |action: &ActionSemanticV1| match action {
+                ActionSemanticV1::OrderTriggers { order, .. } => order.as_slice() == [0, 1],
+                _ => false,
+            };
+            let target =
+                |action: &ActionSemanticV1| matches!(action, ActionSemanticV1::ChooseTarget { .. });
+            answer(&mut session, &in_order);
+            answer(&mut session, &target);
+            assert_eq!(session.state.stack.len(), 1);
+            assert_eq!(session.state.stack[0].source, first);
+
+            let snapshot = session.snapshot_v5();
+            let serialized = serde_json::to_vec(&session.state).unwrap();
+            let before_second_target = session.current_response();
+            let mut forged = session.state.clone();
+            assert!(engine::step(&mut forged, Action::OrderTriggers(vec![0, 1])).is_err());
+            answer(&mut session, &target);
+            assert_eq!(session.state.stack.len(), 2);
+            assert_eq!(session.state.stack[1].source, second);
+            let mut forged = session.state.clone();
+            assert!(engine::step(&mut forged, Action::Pass).is_err());
+            let next_batch = session.current_response();
+            let placed = session.state.clone();
+            session.restore_v5(&snapshot);
+            assert_eq!(session.current_response(), before_second_target);
+            let restored: GameState = serde_json::from_slice(&serialized).unwrap();
+            assert_eq!(restored, session.state);
+            session.state = restored;
+            answer(&mut session, &target);
+            assert_eq!(session.current_response(), next_batch);
+            assert_eq!(session.state, placed);
+
+            answer(&mut session, &in_order);
+            assert_eq!(session.state.stack.len(), 4);
+            let stack = &session.state.stack;
+            assert_eq!(stack[0].targets, [Target::Object(stack[2].source)]);
+            assert_eq!(stack[1].targets, [Target::Object(stack[3].source)]);
+            assert!(session.state.engine.pending_triggers.is_empty());
+        }
+
+        /// P0's two Scythecat Cub landfall triggers and Nadu, at the order
+        /// decision for the Cubs.
+        #[cfg(feature = "eternal-fixtures")]
+        fn nadu_cub_batch_session() -> (RlEpisodeSessionV1, ObjectId, ObjectId) {
+            let island = card_id_by_name("Island").unwrap();
+            let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+                7,
+                123,
+                8192,
+                16384,
+                ["custom-test-p0".into(), "custom-test-p1".into()],
+                [&[island; 40], &[island; 40]],
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                true,
+            )
+            .unwrap();
+            let state = &mut session.state;
+            state.step = Step::Main1;
+            state.active_player = PlayerId::P0;
+            state.priority_player = PlayerId::P0;
+            add_battlefield_object(state, PlayerId::P0, "Nadu, Winged Wisdom");
+            let first = add_battlefield_object(state, PlayerId::P0, "Scythecat Cub");
+            let second = add_battlefield_object(state, PlayerId::P0, "Scythecat Cub");
+            let land = state.players[0].hand[0];
+            propose_and_commit(state, ProposedEvent::zone_change(land, Zone::Battlefield));
+            let triggers = crate::trigger::collect_and_process(state);
+            state.engine.pending_triggers.extend(triggers);
+            session.surface = PolicySurfaceV5::new_with_priority_mode_v1(
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                SuppressionAuditMode::Off,
+            );
+            session.current = None;
+            session.terminal = None;
+            session.advance_to_decision_or_terminal();
+            (session, first, second)
+        }
+
+        #[cfg(feature = "eternal-fixtures")]
+        fn answer_limited(
+            session: &mut RlEpisodeSessionV1,
+            matches: fn(&ActionSemanticV1) -> bool,
+        ) {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected a Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| matches(&action.semantic))
+                .unwrap_or_else(|| panic!("unexpected Limited menu: {:?}", decision.legal_actions));
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap();
+        }
+
+        /// A named edit that forges a restored state.
+        #[cfg(feature = "eternal-fixtures")]
+        type Forgery<'a> = (&'a str, fn(&mut GameState));
+
+        /// Each forgery must be refused by `step` with the state untouched,
+        /// including after a JSON restore, and halt `advance_until_decision`.
+        #[cfg(feature = "eternal-fixtures")]
+        fn assert_forgeries_refused(
+            legit: &GameState,
+            action: &crate::engine::Action,
+            forgeries: &[Forgery<'_>],
+        ) {
+            use crate::engine::{self, Decision};
+            for (name, forge) in forgeries {
+                let mut forged = legit.clone();
+                forge(&mut forged);
+                assert_ne!(&forged, legit, "{name}");
+                let restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+                assert_eq!(restored, forged, "{name}");
+                let mut stepped = restored.clone();
+                assert!(
+                    engine::step(&mut stepped, action.clone()).is_err(),
+                    "{name}: {action:?} must be refused"
+                );
+                assert_eq!(stepped, restored, "{name}: refused before any mutation");
+                let mut advanced = restored.clone();
+                let decision = engine::advance_until_decision(&mut advanced);
+                assert!(
+                    matches!(decision, Decision::Halted { .. }),
+                    "{name}: got {decision:?}"
+                );
+            }
+        }
+
+        #[cfg(feature = "eternal-fixtures")]
+        #[test]
+        fn forged_waiting_placement_captures_are_refused() {
+            use crate::engine::{self, Action, Decision};
+
+            let (mut session, _, second) = nadu_cub_batch_session();
+            answer_limited(&mut session, |action: &ActionSemanticV1| match action {
+                ActionSemanticV1::OrderTriggers { order, .. } => order.as_slice() == [0, 1],
+                _ => false,
+            });
+            answer_limited(&mut session, |action: &ActionSemanticV1| {
+                matches!(action, ActionSemanticV1::ChooseTarget { .. })
+            });
+            // Mid-batch: the first Cub is on the stack, the Nadu capture its
+            // target made waits, and the second Cub chooses its target.
+            let mut legit = session.state.clone();
+            assert_eq!(legit.stack.len(), 1);
+            assert_eq!(
+                engine::waiting_placement_triggers_for_test(&mut legit).len(),
+                1
+            );
+            let Decision::ChooseTargets {
+                spell,
+                legal_targets,
+                ..
+            } = engine::advance_until_decision(&mut legit)
+            else {
+                panic!("the second Cub chooses its target");
+            };
+            assert_eq!(spell, second);
+            let choose = Action::ChooseTarget(legal_targets[0]);
+            // The state placement made is accepted.
+            engine::step(&mut legit.clone(), choose.clone()).unwrap();
+
+            assert_forgeries_refused(
+                &legit,
+                &choose,
+                &[
+                    ("ordered capture", |state: &mut GameState| {
+                        let queue = engine::waiting_placement_triggers_for_test(state);
+                        queue[0].placement_ordered = true;
+                    }),
+                    ("targeted capture", |state: &mut GameState| {
+                        let queue = engine::waiting_placement_triggers_for_test(state);
+                        let player = PlayerId::P1;
+                        queue[0].targets.push(Target::Player(player));
+                        queue[0]
+                            .target_contracts
+                            .push(crate::state::StackTargetContractV4::Player(player));
+                    }),
+                    ("fabricated source", |state: &mut GameState| {
+                        let queue = engine::waiting_placement_triggers_for_test(state);
+                        queue[0].source = ObjectId(u32::MAX);
+                    }),
+                    ("no placed trigger", |state: &mut GameState| {
+                        state.stack.clear();
+                    }),
+                ],
+            );
+
+            // The batch's last trigger placed with its capture still waiting:
+            // the next checkpoint has offered nothing, so nothing answers it.
+            let mut placed = legit.clone();
+            placed.engine.pending_triggers.clear();
+            for action in [Action::Pass, choose] {
+                let mut stepped = placed.clone();
+                assert!(
+                    engine::step(&mut stepped, action.clone()).is_err(),
+                    "{action:?}"
+                );
+                assert_eq!(stepped, placed);
+            }
+        }
+
+        #[cfg(feature = "eternal-fixtures")]
+        #[test]
+        fn forged_trigger_placement_marks_are_refused() {
+            use crate::engine::{self, Action};
+
+            let (session, first, second) = nadu_cub_batch_session();
+            let legit = session.state.clone();
+            let pending = &legit.engine.pending_triggers;
+            assert_eq!(
+                pending
+                    .iter()
+                    .map(|trigger| trigger.source)
+                    .collect::<Vec<_>>(),
+                [first, second]
+            );
+            assert!(pending.iter().all(|trigger| !trigger.placement_ordered));
+            let reorder = Action::OrderTriggers(vec![1, 0]);
+            engine::step(&mut legit.clone(), reorder.clone()).unwrap();
+
+            assert_forgeries_refused(
+                &legit,
+                &reorder,
+                &[
+                    ("partly ordered group", |state: &mut GameState| {
+                        state.engine.pending_triggers[0].placement_ordered = true;
+                    }),
+                    (
+                        "unordered trigger with a target",
+                        |state: &mut GameState| {
+                            let target = Target::Object(state.engine.pending_triggers[0].source);
+                            let contract =
+                                crate::state::StackTargetContractV4::capture(state, target);
+                            let pending = &mut state.engine.pending_triggers[1];
+                            pending.targets.push(target);
+                            pending.target_contracts.push(contract);
+                        },
+                    ),
+                ],
+            );
+        }
+
+        /// After both Cubs are ordered, only the first, being placed, may
+        /// carry targets: the second chooses its own once it leads.
+        #[cfg(feature = "eternal-fixtures")]
+        #[test]
+        fn forged_targets_on_a_later_ordered_trigger_are_refused() {
+            use crate::engine::{self, Action, Decision};
+
+            let (mut session, first, second) = nadu_cub_batch_session();
+            answer_limited(&mut session, |action: &ActionSemanticV1| match action {
+                ActionSemanticV1::OrderTriggers { order, .. } => order.as_slice() == [0, 1],
+                _ => false,
+            });
+            let mut legit = session.state.clone();
+            let marks = legit
+                .engine
+                .pending_triggers
+                .iter()
+                .map(|trigger| {
+                    (
+                        trigger.source,
+                        trigger.placement_ordered,
+                        trigger.targets.len(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(marks, [(first, true, 0), (second, true, 0)]);
+            let Decision::ChooseTargets {
+                spell,
+                legal_targets,
+                ..
+            } = engine::advance_until_decision(&mut legit)
+            else {
+                panic!("the first Cub chooses its target");
+            };
+            assert_eq!(spell, first);
+            let choose = Action::ChooseTarget(legal_targets[0]);
+            engine::step(&mut legit.clone(), choose.clone()).unwrap();
+
+            assert_forgeries_refused(
+                &legit,
+                &choose,
+                &[(
+                    "later ordered trigger with a target",
+                    |state: &mut GameState| {
+                        let target = Target::Object(state.engine.pending_triggers[0].source);
+                        let contract = crate::state::StackTargetContractV4::capture(state, target);
+                        let pending = &mut state.engine.pending_triggers[1];
+                        pending.targets.push(target);
+                        pending.target_contracts.push(contract);
+                    },
+                )],
+            );
         }
     }
 

@@ -293,3 +293,8 @@ SHA-256 `25dd7a46c36a01c5dc92eaccddbc58479a4e7d4753aa4becf010c2ddc233f8e5`.
 | HarvesterCommitReceiptV1 | harvester_consumer_v1::tests::paid_activation_targets_other_graveyard_and_preserves_hidden_pairs_indices_and_actual_cleanup | c9eb52a9984c76f5801518551aea511cc175755c8489f415e8f951a83ac60184 |
 | FiendArtisanConsumerReceiptV1 | fiend_artisan_consumer_v1::tests::real_paid_x_sacrifice_search_private_worlds_index_and_source_departure_both_seats | a7252dd6efa0966bbf3ba9ef762dc3210c0477c8c5cc595b932481caceaaef40 |
 | EtaliPrimalStormReceiptV1 | etali_primal_storm_consumer_v1::tests::paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity_both_seats | 9129727aebc9208355f74f26daa17c46a7e35a5d613e2c4e1da1e2405681ac3d |
+
+`MiracleDrawSuspendedV1`, `MiracleDrawResumedV1`, `ResolutionDiscardWaitsV1`,
+`ResolutionDrawChoiceOfferedV1` and `ResolutionDrawChoiceAnsweredV1` (the last
+five rows) are hand-built from their declared fields. They exercise kind
+indexing and value serialization, not a replayable resolution.

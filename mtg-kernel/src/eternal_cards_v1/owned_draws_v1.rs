@@ -700,7 +700,7 @@ pub(crate) fn begin_jewel_combat(
     require_new_instruction(state, pending)?;
     let drawer = pending.ctx.controller.opponent();
     let count = InstructionV1::JewelCombat.count(state, &pending.ctx);
-    if dredge::owned_draw_needs_choice(state, drawer, count) {
+    if dredge::owned_draw_needs_stage(state, drawer, count) {
         let extra = crate::event::draw_instruction_extra(state, drawer, count);
         start_instruction(
             state,
@@ -736,7 +736,7 @@ pub(crate) fn begin_outcome(
     count: u32,
 ) {
     let drawer = pending.ctx.controller;
-    if !dredge::owned_draw_needs_choice(state, drawer, count) {
+    if !dredge::owned_draw_needs_stage(state, drawer, count) {
         draw_uninterrupted(state, drawer, count);
         return;
     }
@@ -792,7 +792,7 @@ pub(crate) fn begin(
             return Err("Dragon Engine could not complete its discard".into());
         }
         let count = instruction.count(state, &pending.ctx);
-        if !dredge::owned_draw_needs_choice(state, player, count) {
+        if !dredge::owned_draw_needs_stage(state, player, count) {
             draw_uninterrupted(state, player, count);
             return Ok(());
         }
@@ -1242,6 +1242,37 @@ pub(crate) fn draw_stage_matches(
     })
 }
 
+/// The next attempt of an owned draw instruction, staged with no replacement
+/// choice yet, while its drawer's first draw this turn (a miracle card,
+/// drawn by an earlier attempt of this instruction) waits for its reveal
+/// (702.94a). Its frames are exactly the stage `complete` leaves.
+pub(crate) fn miracle_draw_stage<'a>(
+    state: &GameState,
+    pending: &'a EffectContinuation,
+) -> Option<(&'a [u16], &'a [EffectFrame])> {
+    let (progress, started, _) = progress(state, pending)?;
+    let drawer = started.instruction.drawer(&pending.ctx)?;
+    let (
+        EffectFrame::Program {
+            op: EffectOp::DrawCards { player, count: 1 },
+            path,
+        },
+        below,
+    ) = pending.frames.split_last()?
+    else {
+        return None;
+    };
+    let drawn_inside = crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, drawer)
+        .is_some_and(|(at, _)| at > progress.started_at);
+    (pending.choice.is_none()
+        && pending.answered_choice_guard.is_none()
+        && progress.completed > 0
+        && *player == started.instruction.draw_player(&pending.ctx)
+        && drawn_inside
+        && draw_stage_matches(state, pending, drawer, path, below))
+    .then_some((path.as_slice(), below))
+}
+
 fn dragon_before_start(pending: &EffectContinuation) -> bool {
     if pending.answered_choice_guard.is_some() {
         return false;
@@ -1323,8 +1354,12 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     let (progress, started, attempts) =
         progress(state, pending).ok_or("Eternal draw lost its native start")?;
     validate_native_progress(state, &pending.ctx, progress, started, attempts)?;
-    let (path, remaining) =
-        dredge::draw_stage(pending).ok_or("Eternal draw lost its original stage")?;
+    let (path, remaining) = match dredge::draw_stage(pending) {
+        Some(stage) => stage,
+        // The staged next attempt waits for a miracle reveal.
+        None if miracle_draw_stage(state, pending).is_some() => return Ok(()),
+        None => return Err("Eternal draw lost its original stage".into()),
+    };
     let drawer = started
         .instruction
         .drawer(&pending.ctx)

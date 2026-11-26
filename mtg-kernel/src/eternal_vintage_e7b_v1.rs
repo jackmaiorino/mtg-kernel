@@ -2244,10 +2244,16 @@ pub(crate) fn finish_selection(
     }
     match kind {
         E7bChoiceV1::DredgeV1 => {
+            #[cfg(feature = "eternal-fixtures")]
+            crate::effect::record_draw_replacement_choice(state, continuation, choice, true);
             dredge::finish(state, continuation, choice, chosen);
+            #[cfg(feature = "eternal-fixtures")]
+            dredge::stop_after_choice_draw(state, continuation, player, &choice.path);
             Ok(false)
         }
         E7bChoiceV1::JaceOrHullbreacherV1 => {
+            #[cfg(feature = "eternal-fixtures")]
+            crate::effect::record_draw_replacement_choice(state, continuation, choice, true);
             dredge::finish_jace_or_hullbreacher(state, continuation, choice, chosen)?;
             Ok(false)
         }
