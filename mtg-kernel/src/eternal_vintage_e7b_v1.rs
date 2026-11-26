@@ -943,8 +943,9 @@ pub(crate) fn retrace_permission(state: &GameState, object: ObjectId, holder: Pl
 
 /// Whether casting the graveyard incarnation (`object`, `zone_change_count`)
 /// is a retrace cast: retrace allows it and no other permission does (a
-/// card another permission allows is cast without the land discard).
-fn retrace_cast(
+/// card another permission allows is cast without the land discard). Read
+/// at announcement; the cast then records `SpellCastRouteV4::RetraceV1`.
+pub(crate) fn retrace_cast(
     state: &GameState,
     object: ObjectId,
     holder: PlayerId,

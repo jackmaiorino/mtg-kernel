@@ -2797,11 +2797,16 @@ fn breach_and_retrace_keep_the_legacy_cast_when_only_one_route_is_payable() {
                 pool(&mut state, player, &[ManaColor::B], 0);
                 cast(&mut state, spell, &[]);
                 let route = state.objects.get(spell).v4.spell_cast_origin.unwrap().route;
-                assert!(if escape {
-                    route == SpellCastRouteV4::GraveyardEscape
-                } else {
-                    matches!(route, SpellCastRouteV4::GraveyardPermissionV1 { holder, .. } if holder == player)
-                });
+                // A lone retrace cast records the retrace route, so it stays
+                // a retrace cast if another permission begins later.
+                assert_eq!(
+                    route,
+                    if escape {
+                        SpellCastRouteV4::GraveyardEscape
+                    } else {
+                        SpellCastRouteV4::RetraceV1
+                    }
+                );
                 assert!(!state.engine.event_history.iter().any(|e| matches!(e, mtg_kernel::event::CommittedEvent::SphinxLoreCastOptionsV1 {options} if options.spell == spell)));
                 let mut restored: GameState =
                     serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
