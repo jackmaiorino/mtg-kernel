@@ -23,9 +23,16 @@
 //!    `cube_pod_runner_v1 --worker-plan PLAN --out RECORD --timing TIMING`
 //!    `--journal JOURNAL --execution E [--host HOST] [--workers W]`
 //!    `[--cube PATH] [--gaps PATH] [--fence PATH]`
+//!
+//! For D0.4 reads, supply `--ordered-pool PATH --ordered-pool-pin SHA`
+//! and `--cube-table PATH` with the table and index pins. The separate
+//! `--pool-pin` binds the dealer input document. Repeat `--checkpoint
+//! STATE_SHA=PATH` for each learned policy named by a prep or plan.
 mtg_kernel::fast_global_allocator!();
 
-use mtg_kernel::cube_draft_v1::CubePool;
+use mtg_kernel::cube_draft_build_v1::card_index::{CardIndexV1, CubeTableSourceV1};
+use mtg_kernel::cube_draft_v1::{basic_land_ids, CubePool};
+use mtg_kernel::cube_owner_view_v1::cube_pool_from_ordered_ids;
 use mtg_kernel::cube_pod_runner_v1::{
     run_training_pod, run_uniform_training_batch, training_roles_with_older,
     uniform_training_chairs, validate_training_pod_config, BatchReport, PilotInfo, PodCaps,
@@ -34,9 +41,9 @@ use mtg_kernel::cube_pod_runner_v1::{
 use mtg_kernel::cube_read_plan_v1::{
     execute_read_plan_v1, parse_and_validate_read_plan_json,
     run_prep_set_execution_with_ended_claim, sha256_hex, supervise_plan_set_execution,
-    to_canonical_compact_json, to_canonical_pretty_json, CommandPodWorkerLauncher,
-    PodProgressJournal, ReadPlanRunOptions, RuntimePins, RuntimeVerification, ShakedownManifestPin,
-    UniformSeatFactory,
+    to_canonical_compact_json, to_canonical_pretty_json, CheckpointSeatFactory,
+    CommandPodWorkerLauncher, PodProgressJournal, ReadPlanRunOptions, RuntimePins,
+    RuntimeVerification, ShakedownManifestPin,
 };
 #[path = "cube_pod_runner/worker.rs"]
 mod worker;
@@ -52,6 +59,10 @@ use worker::SupervisedUniformPilot;
 type Fallible<T> = Result<T, String>;
 
 const VALUE_FLAGS: &[&str] = &[
+    "--checkpoint",
+    "--ordered-pool",
+    "--ordered-pool-pin",
+    "--cube-table",
     "--namespace",
     "--run",
     "--pods",
@@ -89,10 +100,12 @@ const VALUE_FLAGS: &[&str] = &[
 
 struct Args {
     values: BTreeMap<String, String>,
+    checkpoints: Vec<String>,
 }
 
 impl Args {
     fn parse(raw: Vec<String>) -> Fallible<Self> {
+        let mut checkpoints = Vec::new();
         let mut values = BTreeMap::new();
         let mut items = raw.into_iter();
         while let Some(name) = items.next() {
@@ -102,11 +115,18 @@ impl Args {
             let value = items
                 .next()
                 .ok_or_else(|| format!("{name} requires a value"))?;
+            if name == "--checkpoint" {
+                checkpoints.push(value);
+                continue;
+            }
             if values.insert(name.clone(), value).is_some() {
                 return Err(format!("{name} specified twice"));
             }
         }
-        Ok(Args { values })
+        Ok(Args {
+            values,
+            checkpoints,
+        })
     }
 
     fn get(&self, name: &str) -> Option<&str> {
@@ -167,6 +187,7 @@ fn utf8(path: &str, bytes: &[u8]) -> Fallible<String> {
 }
 
 struct LoadedPool {
+    seats: CheckpointSeatFactory,
     pool: CubePool,
     cube_path: String,
     gaps_path: String,
@@ -186,19 +207,78 @@ fn load_pool(args: &Args) -> Fallible<LoadedPool> {
         .to_owned();
     let fence_path = args.get("--fence").map(str::to_owned);
     let cube_bytes = read_bytes(&cube_path)?;
-    let gaps_bytes = read_bytes(&gaps_path)?;
+    let ordered = args.get("--ordered-pool").is_some()
+        || args.get("--ordered-pool-pin").is_some()
+        || args.get("--cube-table").is_some()
+        || !args.checkpoints.is_empty();
+    // D0.4 derives eligibility from the provisional index and fence. The legacy
+    // census gap record applies only to the historical cube-list-order path.
+    let gaps_bytes = if ordered {
+        b"{}".to_vec()
+    } else {
+        read_bytes(&gaps_path)?
+    };
     let fence_bytes = fence_path.as_deref().map(read_bytes).transpose()?;
     let fence_text = match (fence_path.as_deref(), &fence_bytes) {
         (Some(path), Some(bytes)) => Some(utf8(path, bytes)?),
         _ => None,
     };
-    let pool = CubePool::from_json_texts(
-        &utf8(&cube_path, &cube_bytes)?,
+    let list = utf8(&cube_path, &cube_bytes)?;
+    let mut pool = CubePool::from_json_texts(
+        &list,
         &utf8(&gaps_path, &gaps_bytes)?,
         fence_text.as_deref(),
     )
     .map_err(|error| error.to_string())?;
+    let mut seats = CheckpointSeatFactory::default();
+    if ordered {
+        if ["--worker-plan", "--prep-set", "--plan-set"]
+            .iter()
+            .all(|flag| args.get(flag).is_none())
+        {
+            return Err("ordered pool and checkpoint inputs require read mode".into());
+        }
+        args.required("--fence")?;
+        let source = CubeTableSourceV1::read_v1(
+            Path::new(args.required("--cube-table")?),
+            args.required("--cube-table-pin")?,
+        )
+        .map_err(|e| e.to_string())?;
+        let (index, _) = CardIndexV1::provisional_v1(&list, &source).map_err(|e| e.to_string())?;
+        if index.pin_sha256() != args.required("--card-index-pin")? {
+            return Err("derived card index sha256 mismatch".into());
+        }
+        let table = source.bind_v1(&index).map_err(|e| e.to_string())?;
+        let bytes = read_bytes(args.required("--ordered-pool")?)?;
+        let pin = args.required("--ordered-pool-pin")?;
+        if sha256_hex(&bytes) != pin {
+            return Err("ordered pool file sha256 mismatch".into());
+        }
+        let ids: Vec<u16> = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        let (ordered_pool, canonical_pin) =
+            cube_pool_from_ordered_ids(&ids).map_err(|e| e.to_string())?;
+        let basics = basic_land_ids().map_err(|e| e.to_string())?;
+        let mut expected: Vec<_> = pool
+            .ids()
+            .iter()
+            .copied()
+            .filter(|id| index.contains(*id) && !basics.contains(id))
+            .collect();
+        expected.sort_unstable();
+        if ids != expected || pin != canonical_pin {
+            return Err("ordered pool differs from the canonical D0.4 derivation".into());
+        }
+        pool = ordered_pool;
+        let threads = args.number("--workers")?.unwrap_or(1).max(1) as usize;
+        for spec in &args.checkpoints {
+            let (pin, path) = spec
+                .split_once('=')
+                .ok_or("--checkpoint requires STATE_SHA=PATH")?;
+            seats.load(Path::new(path), pin, &table, threads)?;
+        }
+    }
     Ok(LoadedPool {
+        seats,
         pool,
         cube_path,
         gaps_path,
@@ -208,7 +288,29 @@ fn load_pool(args: &Args) -> Fallible<LoadedPool> {
     })
 }
 
+fn check_d8_pool(namespace: &str, args: &Args) -> Fallible<()> {
+    const D0_POOL: &str = "6caee9eafeaaa61f9178ac97c300ebffc60f43385ae3f832949c600e9fa739bc";
+    if matches!(namespace, "dose-d8" | "read-d8-aa")
+        && args.get("--ordered-pool-pin") != Some(D0_POOL)
+    {
+        return Err("D8 reads require the signed D0.4 ordered pool".into());
+    }
+    Ok(())
+}
+
 fn load_verification(args: &Args, loaded: &LoadedPool) -> Fallible<RuntimeVerification> {
+    let dir = args
+        .get("--prep-set")
+        .or_else(|| args.get("--plan-set"))
+        .ok_or("missing read set")?;
+    let manifest =
+        std::fs::read(Path::new(dir).join("manifest.json")).map_err(|e| e.to_string())?;
+    #[derive(serde::Deserialize)]
+    struct Namespace {
+        namespace: String,
+    }
+    let manifest: Namespace = serde_json::from_slice(&manifest).map_err(|e| e.to_string())?;
+    check_d8_pool(&manifest.namespace, args)?;
     let binary = match args.get("--binary-pin") {
         Some(pin) => pin.to_owned(),
         None => {
@@ -278,6 +380,15 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
     let plan_text =
         std::fs::read_to_string(plan_path).map_err(|error| format!("{plan_path}: {error}"))?;
     let plan = parse_and_validate_read_plan_json(&plan_text).map_err(|e| e.to_string())?;
+    check_d8_pool(&plan.namespace, args)?;
+    if args.get("--ordered-pool").is_some()
+        && (plan.pins.cube_list.as_ref() != Some(&loaded.cube_sha256)
+            || plan.pins.fence_record != loaded.fence_sha256
+            || plan.pins.card_index.as_deref() != args.get("--card-index-pin")
+            || plan.pins.cube_table.as_deref() != args.get("--cube-table-pin"))
+    {
+        return Err("worker plan input pins differ from the verified ordered pool inputs".into());
+    }
     let journal = PodProgressJournal::create(journal_path).map_err(|e| e.to_string())?;
     let run_opts = ReadPlanRunOptions {
         execution,
@@ -289,7 +400,7 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
     let output = execute_read_plan_v1(
         &loaded.pool,
         &plan,
-        &UniformSeatFactory,
+        &loaded.seats,
         &SupervisedUniformPilot::new(Duration::from_secs(plan.caps.watchdog_seconds)),
         &run_opts,
     )
@@ -371,7 +482,7 @@ fn run_cli(args: &Args) -> Fallible<()> {
             &loaded.pool,
             Path::new(prep_dir),
             execution,
-            &UniformSeatFactory,
+            &loaded.seats,
             &verification,
             None,
             args.get("--ended-prep-claim"),
@@ -421,6 +532,20 @@ fn run_cli(args: &Args) -> Fallible<()> {
                 if let Some(ref fp) = fence_path {
                     cmd.arg("--fence").arg(fp);
                 }
+                for flag in [
+                    "--cube-table",
+                    "--cube-table-pin",
+                    "--card-index-pin",
+                    "--ordered-pool",
+                    "--ordered-pool-pin",
+                ] {
+                    if let Some(value) = args.get(flag) {
+                        cmd.arg(flag).arg(value);
+                    }
+                }
+                for spec in &args.checkpoints {
+                    cmd.arg("--checkpoint").arg(spec);
+                }
                 cmd
             },
         );
@@ -428,7 +553,7 @@ fn run_cli(args: &Args) -> Fallible<()> {
             &loaded.pool,
             Path::new(plan_dir),
             execution,
-            &UniformSeatFactory,
+            &loaded.seats,
             &verification,
             &launcher,
         )
@@ -588,6 +713,65 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_pool_consumes_pinned_ascending_ids() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data");
+        let cube = root.join("cube_v1/mtgo_vintage_cube_20261007.json");
+        let table = root.join("card_semantics_v1/cube_table_v1.json");
+        let table_pin = sha256_hex(&std::fs::read(&table).unwrap());
+        let list = std::fs::read_to_string(&cube).unwrap();
+        let source = CubeTableSourceV1::read_v1(&table, &table_pin).unwrap();
+        let (index, _) = CardIndexV1::provisional_v1(&list, &source).unwrap();
+        let eligible = CubePool::from_json_texts(&list, "{}", None).unwrap();
+        let basics = basic_land_ids().unwrap();
+        let mut ids: Vec<_> = eligible
+            .ids()
+            .iter()
+            .copied()
+            .filter(|id| index.contains(*id) && !basics.contains(id))
+            .collect();
+        assert!(!ids.is_sorted());
+        ids.sort_unstable();
+        let dir = std::env::temp_dir().join(format!("d7-pool-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let pool = dir.join("pool.json");
+        let fence = dir.join("fence.json");
+        std::fs::write(&fence, "[]").unwrap();
+        let bytes = format!("{}\n", serde_json::to_string(&ids).unwrap());
+        std::fs::write(&pool, &bytes).unwrap();
+        let mut args = Args::parse(vec![
+            "--prep-set".into(),
+            ".".into(),
+            "--cube".into(),
+            cube.display().to_string(),
+            "--cube-table".into(),
+            table.display().to_string(),
+            "--cube-table-pin".into(),
+            table_pin,
+            "--card-index-pin".into(),
+            index.pin_sha256(),
+            "--fence".into(),
+            fence.display().to_string(),
+            "--ordered-pool".into(),
+            pool.display().to_string(),
+            "--ordered-pool-pin".into(),
+            sha256_hex(bytes.as_bytes()),
+        ])
+        .unwrap();
+        assert_eq!(load_pool(&args).unwrap().pool.ids(), ids);
+        ids.swap(0, 1);
+        let swapped = format!("{}\n", serde_json::to_string(&ids).unwrap());
+        std::fs::write(&pool, &swapped).unwrap();
+        assert!(load_pool(&args)
+            .err()
+            .unwrap()
+            .contains("file sha256 mismatch"));
+        args.values
+            .insert("--ordered-pool-pin".into(), sha256_hex(swapped.as_bytes()));
+        assert!(load_pool(&args).err().unwrap().contains("ascending"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn training_cli_validates_before_publishing_liveness_record() {
