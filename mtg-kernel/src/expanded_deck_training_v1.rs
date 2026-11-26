@@ -3786,6 +3786,15 @@ fn episode_session_v1(
     Ok(session)
 }
 
+/// Tests: the collector's session for `episode` (`episode_session_v1` with
+/// its own configurations), for builders that must reproduce it.
+#[cfg(test)]
+pub(crate) fn episode_session_for_test_v1(
+    episode: &ExpandedEpisodeV1,
+) -> Result<FastActorSessionV1, String> {
+    episode_session_v1(episode, &episode.configurations()?)
+}
+
 /// Applies a reset episode's recorded starting history and verifies the cut
 /// (`ExpandedResetStartV1`). A no-op for an ordinary episode.
 pub(crate) fn restore_reset_cut_v1(
@@ -3830,6 +3839,14 @@ pub(crate) fn require_opening_feature_identity_v1(
     if episode.opening.is_none() {
         return Ok(());
     }
+    require_london_feature_identity_v1(seats)
+}
+
+/// The London opening's feature-identity rule on its own, for every loaded
+/// seat policy: shared by the collector and Stage 4a's London budget games.
+pub(crate) fn require_london_feature_identity_v1(
+    seats: &[Option<&FrozenPlayPolicyV1>],
+) -> Result<(), String> {
     // FlatV8 is built on FlatV7 and keeps its pregame rows.
     for policy in seats.iter().flatten() {
         ensure(

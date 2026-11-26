@@ -32,7 +32,9 @@ use super::seeds::RootSeeds;
 use super::world::DeckPrior;
 use super::{replay_key, sha, write_line};
 use crate::ids::PlayerId;
+use crate::priority_action_windows_v1::SeatPriorityWindowsV1;
 use crate::rl::PlayerSeatV1;
+use crate::rl_session::pauper_london_v1::PauperMulliganModeV1;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use serde::{Deserialize, Serialize};
@@ -130,6 +132,60 @@ pub(super) fn source_session(
         seats.map(|d| d.label.clone()),
         seats.map(|d| d.mainboard.clone()),
         PlayerId(src.starting_player),
+    )
+    .map_err(|e| format!("{e:?}"))?;
+    s.set_runtime_rules_v1(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)?;
+    Ok(s)
+}
+
+/// Opt-in London v1 opening with per-seat priority-window rules, honoured by
+/// `s4a-budget` only (`S4A_OPENING=london-v1`, `S4A_MULLIGAN`,
+/// `S4A_PRIORITY_WINDOWS`; collab LANES/speed-lead/gametest-20261125,
+/// EXECUTOR-SUPPORT.md revision 2, section 5.1). Both arrays are indexed by
+/// physical seat. Not a spec field, so the specs' opening refusal stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct LondonOpening {
+    pub(super) modes: [PauperMulliganModeV1; 2],
+    pub(super) windows: [SeatPriorityWindowsV1; 2],
+}
+
+impl LondonOpening {
+    /// The row fields of a London game, present only when it is set.
+    pub(super) fn annotate(&self, row: &mut Value) {
+        row["opening"] = json!("london-v1");
+        row["mulligan_modes"] = json!(self.modes);
+        row["priority_windows"] = json!(self.windows);
+    }
+}
+
+/// [`source_session`], or with a London opening the trainer's London game
+/// (`episode_session_v1`): `reset_pauper_london_windows_v1` with the spec's
+/// limits, the case's seed and starting player, the modes and the windows,
+/// then the resolution-boundary rules.
+pub(super) fn opening_session(
+    spec: &BankSpec,
+    src: &SourceSpec,
+    london: Option<LondonOpening>,
+) -> Result<FastActorSessionV1, String> {
+    let Some(london) = london else {
+        return source_session(spec, src);
+    };
+    let (focal, other) = (&spec.decks[src.own], &spec.decks[src.other]);
+    let seats = if src.seat == 0 {
+        [focal, other]
+    } else {
+        [other, focal]
+    };
+    let mut s = FastActorSessionV1::reset_pauper_london_windows_v1(
+        1,
+        src.seed,
+        spec.max_physical_decisions,
+        spec.max_policy_steps,
+        seats.map(|d| d.label.clone()),
+        seats.map(|d| d.mainboard.clone()),
+        PlayerId(src.starting_player),
+        london.modes,
+        london.windows,
     )
     .map_err(|e| format!("{e:?}"))?;
     s.set_runtime_rules_v1(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)?;

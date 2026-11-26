@@ -124,7 +124,7 @@ use play::{act, acting, apply, decision, Counters, Meter};
 use seeds::{Purpose, RootSeeds};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -1234,6 +1234,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
     validate_rollout_mode(&cfg.mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
     validate_world_mode(&cfg.mode, std::env::var_os(world::WORLD_ENV).is_some())?;
     validate_flat_root_mode(&cfg.mode, std::env::var_os(FLAT_ROOT_ENV).is_some())?;
+    validate_game_test_mode(&cfg.mode, |name| std::env::var_os(name).is_some())?;
     let rollout = refresh::parse_rollout_opponent(std::env::var(ROLLOUT_OPPONENT), &sh.labels)?;
     let rollout_label = rollout.map(|r| sh.labels[r].clone());
     if cfg.mode == "s4a-utility-root" {
@@ -1515,15 +1516,40 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         let interchange = parse_interchange(std::env::var("S4A_INTERCHANGE"))?;
         let bestline = parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
         let reuse_witnesses = reuse_witness::Recording::parse(std::env::var("S4A_REUSE_WITNESS"))?;
-        let plain = match std::env::var("BUDGET_ARM").as_deref() {
-            Ok("plain-v1") => {
+        let (plain, replay) = match std::env::var("BUDGET_ARM").as_deref() {
+            Ok(arm @ ("plain-v1" | "replay-v1")) => {
                 if total != 0 || interchange || bestline.is_some() {
-                    return Err("BUDGET_ARM=plain-v1 requires BUDGET_TOTAL=0, mean backup and no interchange".into());
+                    return Err(format!(
+                        "BUDGET_ARM={arm} requires BUDGET_TOTAL=0, mean backup and no interchange"
+                    ));
                 }
-                true
+                (true, arm == "replay-v1")
             }
-            Ok("search-v1") | Err(std::env::VarError::NotPresent) => false,
-            _ => return Err("BUDGET_ARM must be plain-v1 or search-v1".into()),
+            Ok("search-v1") | Err(std::env::VarError::NotPresent) => (false, false),
+            _ => return Err("BUDGET_ARM must be plain-v1, search-v1 or replay-v1".into()),
+        };
+        // The game test's opt-in switches (bank::LondonOpening); unset, every
+        // row keeps its bytes.
+        let london = parse_london(
+            std::env::var(OPENING_ENV),
+            std::env::var(MULLIGAN_ENV),
+            std::env::var(WINDOWS_ENV),
+        )?;
+        require_london_identity(london, policy, &sh.opponents)?;
+        let max_searches = parse_max_searches(std::env::var(MAX_SEARCHES_ENV))?;
+        if plain && max_searches.is_some() {
+            return Err(format!("{MAX_SEARCHES_ENV} requires BUDGET_ARM=search-v1"));
+        }
+        let replay_actions = match std::env::var(REPLAY_ACTIONS_ENV) {
+            Ok(p) if replay => Some(parse_replay_actions(
+                &std::fs::read_to_string(&p).map_err(|e| format!("{p}: {e}"))?,
+            )?),
+            Err(std::env::VarError::NotPresent) if !replay => None,
+            _ => {
+                return Err(format!(
+                    "{REPLAY_ACTIONS_ENV} is required by, and only by, BUDGET_ARM=replay-v1"
+                ))
+            }
         };
         if plain && reuse_witnesses == reuse_witness::Recording::Enabled {
             return Err("S4A_REUSE_WITNESS=1 requires BUDGET_ARM=search-v1".into());
@@ -1555,6 +1581,8 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             rollout,
             world,
             flat_root,
+            london,
+            max_searches,
             ..extras
         };
         let first = cfg.first_game as usize;
@@ -1565,8 +1593,18 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
                     .spawn_scoped(scope, || {
+                        if let Some(replays) = &replay_actions {
+                            let actions = replays
+                                .get(&src.id)
+                                .ok_or_else(|| format!("no replay actions for case {}", src.id))?;
+                            return refresh::budget_parity_replay(
+                                &sh, policy, src, actions, &binding, london,
+                            );
+                        }
                         if plain {
-                            return refresh::budget_plain_case(&sh, policy, src, &binding);
+                            return refresh::budget_plain_case_opening(
+                                &sh, policy, src, &binding, london,
+                            );
                         }
                         if executor == refresh::ExecutionMode::Persistent
                             && extras == refresh::BudgetExtras::default()
@@ -1791,7 +1829,134 @@ pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
     validate_rollout_mode(mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
     validate_world_mode(mode, std::env::var_os(world::WORLD_ENV).is_some())?;
     validate_flat_root_mode(mode, std::env::var_os(FLAT_ROOT_ENV).is_some())?;
+    validate_game_test_mode(mode, |name| std::env::var_os(name).is_some())?;
     refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
+}
+
+/// The game test's switches (collab LANES/speed-lead/gametest-20261125,
+/// EXECUTOR-SUPPORT.md revision 2, section 5.1), honoured by `s4a-budget`
+/// only: the London v1 opening, its per-seat mulligan modes and priority
+/// windows, the search-count ceiling and the parity replay's action lists.
+const OPENING_ENV: &str = "S4A_OPENING";
+const MULLIGAN_ENV: &str = "S4A_MULLIGAN";
+const WINDOWS_ENV: &str = "S4A_PRIORITY_WINDOWS";
+const MAX_SEARCHES_ENV: &str = "S4A_MAX_SEARCHES";
+const REPLAY_ACTIONS_ENV: &str = "BUDGET_REPLAY_ACTIONS";
+const GAME_TEST_ENVS: [&str; 5] = [
+    OPENING_ENV,
+    MULLIGAN_ENV,
+    WINDOWS_ENV,
+    MAX_SEARCHES_ENV,
+    REPLAY_ACTIONS_ENV,
+];
+
+fn validate_game_test_mode(mode: &str, set: impl Fn(&str) -> bool) -> Result<(), String> {
+    match GAME_TEST_ENVS.iter().find(|name| set(name)) {
+        Some(name) if mode != "s4a-budget" => {
+            Err(format!("{name} is supported only for s4a-budget"))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Two comma-separated per-seat values, each a serde label of `T`.
+fn per_seat<T: serde::de::DeserializeOwned>(name: &str, value: &str) -> Result<[T; 2], String> {
+    let parsed = value
+        .split(',')
+        .map(|x| serde_json::from_value(json!(x)).map_err(|_| ()))
+        .collect::<Result<Vec<T>, _>>()
+        .and_then(|v| <[T; 2]>::try_from(v).map_err(|_| ()));
+    parsed.map_err(|()| format!("{name} must be two per-seat labels seat0,seat1, not {value}"))
+}
+
+/// Strict parsing of `S4A_OPENING=london-v1` with `S4A_MULLIGAN` (required)
+/// and `S4A_PRIORITY_WINDOWS` (unset is `harness-v2` for both seats, the
+/// London reset's own surface). All unset is the keep-seven game; a mode or
+/// window setting without the opening is refused.
+fn parse_london(
+    opening: Result<String, std::env::VarError>,
+    mulligan: Result<String, std::env::VarError>,
+    windows: Result<String, std::env::VarError>,
+) -> Result<Option<bank::LondonOpening>, String> {
+    use std::env::VarError::NotPresent;
+    let present = |v: &Result<String, std::env::VarError>, name: &str| match v {
+        Ok(x) => Ok(Some(x.clone())),
+        Err(NotPresent) => Ok(None),
+        Err(e) => Err(format!("invalid {name}: {e}")),
+    };
+    let (opening, mulligan, windows) = (
+        present(&opening, OPENING_ENV)?,
+        present(&mulligan, MULLIGAN_ENV)?,
+        present(&windows, WINDOWS_ENV)?,
+    );
+    match opening.as_deref() {
+        None if mulligan.is_some() || windows.is_some() => Err(format!(
+            "{MULLIGAN_ENV} and {WINDOWS_ENV} require {OPENING_ENV}=london-v1"
+        )),
+        None => Ok(None),
+        Some("london-v1") => Ok(Some(bank::LondonOpening {
+            modes: per_seat(
+                MULLIGAN_ENV,
+                &mulligan.ok_or(format!("{OPENING_ENV}=london-v1 requires {MULLIGAN_ENV}"))?,
+            )?,
+            windows: match windows {
+                None => [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+                Some(w) => per_seat(WINDOWS_ENV, &w)?,
+            },
+        })),
+        Some(other) => Err(format!("{OPENING_ENV} must be london-v1, not {other}")),
+    }
+}
+
+/// With a London opening, every loaded policy (the focal source and every
+/// OPPONENTS entry) must carry the FlatV7 or FlatV8 identity, by the
+/// trainer's own rule.
+fn require_london_identity(
+    london: Option<bank::LondonOpening>,
+    policy: &FrozenPlayPolicyV1,
+    opponents: &[FrozenPlayPolicyV1],
+) -> Result<(), String> {
+    if london.is_none() {
+        return Ok(());
+    }
+    let seats: Vec<_> = std::iter::once(policy).chain(opponents).map(Some).collect();
+    crate::expanded_deck_training_v1::require_london_feature_identity_v1(&seats)
+}
+
+/// Strict parsing of `S4A_MAX_SEARCHES=<positive count>`; unset is None.
+fn parse_max_searches(value: Result<String, std::env::VarError>) -> Result<Option<u64>, String> {
+    match value {
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Ok(v) => match v.parse::<u64>() {
+            Ok(n) if n > 0 && v == n.to_string() => Ok(Some(n)),
+            _ => Err(format!(
+                "{MAX_SEARCHES_ENV} must be a positive count, not {v}"
+            )),
+        },
+        Err(e) => Err(format!("invalid {MAX_SEARCHES_ENV}: {e}")),
+    }
+}
+
+/// One line of `BUDGET_REPLAY_ACTIONS`: a case id and the actions of both
+/// seats in play order (one trainer episode).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayActions {
+    id: String,
+    actions: Vec<u32>,
+}
+
+/// JSONL of [`ReplayActions`], one line per case id.
+fn parse_replay_actions(text: &str) -> Result<HashMap<String, Vec<u32>>, String> {
+    let mut out = HashMap::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let r: ReplayActions =
+            serde_json::from_str(line).map_err(|e| format!("{REPLAY_ACTIONS_ENV}: {e}"))?;
+        if out.insert(r.id.clone(), r.actions).is_some() {
+            return Err(format!("{REPLAY_ACTIONS_ENV}: case {} appears twice", r.id));
+        }
+    }
+    Ok(out)
 }
 
 /// Opt-in flat-root searches (`root_allocation::SearchOptions::flat_root`,
