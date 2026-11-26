@@ -217,6 +217,13 @@ struct MagePlanV1 {
     committed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CopyResolutionV1 {
+    ctx: crate::effect::ExecCtx,
+    item: crate::state::StackItem,
+    from: Zone,
+}
+
 /// GameState never restores runtime ownership, and other modules cannot
 /// construct it. Opaque input borrowing is confined to local family verification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,7 +269,7 @@ struct RunnerV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     metamorph_mage_copies: Vec<mage_entry::MetamorphCopyV1>,
     #[serde(skip)]
-    copy_resolution: Option<Box<crate::effect::ExecCtx>>,
+    copy_resolution: Option<Box<CopyResolutionV1>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     show_and_tell_entries: Vec<(
         crate::state::AbilitySourceContractV4,
@@ -1220,6 +1227,11 @@ fn potential_operation(state: &GameState) -> bool {
     }
     mage_entry::vial::waiting(state)
         || crate::effect::needs_electroduplicate_entry_owner_v1(state)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| mage_entry::resolving_copy_waiting(state, &p.resolving_item))
         || state.stack.last().is_some_and(|item| {
             show_and_tell::printed(item) || mage_entry::resolving_copy_waiting(state, item)
         })
@@ -3172,9 +3184,9 @@ pub(crate) fn with_copy_resolution<T>(
     ctx: Option<&crate::effect::ExecCtx>,
     execute: impl FnOnce(&mut GameState) -> T,
 ) -> T {
-    if mage_entry::resolving_copy_route(item).is_none() {
+    let Some((from, _)) = mage_entry::resolving_copy_route(item) else {
         return execute(state);
-    }
+    };
     let context = ctx
         .or_else(|| {
             state
@@ -3192,12 +3204,48 @@ pub(crate) fn with_copy_resolution<T>(
     let Some(runner) = state.engine.linked_aura_operation_v1.runtime.as_mut() else {
         return execute(state);
     };
-    let previous = std::mem::replace(&mut runner.copy_resolution, context.map(Box::new));
+    let previous = std::mem::replace(
+        &mut runner.copy_resolution,
+        context.map(|ctx| {
+            Box::new(CopyResolutionV1 {
+                ctx,
+                item: item.clone(),
+                from,
+            })
+        }),
+    );
     let result = execute(state);
     if let Some(runner) = state.engine.linked_aura_operation_v1.runtime.as_mut() {
         runner.copy_resolution = previous;
     }
     result
+}
+
+/// Keep the legacy refusal for a synthetic invocation of the paid Reanimate
+/// effect. Only the native resolving stack row authorizes its copy entrant.
+pub(crate) fn paid_return_authorized(
+    state: &GameState,
+    ctx: &crate::effect::ExecCtx,
+    card: crate::ids::ObjectId,
+) -> bool {
+    if ctx.stack_item_id.is_none()
+        || !mage_entry::physical_copy_entrant(state, card, Zone::Graveyard)
+    {
+        return true;
+    }
+    let ProposedEvent::ZoneChange(change) =
+        ProposedEvent::zone_change_to_battlefield_under_controller(card, ctx.controller)
+    else {
+        unreachable!()
+    };
+    crate::eternal_legacy_e7a_v1::prevents_zone_change(state, &change)
+        || state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_ref()
+            .and_then(|r| r.copy_resolution.as_ref())
+            .is_some_and(|scope| &scope.ctx == ctx)
 }
 
 /// Prepare the whole roster before replacement effects inspect any member (CR 614.12).
@@ -3208,7 +3256,7 @@ pub(crate) fn prepare_copy_batch(state: &mut GameState, events: &mut [ProposedEv
         matches!(event, ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield)) {
         return true;
     }
-    let Some(ctx) = state
+    let Some(scope) = state
         .engine
         .linked_aura_operation_v1
         .runtime
@@ -3222,33 +3270,28 @@ pub(crate) fn prepare_copy_batch(state: &mut GameState, events: &mut [ProposedEv
             continue;
         };
         if change.to_zone != Zone::Battlefield
-            || !state
-                .engine
-                .linked_aura_operation_v1
-                .runtime
-                .as_ref()
-                .and_then(|r| r.original_stack.last())
-                .and_then(mage_entry::resolving_copy_route)
-                .is_some_and(|(zone, _)| {
-                    mage_entry::physical_copy_entrant(state, change.object, zone)
-                })
+            || !mage_entry::physical_copy_entrant(state, change.object, scope.from)
             || crate::eternal_legacy_e7a_v1::prevents_zone_change(state, change)
         {
             continue;
         }
-        match prepare_registered_entry(state, change.object, CopyProducer::Resolution(&ctx)) {
+        match prepare_registered_entry(
+            state,
+            change.object,
+            CopyProducer::Resolution {
+                ctx: &scope.ctx,
+                item: &scope.item,
+            },
+        ) {
             Ok(false) => return false,
             Err(_) => {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
+                    scope.ctx.source,
                 ));
                 return false;
             }
             Ok(true) if copy_declined_discard(state, change.object) => {
-                if state.objects.get(change.object).zone == Zone::Graveyard {
-                    return false;
-                }
                 change.to_zone = Zone::Graveyard;
             }
             Ok(true) => {}
@@ -3257,10 +3300,21 @@ pub(crate) fn prepare_copy_batch(state: &mut GameState, events: &mut [ProposedEv
     true
 }
 
+/// A declined Mox replacement leaves an entrant already in its graveyard
+/// in place (CR 614.6). Keep the other members of a simultaneous batch.
+pub(crate) fn kept_in_graveyard(state: &GameState, event: &ProposedEvent) -> bool {
+    matches!(event, ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Graveyard
+        && state.objects.try_get(change.object).is_some_and(|card| card.zone == Zone::Graveyard)
+        && copy_declined_discard(state,change.object))
+}
+
 /// Hand selections pass their native proof at the point where the chosen
 /// physical card becomes known. Generic effects use their resolving scope.
 pub(crate) enum CopyProducer<'a> {
-    Resolution(&'a crate::effect::ExecCtx),
+    Resolution {
+        ctx: &'a crate::effect::ExecCtx,
+        item: &'a crate::state::StackItem,
+    },
     PaidHand {
         continuation: &'a crate::effect::EffectContinuation,
         paid_at: usize,
@@ -3281,7 +3335,7 @@ pub(crate) fn prepare_registered_entry(
         return Ok(true);
     }
     match producer {
-        CopyProducer::Resolution(ctx) => prepare_resolving_copy(state, ctx, object),
+        CopyProducer::Resolution { ctx, item } => prepare_resolving_copy(state, ctx, object, item),
         CopyProducer::PaidHand {
             continuation,
             paid_at,
@@ -3323,6 +3377,7 @@ fn prepare_resolving_copy(
     state: &mut GameState,
     ctx: &crate::effect::ExecCtx,
     object: crate::ids::ObjectId,
+    parent: &crate::state::StackItem,
 ) -> Result<bool, String> {
     let runner = state
         .engine
@@ -3340,14 +3395,10 @@ fn prepare_resolving_copy(
     {
         return Err("noncast Metamorph requires the actual resolving Reanimate".into());
     }
-    let parent = runner
-        .original_stack
-        .last()
-        .ok_or("noncast Metamorph lost its original Reanimate stack row")?;
     let Some(choice) = mage_entry::NoncastCopyChoiceV1::capture(state, ctx, object, parent)? else {
         return Ok(true);
     };
-    prepare_noncast_metamorph(state, choice, false)
+    prepare_noncast_metamorph(state, choice)
 }
 
 fn prepare_vial_metamorph(
@@ -3372,13 +3423,12 @@ fn prepare_vial_metamorph(
     if !matches!(&runner.operation, OperationV1::Advance) {
         return Err("Vial Metamorph lost its actual private hand answer".into());
     }
-    prepare_noncast_metamorph(state, choice, true)
+    prepare_noncast_metamorph(state, choice)
 }
 
 fn prepare_noncast_metamorph(
     state: &mut GameState,
     choice: mage_entry::NoncastCopyChoiceV1,
-    vial: bool,
 ) -> Result<bool, String> {
     let original_sha256 = state
         .engine
@@ -3388,8 +3438,10 @@ fn prepare_noncast_metamorph(
         .ok_or("noncast copy has no operation owner")?
         .original_sha256
         .clone();
-    let player = choice.producer.controller;
-    let checkpoint = if vial {
+    let player = choice.chooser();
+    let checkpoint = if crate::copy_entry_v1::registered_route(choice.producer.card_def)
+        == Some(crate::copy_entry_v1::Route::PaidHandAbility)
+    {
         GeneralChoiceV36::VialMetamorphV1 {
             choice: Box::new(choice),
             original_sha256,
@@ -3488,7 +3540,7 @@ fn prepare_copy_entry(
         if matches!(checkpoint, GeneralChoiceV36::VialMetamorphV1 { .. }) {
             mage_entry::vial::record_hand_answer(state, &copy)?;
         }
-        pay_copy_entry_cost(state, &copy);
+        pay_copy_entry_cost(state, &mut copy)?;
         copy.refresh_show_origin(state);
         // Validate against the unmodified battlefield before any simultaneous move.
         if crate::state::AbilitySourceContractV4::capture(state, copy.copied.source) != copy.copied
@@ -3560,10 +3612,17 @@ fn prepare_copy_requirement(
     Ok(false)
 }
 
-fn pay_copy_entry_cost(state: &mut GameState, copy: &mage_entry::MetamorphCopyV1) {
+fn pay_copy_entry_cost(
+    state: &mut GameState,
+    copy: &mut mage_entry::MetamorphCopyV1,
+) -> Result<(), String> {
     if let Some(crate::copy_entry_v1::EntryAnswer::Discard(Some(land))) = copy.entry_answer {
+        let before = state.engine.event_history.len();
         crate::engine::commit_discarded_card(state, land.source);
+        let offset = state.engine.event_history[before..].iter().position(|e| matches!(e, CommittedEvent::ZoneChange {object, from:Zone::Hand, to, ..} if *object == land.source && *to != Zone::Hand)).ok_or("Mox Diamond copy lost its discarded land")?;
+        copy.discarded_at = Some(before + offset);
     }
+    Ok(())
 }
 
 pub(crate) fn copy_declined_discard(state: &GameState, entrant: crate::ids::ObjectId) -> bool {
@@ -4208,7 +4267,7 @@ fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String>
         }),
         GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }
         | GeneralChoiceV36::VialMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
-            player: choice.producer.controller,
+            player: choice.chooser(),
             source: choice.decision_source(),
             selected_count: 0,
             min_targets: 0,

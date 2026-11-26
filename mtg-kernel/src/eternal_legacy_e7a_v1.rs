@@ -1430,6 +1430,10 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let life = i32::from(crate::engine::object_mana_value(state, card));
+            if !crate::linked_aura_operation_v1::paid_return_authorized(state, ctx, card) {
+                halt(state, ctx.source);
+                return;
+            }
             // The common pre-batch copy hook may suspend this resolution before entry.
             put_onto_battlefield(state, card, ctx.controller);
             if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)

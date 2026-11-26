@@ -120,6 +120,7 @@ pub(crate) fn prospective_copy(
         copied,
         values,
         prepared_at: None,
+        discarded_at: None,
         entry_answer: None,
         cast_at: Some(cast_at),
         stack_item,

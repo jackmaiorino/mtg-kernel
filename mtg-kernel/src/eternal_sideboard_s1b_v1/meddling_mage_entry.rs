@@ -54,6 +54,8 @@ pub struct MetamorphCopyV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) prepared_at: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) discarded_at: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     cast_at: Option<usize>,
     stack_item: StackItemId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,6 +72,10 @@ impl Hash for MetamorphCopyV1 {
         self.copied.hash(state);
         if let Some(at) = self.prepared_at {
             b"noncast-copy-prepared/v1".hash(state);
+            at.hash(state);
+        }
+        if let Some(at) = self.discarded_at {
+            b"noncast-copy-discard/v1".hash(state);
             at.hash(state);
         }
         if let Some(answer) = self.entry_answer {
@@ -120,6 +126,7 @@ pub(crate) fn physical_copy_entrant(state: &GameState, object: ObjectId, zone: Z
             live.zone == zone
                 && zone != Zone::Stack
                 && zone != Zone::Battlefield
+                && live.v4.face_index == 0
                 && !live.v4.is_token
                 && live.v4.face_down_v1.is_none()
                 && live.spell_copy_origin.is_none()
@@ -134,7 +141,9 @@ pub(crate) fn resolving_copy_route(item: &crate::state::StackItem) -> Option<(Zo
         return None;
     }
     match crate::copy_entry_v1::registered_route(source.card_def)? {
-        crate::copy_entry_v1::Route::ResolvingSpell { from, targeted } => Some((from, targeted)),
+        crate::copy_entry_v1::Route::ResolvingSpell { from, targeted, .. } => {
+            Some((from, targeted))
+        }
         _ => None,
     }
 }
@@ -175,14 +184,16 @@ impl NoncastCopyChoiceV1 {
         {
             return Err("noncast Metamorph lost its actual paid Reanimate target".into());
         }
-        let (candidates, values) =
-            crate::copy_entry_v1::capture_menu(state, object, ctx.controller)?;
+        let physical = AbilitySourceContractV4::capture(state, object);
+        let producer = AbilitySourceContractV4::capture(state, ctx.source);
+        let player = crate::copy_entry_v1::entering_controller(producer, physical);
+        let (candidates, values) = crate::copy_entry_v1::capture_menu(state, object, player)?;
         if candidates.is_empty() {
             return Ok(None);
         }
         let choice = Self {
-            physical: AbilitySourceContractV4::capture(state, object),
-            producer: AbilitySourceContractV4::capture(state, ctx.source),
+            physical,
+            producer,
             candidates,
             values,
             cast_at: Some(paid_cast_index(state, item.v4.stack_item_id)?),
@@ -193,6 +204,10 @@ impl NoncastCopyChoiceV1 {
             return Err("noncast Metamorph lost its actual paid Reanimate publication".into());
         }
         Ok(Some(choice))
+    }
+
+    pub(crate) fn chooser(&self) -> PlayerId {
+        crate::copy_entry_v1::entering_controller(self.producer, self.physical)
     }
 
     pub(crate) fn decision_source(&self) -> ObjectId {
@@ -208,6 +223,7 @@ impl NoncastCopyChoiceV1 {
             physical: self.physical,
             copied,
             prepared_at: None,
+            discarded_at: None,
             entry_answer: None,
             values: self.values.get(&copied.source).cloned(),
             cast_at: self.cast_at,
@@ -307,6 +323,7 @@ impl MetamorphCopyV1 {
             physical: AbilitySourceContractV4::capture(state, ctx.source),
             copied: AbilitySourceContractV4::capture(state, selected.object),
             prepared_at: None,
+            discarded_at: None,
             entry_answer: None,
             values: None,
             cast_at: Some(cast_at),
@@ -399,11 +416,50 @@ impl MetamorphCopyV1 {
                 ))
     }
 
+    fn discard_matches(&self, state: &GameState, entry: usize, controller: PlayerId) -> bool {
+        use crate::copy_entry_v1::EntryAnswer;
+        let Some(EntryAnswer::Discard(selected)) = self.entry_answer else {
+            return self.discarded_at.is_none();
+        };
+        let (Some(land), Some(at)) = (selected, self.discarded_at) else {
+            return false;
+        };
+        let Some(live) = state.objects.try_get(land.source) else {
+            return false;
+        };
+        let start = self.cast_at.or(self.vial.map(|v| v.chosen_at));
+        if start.is_none_or(|start| start >= at)
+            || at >= entry
+            || self.show_and_tell.is_some_and(|s| s.chosen_at <= at)
+            || land.zone != Zone::Hand
+            || land.owner != controller
+            || land.controller != controller
+            || live.owner != land.owner
+            || !CARD_DEFS
+                .get(usize::from(land.card_def))
+                .is_some_and(|def| def.has_type(CardType::Land))
+            || !crate::engine::source_card_def_matches(state, land, live.card_def)
+            || !matches!(state.engine.event_history.get(at),
+                Some(CommittedEvent::ZoneChange {object,from:Zone::Hand,to,controller_before}) if *object == land.source && *to!=Zone::Hand && *controller_before==controller)
+        {
+            return false;
+        }
+        let changes = state.engine.event_history[at..]
+            .iter()
+            .filter(
+                |ev| matches!(ev, CommittedEvent::ZoneChange {object,..} if *object==land.source),
+            )
+            .count();
+        live.zone_change_count
+            .checked_sub(land.zone_change_count)
+            .is_some_and(|delta| delta as usize == changes)
+    }
+
     fn entrant_matches(&self, entrant: AbilitySourceContractV4) -> bool {
         let controller = if let Some(vial) = self.vial {
             vial.source.controller
         } else if let Some(source) = self.reanimated_by {
-            source.controller
+            crate::copy_entry_v1::entering_controller(source, self.physical)
         } else if self.show_and_tell.is_some() {
             self.physical.owner
         } else {
@@ -804,6 +860,7 @@ fn copy_entry_matches(
     };
     anchor < entry
         && prepared_matches
+        && copy.discard_matches(state, entry, entrant.controller)
         && copy.entrant_matches(entrant)
         && (copy.reanimated_by.is_none() && copy.vial.is_none() && copy.show_and_tell.is_none()
             || crate::standard_cards_v1::had_card_def(

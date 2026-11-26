@@ -1785,6 +1785,7 @@ fn show_and_tell_noncast_metamorph_copies_only_preexisting_mind_stone() {
 fn copied_entry_requirements_are_answered_before_reanimate_moves_the_card() {
     for actor in [P0, P1] {
         for (name, step) in [
+            ("Painter's Servant", "color"),
             ("Serra's Emissary", "card_type"),
             ("Pithing Needle", "name"),
             ("Phyrexian Revoker", "name"),
@@ -1836,8 +1837,28 @@ fn copied_entry_requirements_are_answered_before_reanimate_moves_the_card() {
             assert_eq!(zone(&state, metamorph), Zone::Battlefield);
             assert_eq!(state.objects.get(metamorph).card_def, id(name));
             assert_eq!(life(&state, actor), 16);
+            if step == "color" {
+                let mut valid = state.clone();
+                act(&mut valid, Action::Pass);
+                let mut forged = state.clone();
+                forged.objects.get_mut(metamorph).v4.chosen_color = Some(ManaColor::G);
+                assert_copy_restore_refused(serde_json::to_value(forged).unwrap(), Action::Pass);
+            }
             if step == "discard" {
                 assert_eq!(zone(&state, land), Zone::Graveyard);
+                let mut forged = serde_json::to_value(&state).unwrap();
+                let history = forged["engine"]["event_history"].as_array_mut().unwrap();
+                let completed = history
+                    .iter_mut()
+                    .find_map(|event| {
+                        event
+                            .get_mut("MeddlingMageEntryV1")?
+                            .get_mut("journal")?
+                            .get_mut("MetamorphCopied")
+                    })
+                    .unwrap();
+                completed["copy"]["discarded_at"] = 0.into();
+                assert_copy_restore_refused(forged, Action::Pass);
             }
         }
     }
@@ -2202,8 +2223,6 @@ fn reanimated_metamorph_chooses_painter_color_before_lethal_life_loss_both_seats
             restored.objects.get(metamorph).v4.chosen_color,
             Some(ManaColor::B)
         );
-        restored.objects.get_mut(metamorph).v4.chosen_color = Some(ManaColor::G);
-        assert_copy_restore_refused(serde_json::to_value(restored).unwrap(), Action::Pass);
     }
 }
 

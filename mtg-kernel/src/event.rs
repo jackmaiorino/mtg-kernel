@@ -3845,6 +3845,7 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 
 fn propose_event(state: &mut GameState, mut event: ProposedEvent, individual_draw: bool) {
     if !crate::linked_aura_operation_v1::prepare_copy_batch(state, std::slice::from_mut(&mut event))
+        || crate::linked_aura_operation_v1::kept_in_graveyard(state, &event)
     {
         return;
     }
@@ -7278,6 +7279,7 @@ fn propose_and_commit_batch_unaudited(state: &mut GameState, mut events: Vec<Pro
     if !crate::linked_aura_operation_v1::prepare_copy_batch(state, &mut events) {
         return;
     }
+    events.retain(|event| !crate::linked_aura_operation_v1::kept_in_graveyard(state, event));
     if events
         .iter()
         .any(|event| refuse_unowned_donated_damage(state, event))

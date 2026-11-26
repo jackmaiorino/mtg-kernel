@@ -15,6 +15,7 @@ pub(crate) enum Route {
     ResolvingSpell {
         from: crate::state::Zone,
         targeted: bool,
+        under_owner: bool,
     },
     ShowAndTell,
     PaidHandAbility,
@@ -31,10 +32,23 @@ pub(crate) fn registered_route(definition: u16) -> Option<Route> {
         "Reanimate" => Some(Route::ResolvingSpell {
             from: crate::state::Zone::Graveyard,
             targeted: true,
+            under_owner: false,
         }),
         "Show and Tell" => Some(Route::ShowAndTell),
         "Aether Vial" => Some(Route::PaidHandAbility),
         _ => None,
+    }
+}
+
+pub(crate) fn entering_controller(
+    producer: AbilitySourceContractV4,
+    physical: AbilitySourceContractV4,
+) -> PlayerId {
+    match registered_route(producer.card_def) {
+        Some(Route::ResolvingSpell {
+            under_owner: true, ..
+        }) => physical.owner,
+        _ => producer.controller,
     }
 }
 
@@ -153,10 +167,24 @@ pub(crate) fn capture_menu(
     Ok((contracts, values))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicStepV1 {
+    Copy,
+    Color,
+    CardType,
+    Name,
+    Discard,
+    CreatureType,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicMenuV1 {
     pub player: PlayerId,
-    pub step: String,
+    pub step: PublicStepV1,
+    /// Printed names in menu order, as on the schema-5 Meddling Mage name menu.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub option_text: Vec<String>,
     pub can_decline: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<EntryAnswer>,
@@ -176,15 +204,31 @@ pub(crate) fn public_menu(state: &GameState, viewer: PlayerId) -> Option<PublicM
         .as_ref()?;
     if let Choice::CopyEntryOptionV1 { choice, .. } = &checkpoint.choice {
         let (step, can_decline) = match choice.options.first()? {
-            EntryAnswer::Color(_) => ("color", false),
-            EntryAnswer::ProtectionType(_) => ("card_type", false),
-            EntryAnswer::RevokerName(_) | EntryAnswer::NeedleName(_) => ("name", false),
-            EntryAnswer::CreatureType(_) => ("creature_type", false),
-            EntryAnswer::Discard(_) => ("discard", true),
+            EntryAnswer::Color(_) => (PublicStepV1::Color, false),
+            EntryAnswer::ProtectionType(_) => (PublicStepV1::CardType, false),
+            EntryAnswer::RevokerName(_) | EntryAnswer::NeedleName(_) => (PublicStepV1::Name, false),
+            EntryAnswer::CreatureType(_) => (PublicStepV1::CreatureType, false),
+            EntryAnswer::Discard(_) => (PublicStepV1::Discard, true),
         };
         return Some(PublicMenuV1 {
             player: choice.player,
-            step: step.into(),
+            step,
+            option_text: if viewer == choice.player && step == PublicStepV1::Name {
+                choice
+                    .options
+                    .iter()
+                    .filter_map(|option| match option {
+                        EntryAnswer::NeedleName(id) | EntryAnswer::RevokerName(id) => {
+                            crate::card_def::CARD_DEFS
+                                .get(usize::from(*id))
+                                .map(|def| def.object_name.to_owned())
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             can_decline,
             candidates: Vec::new(),
             values: Default::default(),
@@ -196,11 +240,9 @@ pub(crate) fn public_menu(state: &GameState, viewer: PlayerId) -> Option<PublicM
         });
     }
     let (player, candidates, values) = match &checkpoint.choice {
-        Choice::ReanimateMetamorphV1 { choice, .. } | Choice::VialMetamorphV1 { choice, .. } => (
-            choice.producer.controller,
-            &choice.candidates,
-            &choice.values,
-        ),
+        Choice::ReanimateMetamorphV1 { choice, .. } | Choice::VialMetamorphV1 { choice, .. } => {
+            (choice.chooser(), &choice.candidates, &choice.values)
+        }
         Choice::ShowAndTellV1 { choice, .. } if choice.physical.is_some() => {
             (choice.player, &choice.candidates, &choice.values)
         }
@@ -208,7 +250,8 @@ pub(crate) fn public_menu(state: &GameState, viewer: PlayerId) -> Option<PublicM
     };
     Some(PublicMenuV1 {
         player,
-        step: "copy".into(),
+        step: PublicStepV1::Copy,
+        option_text: Vec::new(),
         can_decline: true,
         options: Vec::new(),
         candidates: candidates.clone(),
@@ -261,14 +304,20 @@ pub(crate) fn requirement(
     if live.v4.face_down_v1.is_some() {
         return Err("Eternal has no nameless face-up blueprint for a face-down copy".into());
     }
-    let name = CARD_DEFS[usize::from(contract.card_def)].object_name;
-    if copy
+    let definition = &CARD_DEFS[usize::from(contract.card_def)];
+    let name = if copy
         .values
         .as_ref()
         .is_some_and(|values| values.face_index != 0)
     {
-        return Ok(None);
-    }
+        definition
+            .transform_face
+            .as_ref()
+            .ok_or("copy lost its battlefield face")?
+            .name
+    } else {
+        definition.object_name
+    };
     let options = match name {
         "Painter's Servant" => crate::eternal_legacy_e9a_v1::statics::COLORS
             .into_iter()
