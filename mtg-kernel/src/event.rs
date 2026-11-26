@@ -2293,6 +2293,23 @@ pub enum CommittedEvent {
         drawn: crate::state::ObjectLinkV4,
         remaining: u32,
     },
+    /// The stop of `MiracleDrawSuspendedV1` at `path` resumed: its later
+    /// attempts are made now. History-only proof that the stop is spent.
+    MiracleDrawResumedV1 {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+    },
+    /// A resolving stack item's discard at `path` waits inside its
+    /// resolution for `player` to discard from `hand`, where the program's
+    /// shape alone cannot prove the interpreter reached it: a nested leaf,
+    /// or a last instruction waiting while a draw's captures are deferred.
+    /// History-only proof that this stack item reached that discard.
+    ResolutionDiscardWaitsV1 {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+        player: PlayerId,
+        hand: Vec<crate::state::ObjectLinkV4>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

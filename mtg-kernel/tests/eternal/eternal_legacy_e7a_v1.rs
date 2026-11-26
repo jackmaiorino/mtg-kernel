@@ -1718,6 +1718,51 @@ fn archon_of_cruelty_punishes_the_opponent_as_it_enters() {
 }
 
 #[test]
+fn archon_of_cruelty_draw_waits_for_a_first_draw_miracle_between_discard_and_life() {
+    // The opponent's discard is done; P0's draw finds Metamorphosis Fanatic
+    // as their first draw this turn and waits for its reveal (702.94a) with
+    // the life gain still to come. A dredger P0 declines routes the same
+    // draw through its replacement choice.
+    for (dredger, reveal) in [(false, 0), (false, 1), (true, 0)] {
+        let mut state = islands();
+        let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+        let held = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+        if dredger {
+            put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+        }
+        let fanatic = put(&mut state, P0, "Metamorphosis Fanatic", Zone::Library);
+        let archon = put(&mut state, P0, "Archon of Cruelty", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 6);
+        cast(&mut state, archon, &[]);
+        let mut reveals = 0;
+        settle_with(&mut state, |s, decision| match decision {
+            Decision::ChooseEffectOption {
+                player: P0,
+                source,
+                option_count: 2,
+            } if source == fanatic && reveals == 0 => {
+                reveals += 1;
+                assert!(hand_contains(s, P0, fanatic));
+                assert_eq!(zone(s, held), Zone::Graveyard, "the opponent discarded first");
+                assert_eq!(s.players[1].life, 17);
+                assert_eq!(s.players[0].life, 20, "the life gain comes after the draw");
+                assert!(s.engine.pending_effect.is_some());
+                Action::ChooseEffectOption(reveal)
+            }
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
+            other => first_answer(other),
+        });
+        assert_eq!(reveals, 1);
+        assert!(state.engine.halted.is_none());
+        assert_eq!(zone(&state, archon), Zone::Battlefield);
+        assert_eq!(zone(&state, elves), Zone::Graveyard);
+        assert_eq!(zone(&state, fanatic), Zone::Hand);
+        assert_eq!(state.players[1].life, 17);
+        assert_eq!(state.players[0].life, 23);
+    }
+}
+
+#[test]
 fn griselbrand_pays_seven_life_to_draw_seven() {
     let mut state = islands();
     let griselbrand = put(&mut state, P0, "Griselbrand", Zone::Battlefield);

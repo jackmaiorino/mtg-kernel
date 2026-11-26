@@ -1946,6 +1946,84 @@ fn smugglers_copter_nested_loot_completes_after_each_miracle_card() {
     }
 }
 
+/// The hand `player` holds now, bound as a resolution discard binds it.
+fn bound_hand(state: &GameState, player: PlayerId) -> Vec<mtg_kernel::effect::EffectObjectBinding> {
+    state.players[player.index()]
+        .hand
+        .iter()
+        .map(|&object| mtg_kernel::effect::EffectObjectBinding {
+            object,
+            expected_zone: Zone::Hand,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect()
+}
+
+#[test]
+fn smugglers_copter_refuses_a_restored_loot_discard_its_resolution_never_reached() {
+    // The loot's terminal discard waits inside the resolution only after its
+    // option was chosen and its card drawn. A restored snapshot that stages
+    // that discard while Copter's choice is still open (no option chosen,
+    // no card drawn), with captures deferred, is refused.
+    let (mut state, copter, _elves) = copter_game();
+    let miracle = put(&mut state, P0, "Metamorphosis Fanatic", Zone::Library);
+    let mut choosing = None;
+    let mut discarding = None;
+    attack_with(&mut state, vec![copter], |state, decision| match decision {
+        Decision::ChooseEffectOption { source, .. } if *source == copter => {
+            choosing.get_or_insert_with(|| state.clone());
+            Some(Action::ChooseEffectOption(1))
+        }
+        Decision::ChooseEffectOption { source, .. } if *source == miracle => {
+            Some(Action::ChooseEffectOption(0))
+        }
+        Decision::Discard { .. } => {
+            discarding.get_or_insert_with(|| state.clone());
+            None
+        }
+        _ => None,
+    });
+    let choosing = choosing.expect("Copter offers its loot inside its resolution");
+    let discarding = discarding.expect("the loot's discard waits inside its resolution");
+    let reached = discarding.engine.pending_discard.clone().unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut discarding.clone()),
+        Decision::Discard { .. }
+    ));
+    let engine::DiscardResume::FinishEffectContinuation {
+        stack_item_id,
+        path,
+        ..
+    } = reached.resume.clone()
+    else {
+        panic!("the loot's discard resumes its resolution");
+    };
+    let mut forged = choosing.clone();
+    let mut continuation = forged
+        .engine
+        .pending_effect
+        .clone()
+        .expect("Copter's choice waits inside its resolution");
+    assert_eq!(continuation.resolving_item.v4.stack_item_id, stack_item_id);
+    continuation.choice = None;
+    continuation.frames = discarding.engine.pending_effect.as_ref().unwrap().frames.clone();
+    forged.engine.pending_effect = Some(continuation);
+    forged.eternal_v1.as_mut().unwrap().e7b.dredge_deferring = true;
+    forged.engine.pending_discard = Some(engine::PendingDiscard {
+        player: P0,
+        count: reached.count,
+        resume: engine::DiscardResume::FinishEffectContinuation {
+            stack_item_id,
+            path,
+            original_hand: bound_hand(&forged, P0),
+        },
+    });
+    assert!(matches!(
+        engine::advance_until_decision(&mut forged),
+        Decision::Halted { .. }
+    ));
+}
+
 #[test]
 fn smugglers_copter_may_decline_to_loot() {
     let (mut state, copter, _elves) = copter_game();

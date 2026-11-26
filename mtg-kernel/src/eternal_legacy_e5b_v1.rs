@@ -1441,7 +1441,10 @@ pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
 /// A card's miracle cost (702.94), if it has one, as its colored pips and
 /// generic amount: Terminus, Miracle {W}, and wave S1l's Triumph of Saint
 /// Katherine, Miracle {1}{W}.
-fn miracle_cost(state: &GameState, card: ObjectId) -> Option<(&'static [ManaColor], u8)> {
+pub(crate) fn miracle_cost(
+    state: &GameState,
+    card: ObjectId,
+) -> Option<(&'static [ManaColor], u8)> {
     // A catalog downgrade must also disable the first-draw reveal offer.
     if !printed(state, card).is_executable() {
         return None;

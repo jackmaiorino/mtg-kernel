@@ -377,11 +377,13 @@ pub enum EventKindV1 {
     SpellCopyCostPaidV1,
     LinkedExileDepartureV1,
     MiracleDrawSuspendedV1,
+    MiracleDrawResumedV1,
+    ResolutionDiscardWaitsV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 334;
-const _: () = assert!(EventKindV1::MiracleDrawSuspendedV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 336;
+const _: () = assert!(EventKindV1::ResolutionDiscardWaitsV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -821,6 +823,8 @@ impl CommittedEvent {
             Self::SpellCopyCostPaidV1 { .. } => EventKindV1::SpellCopyCostPaidV1,
             Self::LinkedExileDepartureV1 { .. } => EventKindV1::LinkedExileDepartureV1,
             Self::MiracleDrawSuspendedV1 { .. } => EventKindV1::MiracleDrawSuspendedV1,
+            Self::MiracleDrawResumedV1 { .. } => EventKindV1::MiracleDrawResumedV1,
+            Self::ResolutionDiscardWaitsV1 { .. } => EventKindV1::ResolutionDiscardWaitsV1,
         }
     }
 }

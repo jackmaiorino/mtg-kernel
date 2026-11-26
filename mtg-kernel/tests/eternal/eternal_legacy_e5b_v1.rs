@@ -1214,6 +1214,127 @@ fn miracle_pauses_riddler_turn_draw_before_extra_card() {
     assert_eq!(state.players[0].draws_this_turn, 2);
 }
 
+#[test]
+fn miracle_pauses_echo_of_eons_draws_for_each_drawer_without_a_dredger() {
+    // Every card either player owns is Terminus, so whatever the shuffles
+    // put on top, each drawer's first draw is a miracle card. Each reveal
+    // comes before that drawer's next card (702.94a).
+    let mut state = game(&["Terminus"; 12]);
+    let echo = put(&mut state, P0, "Echo of Eons", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 4);
+    cast(&mut state, echo, &[]);
+    for drawer in [P0, P1] {
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectOption {
+                player,
+                source,
+                option_count: 2,
+            }) if player == drawer => assert!(hand_contains(&state, drawer, source)),
+            other => panic!("expected {drawer:?}'s reveal, got {other:?}"),
+        }
+        assert_eq!(state.players[drawer.index()].hand.len(), 1);
+        assert_eq!(state.players[drawer.index()].draws_this_turn, 1);
+        let other_drew = if drawer == P0 { 0 } else { 7 };
+        assert_eq!(state.players[drawer.opponent().index()].hand.len(), other_drew);
+        act(&mut state, Action::ChooseEffectOption(0));
+    }
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), 7);
+    assert_eq!(state.players[1].hand.len(), 7);
+    assert_eq!(zone(&state, echo), Zone::Graveyard);
+}
+
+#[test]
+fn miracle_pauses_paradoxical_outcome_draws_without_a_dredger() {
+    let mut state = game(&["Island"; 3]);
+    let second = state.players[0].library[0];
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+    let first_elf = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let second_elf = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let outcome = put(&mut state, P0, "Paradoxical Outcome", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    act(&mut state, Action::CastSpell(outcome));
+    choose_target(&mut state, Target::Object(first_elf));
+    choose_target(&mut state, Target::Object(second_elf));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseTargets {
+            can_finish: true,
+            ..
+        }
+    ));
+    act(&mut state, Action::FinishEffectSelection);
+    // Two returned cards: two draws, the first a miracle card.
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        }) if source == terminus
+    ));
+    assert!(hand_contains(&state, P0, first_elf));
+    assert!(hand_contains(&state, P0, second_elf));
+    assert!(hand_contains(&state, P0, terminus));
+    assert!(!hand_contains(&state, P0, second));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert!(hand_contains(&state, P0, second));
+    assert_eq!(state.players[0].draws_this_turn, 2);
+}
+
+#[test]
+fn a_restored_draw_step_wait_needs_its_reveal_and_the_riddler_draws_it_names() {
+    use mtg_kernel::eternal_vintage_e7b_v1::OptionalRemainingV1;
+
+    // With two cards in hand before the draw, Quantum Riddler adds no draw
+    // (121.2b): the draw step draws Terminus alone and nothing waits.
+    let mut state = game(&["Island"; 4]);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    put(&mut state, P0, "Island", Zone::Hand);
+    put(&mut state, P0, "Island", Zone::Hand);
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Draw
+    });
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        } if source == terminus
+    ));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    let waiting = |state: &GameState| {
+        let mut forged = state.clone();
+        forged.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining =
+            OptionalRemainingV1(Some(1));
+        forged
+    };
+    // A restored wait for a draw the hand before the draw never earned.
+    let mut extra = waiting(&state);
+    assert!(engine::step(&mut extra.clone(), Action::ChooseEffectOption(0)).is_err());
+    assert!(matches!(
+        engine::advance_until_decision(&mut extra),
+        Decision::Halted { .. }
+    ));
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), 3);
+    // A restored wait with no reveal pending: `step` refuses it as
+    // `advance` does.
+    let mut unrevealed = waiting(&state);
+    assert!(engine::step(&mut unrevealed.clone(), Action::Pass).is_err());
+    assert!(matches!(
+        engine::advance_until_decision(&mut unrevealed),
+        Decision::Halted { .. }
+    ));
+}
+
 // ---- Leyline Binding and Static Prison ---------------------------------------------
 
 #[test]

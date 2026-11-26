@@ -135,8 +135,35 @@ pub(crate) fn owned_draw_needs_choice(state: &GameState, player: PlayerId, count
     }
 }
 
+/// Whether an owned draw instruction of `count` printed draws must make
+/// its attempts one at a time: an attempt may need its drawer's replacement
+/// choice, or its first attempt may draw the drawer's first card this turn,
+/// a miracle card, while a later attempt remains. That card is revealed as
+/// it is drawn, before any later card is drawn (702.94a).
+pub(crate) fn owned_draw_needs_stage(state: &GameState, player: PlayerId, count: u32) -> bool {
+    owned_draw_needs_choice(state, player, count)
+        || (count > 0
+            && count.saturating_add(event::draw_instruction_extra(state, player, count)) > 1
+            && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player))
+}
+
+/// Whether `player` may draw a miracle card as their first draw this turn
+/// after their library is shuffled: they have drawn no card this turn and
+/// own a miracle card that the shuffle can put on top.
+fn may_draw_miracle_after_shuffle(state: &GameState, player: PlayerId) -> bool {
+    let owner = &state.players[player.index()];
+    owner.draws_this_turn == 0
+        && owner
+            .library
+            .iter()
+            .chain(&owner.hand)
+            .chain(&owner.graveyard)
+            .any(|&card| crate::eternal_legacy_e5b_v1::miracle_cost(state, card).is_some())
+}
+
 /// Whether a synchronous program should run in the resumable interpreter
-/// so the affected player can choose a draw replacement.
+/// so the affected player can choose a draw replacement, or answer a
+/// miracle reveal before a later card is drawn.
 pub(crate) fn forces_resumable(
     state: &GameState,
     program: &EffectOp,
@@ -175,12 +202,25 @@ pub(crate) fn forces_resumable(
         _ => owned_draws_v1::starting_draws(state, program, ctx),
     };
     let needs_choice = match starting_draws {
-        Some((drawer, count)) => owned_draw_needs_choice(state, drawer, count),
+        Some((drawer, count)) => owned_draw_needs_stage(state, drawer, count),
         None => {
-            draws(program)
+            (draws(program)
                 && [PlayerId::P0, PlayerId::P1]
                     .into_iter()
-                    .any(|player| may_need_draw_choice(state, player))
+                    .any(|player| may_need_draw_choice(state, player)))
+                // Echo shuffles both libraries before drawing seven.
+                || (*program == crate::eternal_legacy_e7a_v1::echo_of_eons()
+                    && [PlayerId::P0, PlayerId::P1]
+                        .into_iter()
+                        .any(|player| may_draw_miracle_after_shuffle(state, player)))
+                // A copied Paradoxical Outcome stages one draw of one card
+                // per returned permanent, so it is staged for a miracle only
+                // while no draw-count replacement applies.
+                || (is_copy
+                    && *program == paradoxical_outcome()
+                    && !ctx.targets.is_empty()
+                    && event::draw_instruction_extra(state, ctx.controller, 2) == 0
+                    && owned_draw_needs_stage(state, ctx.controller, 2))
         }
     };
     (needs_choice || crate::effect::program_may_draw_miracle(state, program, ctx))
@@ -219,6 +259,12 @@ pub(crate) fn drive_draws(
                 &continuation.frames,
             ) && crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state).is_some()
             {
+                // A printed draw stops through its authenticated remainder,
+                // which offers each later attempt's replacement again.
+                #[cfg(feature = "eternal-fixtures")]
+                if crate::effect::suspend_miracle_draw(state, continuation, drawer, &path, count) {
+                    return Ok(true);
+                }
                 if count > 0 {
                     continuation.frames.push(EffectFrame::Program {
                         op: EffectOp::DrawCards { player, count },
@@ -672,6 +718,36 @@ pub(crate) fn finish(
     }
 }
 
+/// After a replacement choice's draw: when the card drawn is its drawer's
+/// first this turn and has miracle, a printed draw stops through its
+/// authenticated remainder (702.94a), which takes over the rest of the
+/// instruction that the choice staged below it. An owned draw stage stops
+/// at its own staged next attempt instead.
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn stop_after_choice_draw(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+) {
+    if crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state).is_none()
+        || owned_draws_v1::draw_stage_matches(state, pending, drawer, path, &pending.frames)
+    {
+        return;
+    }
+    let rest = match pending.frames.last() {
+        Some(EffectFrame::Program {
+            op: EffectOp::DrawCards { count, .. },
+            path: rest_path,
+        }) if rest_path.as_slice() == path => Some(*count),
+        _ => None,
+    };
+    let staged = rest.and_then(|_| pending.frames.pop());
+    if !crate::effect::suspend_miracle_draw(state, pending, drawer, path, rest.unwrap_or(0)) {
+        pending.frames.extend(staged);
+    }
+}
+
 /// Mills the card's dredge number, then returns it from the graveyard to
 /// its owner's hand. `false` (and nothing happens) if it can no longer
 /// dredge. `resolving` is the spell or ability whose resolution draws, held
@@ -792,12 +868,27 @@ fn miracle_draw_step_wait(state: &GameState) -> Option<u32> {
 /// Authenticates a turn-based draw waiting for a miracle reveal: only during
 /// the active player's draw step, with nothing resolving, while that
 /// player's first draw this turn is a miracle card whose reveal is pending,
-/// and no more draws remain than its draw-count replacements can add.
+/// and no more draws remain than its draw-count replacements added for the
+/// hand it had before the draw (121.2b). Each attempt made so far put at
+/// most one card into that hand (a draw, or a dredged card's return), so
+/// some count of attempts made, the miracle's among them, accounts for
+/// the rest: the hand before the draw held at least the current hand less
+/// those attempts, and a larger hand adds no more draws.
 pub(crate) fn validate_miracle_draw_step_wait(state: &GameState) -> Result<(), String> {
     let Some(remaining) = miracle_draw_step_wait(state) else {
         return Ok(());
     };
     let player = state.active_player;
+    let hand = state.players[player.index()].hand.len();
+    let accounted = (1..=hand.max(1)).any(|made| {
+        let extra = event::draw_instruction_extra_at_hand_size(
+            state,
+            player,
+            1,
+            hand.saturating_sub(made),
+        );
+        u64::from(remaining) + u64::try_from(made).unwrap_or(u64::MAX) <= 1 + u64::from(extra)
+    });
     let revealing = crate::eternal_legacy_e5b_v1::pending_decision(state).is_some_and(|decision| {
         matches!(decision, crate::engine::Decision::ChooseEffectOption { player: owner, source, .. }
             if owner == player
@@ -806,7 +897,7 @@ pub(crate) fn validate_miracle_draw_step_wait(state: &GameState) -> Result<(), S
     });
     if state.step != crate::state::Step::Draw
         || remaining == 0
-        || remaining > event::draw_instruction_extra_at_hand_size(state, player, 1, 0)
+        || !accounted
         || !state.stack.is_empty()
         || state.engine.pending_effect.is_some()
         || !revealing

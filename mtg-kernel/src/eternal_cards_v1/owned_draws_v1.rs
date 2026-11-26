@@ -700,7 +700,7 @@ pub(crate) fn begin_jewel_combat(
     require_new_instruction(state, pending)?;
     let drawer = pending.ctx.controller.opponent();
     let count = InstructionV1::JewelCombat.count(state, &pending.ctx);
-    if dredge::owned_draw_needs_choice(state, drawer, count) {
+    if dredge::owned_draw_needs_stage(state, drawer, count) {
         let extra = crate::event::draw_instruction_extra(state, drawer, count);
         start_instruction(
             state,
@@ -736,7 +736,7 @@ pub(crate) fn begin_outcome(
     count: u32,
 ) {
     let drawer = pending.ctx.controller;
-    if !dredge::owned_draw_needs_choice(state, drawer, count) {
+    if !dredge::owned_draw_needs_stage(state, drawer, count) {
         draw_uninterrupted(state, drawer, count);
         return;
     }
@@ -792,7 +792,7 @@ pub(crate) fn begin(
             return Err("Dragon Engine could not complete its discard".into());
         }
         let count = instruction.count(state, &pending.ctx);
-        if !dredge::owned_draw_needs_choice(state, player, count) {
+        if !dredge::owned_draw_needs_stage(state, player, count) {
             draw_uninterrupted(state, player, count);
             return Ok(());
         }

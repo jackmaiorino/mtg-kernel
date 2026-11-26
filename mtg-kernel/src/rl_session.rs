@@ -14399,6 +14399,94 @@ mod tests {
             resume: crate::engine::DiscardResume::None,
         });
         assert!(crate::effect::validate_pending_effect_choice(&overlapping_discard).is_err());
+
+        // `step` refuses what `advance` refuses: a later live offer that is
+        // not a first draw, even while the first offer is.
+        let mut second_offer = snapshot.0.state.clone();
+        second_offer
+            .eternal_v1
+            .as_mut()
+            .unwrap()
+            .e5b
+            .miracle_offers
+            .push(crate::state::ObjectLinkV4 {
+                object: ordinary,
+                zone_change_count: second_offer.objects.get(ordinary).zone_change_count,
+            });
+        assert_eq!(
+            crate::engine::step(
+                &mut second_offer.clone(),
+                crate::engine::Action::ChooseEffectOption(0)
+            )
+            .unwrap_err(),
+            "miracle offer lost its first-draw receipt",
+        );
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut second_offer),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        // A restored terminal discard this resolution never reached: Dack's
+        // discard staged at the reveal, its second draw skipped, while the
+        // draw's captures defer. Only the interpreter's receipt proves the
+        // discard was reached.
+        let mut skipped_draw = snapshot.0.state.clone();
+        let original_hand: Vec<_> = skipped_draw.players[1]
+            .hand
+            .iter()
+            .map(|&object| crate::effect::EffectObjectBinding {
+                object,
+                expected_zone: Zone::Hand,
+                expected_zone_change_count: skipped_draw.objects.get(object).zone_change_count,
+            })
+            .collect();
+        let pending = skipped_draw.engine.pending_effect.as_mut().unwrap();
+        assert!(matches!(
+            pending.frames.pop(),
+            Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { .. })
+        ));
+        let Some(crate::effect::EffectFrame::Program {
+            op: crate::effect::EffectOp::DiscardCards { count, .. },
+            path,
+        }) = pending.frames.last()
+        else {
+            panic!("Dack's discard leaf follows its draw");
+        };
+        let skipped_discard = crate::engine::PendingDiscard {
+            player: PlayerId::P1,
+            count: *count,
+            resume: crate::engine::DiscardResume::FinishEffectContinuation {
+                stack_item_id: pending.resolving_item.v4.stack_item_id,
+                path: path.clone(),
+                original_hand,
+            },
+        };
+        skipped_draw.engine.pending_discard = Some(skipped_discard.clone());
+        assert!(crate::eternal_vintage_e7b_v1::dredge::deferring_captures(&skipped_draw));
+        assert!(
+            crate::effect::validate_resumable_discard(&skipped_draw, &skipped_discard).is_err()
+        );
+
+        // A spent remainder cannot be replayed. Narset, Parter of Veils
+        // prevents the second draw, so P1 still has drawn only the miracle
+        // card; the resumption marker records that the stop was spent.
+        let mut prevented = snapshot.0.state.clone();
+        let narset =
+            add_battlefield_object(&mut prevented, PlayerId::P0, "Narset, Parter of Veils");
+        crate::planeswalker_v1::after_zone_change(&mut prevented, narset, None);
+        let stopped = prevented.engine.pending_effect.as_ref().unwrap().frames.clone();
+        crate::engine::step(&mut prevented, crate::engine::Action::ChooseEffectOption(0)).unwrap();
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut prevented),
+            crate::engine::Decision::Discard { .. }
+        ));
+        assert_eq!(prevented.players[1].draws_this_turn, 1);
+        assert_eq!(prevented.players[1].library.first(), Some(&second));
+        let mut replayed = prevented.clone();
+        replayed.engine.pending_discard = None;
+        replayed.engine.pending_effect.as_mut().unwrap().frames = stopped;
+        assert!(crate::effect::validate_pending_effect_choice(&replayed).is_err());
+
         for option in [0, 1] {
             session.restore_v5(&snapshot);
             assert_eq!(session.current_response(), decision);

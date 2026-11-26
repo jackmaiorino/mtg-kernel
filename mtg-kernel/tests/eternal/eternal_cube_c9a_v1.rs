@@ -2043,6 +2043,49 @@ fn c9a_decks_finish_and_replay_through_public_sessions_both_seats() {
 }
 
 #[test]
+fn fear_of_missing_out_discards_then_its_draw_waits_for_a_first_draw_miracle() {
+    // The trigger discards, then draws Metamorphosis Fanatic as P0's first
+    // draw this turn. Its last instruction waits for the reveal (702.94a)
+    // inside the resolution, after the discard it already made.
+    for (fodder_in_hand, reveal) in [(true, 0), (true, 1), (false, 0)] {
+        let mut state = plains();
+        let fodder = fodder_in_hand.then(|| put(&mut state, P0, "Shock", Zone::Hand));
+        let fomo = put(&mut state, P0, "Fear of Missing Out", Zone::Hand);
+        let fanatic = put(&mut state, P0, "Metamorphosis Fanatic", Zone::Library);
+        pool(&mut state, P0, &[ManaColor::R], 1);
+        cast(&mut state, fomo, &[]);
+        let mut reveals = 0;
+        settle_with(&mut state, |s, decision| match decision {
+            Decision::ChooseEffectOption {
+                player: P0,
+                source,
+                option_count: 2,
+            } if source == fanatic && reveals == 0 => {
+                reveals += 1;
+                assert!(hand_contains(s, P0, fanatic));
+                assert_eq!(s.players[0].draws_this_turn, 1);
+                if let Some(fodder) = fodder {
+                    assert_eq!(zone(s, fodder), Zone::Graveyard, "the discard came first");
+                }
+                assert!(
+                    s.engine.pending_effect.is_some(),
+                    "the trigger waits inside its resolution"
+                );
+                Action::ChooseEffectOption(reveal)
+            }
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
+            other => first_answer(other),
+        });
+        assert_eq!(reveals, 1);
+        assert!(state.engine.halted.is_none());
+        assert!(state.engine.pending_effect.is_none());
+        assert_eq!(zone(&state, fomo), Zone::Battlefield);
+        assert_eq!(zone(&state, fanatic), Zone::Hand);
+        assert_eq!(state.players[0].draws_this_turn, 1);
+    }
+}
+
+#[test]
 fn fomo_delirium_extra_combat_public_session_both_seats() {
     let delirium_red = deck(&[
         ("Badlands", 10),

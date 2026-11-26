@@ -2125,6 +2125,9 @@ fn conflicts_in_scope(
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             // The suspended draw's hand card, which its pending frame binds.
             MiracleDrawSuspendedV1 { drawn, .. } => s.raw(drawn.object),
+            MiracleDrawResumedV1 { .. } => false,
+            // The waiting discard's bound hand, which its pending discard binds.
+            ResolutionDiscardWaitsV1 { hand, .. } => hand.iter().any(|link| s.raw(link.object)),
             MonarchTrigger { binding } => s.raw(binding.source.source),
             KrenkoPaidV1 { .. }
             | KrenkoPaymentInputV1 { .. }

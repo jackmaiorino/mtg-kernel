@@ -29368,6 +29368,11 @@ pub(crate) fn step_without_linked_aura_v1(
             "only the exact color-choice action may answer a pending land play".to_string(),
         );
     }
+    // `advance` refuses the same restored inputs before presenting anything:
+    // a draw step's remaining draws without their reveal, or a live offer
+    // that is not a first draw (the continuation is validated above).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_miracle_draw_step_wait(state)?;
     #[cfg(feature = "eternal-fixtures")]
     if state.engine.pending_land_play.is_none()
         && crate::eternal_legacy_e5b_v1::pending_decision(state).is_some()
@@ -29375,7 +29380,7 @@ pub(crate) fn step_without_linked_aura_v1(
         let Action::ChooseEffectOption(option) = action else {
             return Err("only the active miracle reveal may be answered".into());
         };
-        crate::eternal_vintage_e7b_v1::dredge::validate_miracle_draw_step_wait(state)?;
+        crate::eternal_legacy_e5b_v1::validate_miracle_offers(state)?;
         crate::eternal_legacy_e5b_v1::answer_pending_decision(state, option)?;
         // A turn-based draw of several cards resumes after the reveal.
         crate::eternal_vintage_e7b_v1::dredge::resume_draw_step_after_miracle(state);

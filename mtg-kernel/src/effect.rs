@@ -13483,12 +13483,71 @@ fn authenticated_draw_attempts(
     )
 }
 
+/// When the attempt just made drew its drawer's first card this turn and
+/// that card has miracle (702.94a), stops the printed draw at `path` with
+/// `remaining` attempts still to make, even none: commits this resolution's
+/// history marker and stages the remainder frame that its validator
+/// authenticates against the marker. The stop names this draw, so the rest
+/// of the program (an earlier discard already made, or a later one still to
+/// come) is authenticated with it. `false`, staging nothing, when no such
+/// card was drawn or the draw is not this definition-owned program's.
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn suspend_miracle_draw(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    path: &[u16],
+    remaining: u32,
+) -> bool {
+    let Some(card) = crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state) else {
+        return false;
+    };
+    let authenticated = crate::eternal_legacy_e5b_v1::is_first_miracle_draw(state, player, card)
+        && validated_definition_owned_root_effect(state, continuation).is_ok_and(|root| {
+            effect_op_at_structural_path(&root, path)
+                .and_then(|op| plain_draw_instruction(state, op, &continuation.ctx))
+                .is_some_and(|(drawer, _)| drawer == player)
+                && nonland_sacrifice_payment_v1::remaining(&root, path)
+                    .is_ok_and(|below| below == continuation.frames)
+        });
+    if !authenticated {
+        return false;
+    }
+    let link = crate::state::ObjectLinkV4 {
+        object: card,
+        zone_change_count: state.objects.get(card).zone_change_count,
+    };
+    state
+        .engine
+        .event_history
+        .push(event::CommittedEvent::MiracleDrawSuspendedV1 {
+            stack_item_id: continuation.resolving_item.v4.stack_item_id,
+            player,
+            path: path.to_vec(),
+            drawn: link,
+            remaining,
+        });
+    continuation.frames.push(EffectFrame::MiracleDrawRemainderV1 {
+        path: path.to_vec(),
+        drawn: EffectObjectBinding {
+            object: card,
+            expected_zone: Zone::Hand,
+            expected_zone_change_count: link.zone_change_count,
+        },
+        remaining,
+    });
+    true
+}
+
 /// Authenticates a suspended miracle draw remainder: the printed draw at
 /// `path` still exists with exactly its program below, its drawer's only
 /// draw this turn is the bound miracle card, and this resolution's history
 /// marker, committed after that draw, records the same path, card and
-/// remaining attempts. An earlier first draw of the turn, made before this
-/// stack item stopped at `path`, has no such marker.
+/// remaining attempts, with no resumption of that stop committed after it.
+/// An earlier first draw of the turn, made before this stack item stopped
+/// at `path`, has no such marker, and a stop already resumed (its later
+/// attempts made, even when replaced or prevented without a draw) cannot
+/// be replayed. Returns the drawer and the printed draw's player.
 #[cfg(feature = "eternal-fixtures")]
 fn miracle_draw_remainder(
     state: &GameState,
@@ -13497,10 +13556,17 @@ fn miracle_draw_remainder(
     drawn: EffectObjectBinding,
     remaining: u32,
     tail: &[EffectFrame],
-) -> Result<PlayerId, String> {
+) -> Result<(PlayerId, PlayerRef), String> {
     validate_effect_object_binding(state, drawn)?;
     let root = validated_definition_owned_root_effect(state, pending)?;
-    let (player, printed_count) = effect_op_at_structural_path(&root, path)
+    let printed = effect_op_at_structural_path(&root, path);
+    let player_ref = match printed {
+        Some(EffectOp::DrawCards { player, .. } | EffectOp::DrawCardsDynamic { player, .. }) => {
+            *player
+        }
+        _ => return Err("miracle draw lost its printed draw instruction".into()),
+    };
+    let (player, printed_count) = printed
         .and_then(|op| plain_draw_instruction(state, op, &pending.ctx))
         .filter(|&(_, count)| count > 0)
         .ok_or("miracle draw lost its printed draw instruction")?;
@@ -13508,8 +13574,7 @@ fn miracle_draw_remainder(
     let Some((draw_at, _)) = first.filter(|&(_, card)| card == drawn.object) else {
         return Err("miracle draw lost its first-draw receipt".into());
     };
-    if remaining == 0
-        || drawn.expected_zone != Zone::Hand
+    if drawn.expected_zone != Zone::Hand
         || state.players[player.index()].draws_this_turn != 1
         || remaining
             >= printed_count.saturating_add(event::draw_instruction_extra_at_hand_size(
@@ -13527,11 +13592,10 @@ fn miracle_draw_remainder(
         object: drawn.object,
         zone_change_count: drawn.expected_zone_change_count,
     };
-    let marked = state
-        .engine
-        .event_history
+    let history = &state.engine.event_history;
+    let marked_at = history
         .of_kinds_v2(&[EventKindV1::MiracleDrawSuspendedV1])
-        .any(|(at, entry)| {
+        .filter(|(at, entry)| {
             matches!(entry, event::CommittedEvent::MiracleDrawSuspendedV1 {
                 stack_item_id: item,
                 player: drawer,
@@ -13543,12 +13607,25 @@ fn miracle_draw_remainder(
                 && marked_path.as_slice() == path
                 && *marked_link == link
                 && *marked_remaining == remaining
-                && at > draw_at)
-        });
-    if !marked {
+                && *at > draw_at)
+        })
+        .map(|(at, _)| at)
+        .last();
+    let Some(marked_at) = marked_at else {
         return Err("miracle draw is not this resolution's suspended draw".into());
+    };
+    let resumed = history
+        .of_kinds_v2(&[EventKindV1::MiracleDrawResumedV1])
+        .any(|(at, entry)| {
+            matches!(entry, event::CommittedEvent::MiracleDrawResumedV1 {
+                stack_item_id: item,
+                path: resumed_path,
+            } if *item == stack_item_id && resumed_path.as_slice() == path && at > marked_at)
+        });
+    if resumed {
+        return Err("miracle draw already resumed its suspended draw".into());
     }
-    Ok(player)
+    Ok((player, player_ref))
 }
 
 /// Whether this printed program can run in the resumable interpreter.
@@ -13781,16 +13858,28 @@ fn drive_resumable_in_departure_scope_v1(
     loop {
         // An owned draw instruction stops only between its attempts, where
         // its next attempt is staged (its validator authenticates that stage).
+        // A program with nothing left to do does not stop: nothing else
+        // happens before its draws are collected, and the reveal is offered
+        // then.
         #[cfg(feature = "eternal-fixtures")]
         if crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state).is_some()
             && state.coveted_jewel_draw_progress_v1.is_none()
-            && state.paradoxical_outcome_draw_progress_v1.is_none()
+            && (state.paradoxical_outcome_draw_progress_v1.is_none()
+                || crate::eternal_vintage_v1::paradoxical_outcome_v1::miracle_draw_stage(
+                    state,
+                    &continuation,
+                ))
             && (state.eternal_owned_draw_progress_v1.is_none()
                 || crate::eternal_cards_v1::owned_draws_v1::miracle_draw_stage(
                     state,
                     &continuation,
                 )
                 .is_some())
+            && (!continuation.frames.is_empty()
+                || continuation.choice.is_some()
+                || continuation.answered_choice_guard.is_some()
+                || state.eternal_owned_draw_progress_v1.is_some()
+                || state.paradoxical_outcome_draw_progress_v1.is_some())
             && !crate::eternal_cards_v1::owned_draws_v1::program_stops_after_win(state)
         {
             state.engine.pending_effect = Some(continuation);
@@ -13864,7 +13953,7 @@ fn drive_resumable_in_departure_scope_v1(
                     drawn,
                     remaining,
                 } => {
-                    let player = miracle_draw_remainder(
+                    let (player, player_ref) = miracle_draw_remainder(
                         state,
                         &continuation,
                         &path,
@@ -13872,10 +13961,40 @@ fn drive_resumable_in_departure_scope_v1(
                         remaining,
                         &continuation.frames,
                     )?;
-                    for _ in 0..remaining {
-                        event::propose_draw_attempt(state, player);
-                        if !event::draw_instruction_continues(state, player) {
-                            break;
+                    // This suspension is spent: its remainder cannot be
+                    // replayed from a later stage of the same resolution.
+                    state
+                        .engine
+                        .event_history
+                        .push(event::CommittedEvent::MiracleDrawResumedV1 {
+                            stack_item_id: continuation.resolving_item.v4.stack_item_id,
+                            path: path.clone(),
+                        });
+                    // A replacement that needs its drawer's choice (a
+                    // dredge) keeps offering it for each later attempt.
+                    if remaining > 0
+                        && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
+                            state,
+                            &continuation,
+                            player_ref,
+                        )
+                    {
+                        if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+                            state,
+                            &mut continuation,
+                            player_ref,
+                            remaining,
+                            path,
+                        )? {
+                            state.engine.pending_effect = Some(continuation);
+                            return Ok(ResumableProgress::Suspended);
+                        }
+                    } else {
+                        for _ in 0..remaining {
+                            event::propose_draw_attempt(state, player);
+                            if !event::draw_instruction_continues(state, player) {
+                                break;
+                            }
                         }
                     }
                 }
@@ -18077,7 +18196,14 @@ fn drive_resumable_in_departure_scope_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 if let Some((player, count)) = plain_draw_instruction(state, &leaf, &continuation.ctx)
                     .filter(|&(player, count)| count > 0
-                        && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player))
+                        && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player)
+                        // A copied Paradoxical Outcome stages its own draws.
+                        && !crate::eternal_vintage_v1::paradoxical_outcome_v1::draw_stage_matches(
+                            state,
+                            &continuation,
+                            &path,
+                            &continuation.frames,
+                        ))
                 {
                     // Draw one attempt at a time so the drawer answers a
                     // miracle reveal before any later card is drawn (702.94a).
@@ -18094,33 +18220,17 @@ fn drive_resumable_in_departure_scope_v1(
                             if !event::draw_instruction_continues(state, player) {
                                 break;
                             }
-                            let remaining = attempts - attempt;
-                            if remaining == 0 {
-                                break;
-                            }
-                            if let Some(card) = crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state) {
-                                let link = crate::state::ObjectLinkV4 {
-                                    object: card,
-                                    zone_change_count: state.objects.get(card).zone_change_count,
-                                };
-                                state.engine.event_history.push(
-                                    event::CommittedEvent::MiracleDrawSuspendedV1 {
-                                        stack_item_id: continuation.resolving_item.v4.stack_item_id,
-                                        player,
-                                        path: path.clone(),
-                                        drawn: link,
-                                        remaining,
-                                    },
-                                );
-                                continuation.frames.push(EffectFrame::MiracleDrawRemainderV1 {
-                                    path,
-                                    drawn: EffectObjectBinding {
-                                        object: card,
-                                        expected_zone: Zone::Hand,
-                                        expected_zone_change_count: link.zone_change_count,
-                                    },
-                                    remaining,
-                                });
+                            // Even after the last attempt, the stop names
+                            // this draw, so the rest of the program (a
+                            // discard already made, or still to come) is
+                            // authenticated against it.
+                            if suspend_miracle_draw(
+                                state,
+                                &mut continuation,
+                                player,
+                                &path,
+                                attempts - attempt,
+                            ) {
                                 break;
                             }
                         }
@@ -18152,6 +18262,23 @@ fn drive_resumable_in_departure_scope_v1(
                         validate_bound_hand_exact(state, player, &original_hand)?;
                         if original_hand.is_empty() || *count == 0 {
                             continue;
+                        }
+                        #[cfg(feature = "eternal-fixtures")]
+                        if discard_wait_needs_receipt(
+                            state,
+                            &continuation,
+                            &leaf,
+                            &path,
+                            continuation.frames.is_empty(),
+                        ) {
+                            state.engine.event_history.push(
+                                event::CommittedEvent::ResolutionDiscardWaitsV1 {
+                                    stack_item_id: continuation.resolving_item.v4.stack_item_id,
+                                    path: path.clone(),
+                                    player,
+                                    hand: hand_links(&original_hand),
+                                },
+                            );
                         }
                         continuation.frames.push(EffectFrame::Program {
                             op: leaf.clone(),
@@ -18250,7 +18377,64 @@ fn validate_resumable_discard_details(
     if below != expected.as_slice() {
         return Err("resumable discard remaining instructions changed".to_string());
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if discard_wait_needs_receipt(state, pending, leaf, path, expected.is_empty()) {
+        let hand = hand_links(original_hand);
+        let reached = state
+            .engine
+            .event_history
+            .of_kinds_v2(&[EventKindV1::ResolutionDiscardWaitsV1])
+            .any(|(_, entry)| {
+                matches!(entry, event::CommittedEvent::ResolutionDiscardWaitsV1 {
+                    stack_item_id: item,
+                    path: receipt_path,
+                    player: receipt_player,
+                    hand: receipt_hand,
+                } if item == stack_item_id
+                    && receipt_path == path
+                    && *receipt_player == discard.player
+                    && *receipt_hand == hand)
+            });
+        if !reached {
+            return Err("resumable discard was not reached by this resolution".to_string());
+        }
+    }
     Ok(())
+}
+
+/// Whether a discard waiting at `path` inside an Eternal resolution must
+/// carry this resolution's receipt (`ResolutionDiscardWaitsV1`), committed
+/// when the interpreter reached it: a nested leaf (a chosen option, a
+/// condition's branch, an unpaid payment's branch, a loot's staged discard)
+/// or a `terminal` one, waiting only while a draw's captures are deferred.
+/// The program's shape does not prove that control reached either. A
+/// printed instruction of a root `Sequence` with more instructions after
+/// it keeps the shape-only rule that builds without Eternal programs share.
+/// The receipt binds the hand it waits on, so it is spent once that hand
+/// changes.
+#[cfg(feature = "eternal-fixtures")]
+fn discard_wait_needs_receipt(
+    state: &GameState,
+    pending: &EffectContinuation,
+    leaf: &EffectOp,
+    path: &[u16],
+    terminal: bool,
+) -> bool {
+    terminal
+        || !validated_definition_owned_root_effect(state, pending).is_ok_and(|root| {
+            matches!((root.as_ref(), path), (EffectOp::Sequence(ops), [index])
+                if ops.get(usize::from(*index)) == Some(leaf))
+        })
+}
+
+#[cfg(feature = "eternal-fixtures")]
+fn hand_links(hand: &[EffectObjectBinding]) -> Vec<crate::state::ObjectLinkV4> {
+    hand.iter()
+        .map(|binding| crate::state::ObjectLinkV4 {
+            object: binding.object,
+            zone_change_count: binding.expected_zone_change_count,
+        })
+        .collect()
 }
 
 /// The frames the interpreter holds below a discard leaf at `path`, from
