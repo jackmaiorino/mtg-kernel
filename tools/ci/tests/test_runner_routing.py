@@ -5,7 +5,13 @@ they use (&&, ||, ==, !=, parentheses, string literals, context lookups, fromJSO
 and format).
 """
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -520,6 +526,8 @@ def matrix_groups(block):
     return re.findall(r"^          - ([a-z0-9-]+)$", listing, re.MULTILINE)
 
 
+# A use of an artifact action, quoted or not.
+ARTIFACT_USE = re.compile(r"""uses:\s*["']?(actions/(?:upload|download)-artifact@[^\s"']+)""")
 # The Eternal group of rust-test-groups; the integration suites run in jobs of their own.
 ETERNAL_GROUPS = {"eternal"}
 ETERNAL_PARTS = 8
@@ -619,7 +627,15 @@ class MatrixTests(unittest.TestCase):
                          + ["eternal-standard"])
         # A part without a downloadable build compiles the suite itself instead of failing.
         self.assertIn("        continue-on-error: true\n", steps["Download the shared Eternal integration build"])
-        self.assertIn('if [ -z "$archive" ]; then', steps["Unpack the shared Eternal integration build as current output"])
+        unpack = steps["Unpack the shared Eternal integration build as current output"]
+        self.assertIn('if [ -z "$archive" ]; then', unpack)
+        # The build names its commit, and a part stamps the files as current only for its own checkout.
+        self.assertIn("git rev-parse HEAD > target/release/mtg-ci-build-commit\n          tar -cf eternal-integration.tar",
+                      build)
+        check = unpack.index('if [ "$built" != "$(git rev-parse HEAD)" ]; then')
+        self.assertLess(unpack.index('tar -xf "$archive" -C target'), check)
+        self.assertLess(check, unpack.index("rm -rf -- target\n            exit 0"))
+        self.assertLess(unpack.index("rm -rf -- target\n            exit 0"), unpack.index("find target -exec touch"))
         # The inventory job compares the build job's list with every part's executed names.
         self.assertIn(f"check_rust_integration_parts.py --listed eternal-integration-lists "
                       f"--parts eternal-integration-parts --count {ETERNAL_PARTS}", inventory)
@@ -630,6 +646,68 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("pattern: eternal-integration-executed-${{ matrix.os }}-*", inventory)
         self.assertIn("name: eternal-integration-build-${{ matrix.os }}-${{ github.run_attempt }}", build)
         self.assertIn("pattern: eternal-integration-build-${{ matrix.os }}-*", parts)
+
+    def test_artifact_actions_are_pinned_by_commit(self):
+        # Every workflow and composite action, either file suffix, quoted or not.
+        files = [path for suffix in ("*.yml", "*.yaml") for path in WORKFLOW.parent.parent.rglob(suffix)]
+        self.assertIn(WORKFLOW, files)
+        self.assertTrue(any(path.parent.parent.name == "actions" for path in files))
+        uses = 0
+        for workflow in sorted(files):
+            for use in ARTIFACT_USE.findall(workflow.read_text(encoding="utf-8")):
+                uses += 1
+                with self.subTest(workflow=workflow.name, use=use):
+                    self.assertRegex(use, r"@[0-9a-f]{40}$")
+        self.assertGreater(uses, 10)
+
+    def test_the_pin_check_sees_quoted_and_unquoted_uses(self):
+        text = ('        uses: actions/upload-artifact@v4\n'
+                '      - uses: "actions/download-artifact@v4"\n'
+                "        uses:   'actions/upload-artifact@main'  # note\n")
+        self.assertEqual(ARTIFACT_USE.findall(text), ["actions/upload-artifact@v4", "actions/download-artifact@v4",
+                                                      "actions/upload-artifact@main"])
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("bash") and shutil.which("tar"),
+                         "runs the step's own bash on Linux")
+    def test_a_part_trusts_only_a_build_of_its_own_commit(self):
+        # The unpack step itself, run on three archives: a build of this checkout's commit is stamped as
+        # current; a build of another commit, or one that names no commit, is thrown away with a warning.
+        parts = job_block("rust-eternal-integration-parts", "eternal-integration-inventory")
+        step = next(step for step in parts.split("\n      - name: ")
+                    if step.startswith("Unpack the shared Eternal integration build as current output"))
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        self.assertNotIn("${{", script)
+        own = "1" * 40
+        for marker, kept in ((own, True), ("2" * 40, False), (None, False)):
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "bin").mkdir()
+                (root / "bin" / "git").write_text(f"#!/bin/sh\necho {own}\n", encoding="utf-8")
+                (root / "bin" / "git").chmod(0o755)
+                built = root / "built" / "release"
+                built.mkdir(parents=True)
+                (built / "binary").write_text("x", encoding="utf-8")
+                os.utime(built / "binary", (1, 1))
+                if marker:
+                    (built / "mtg-ci-build-commit").write_text(marker + "\n", encoding="utf-8")
+                staging = root / "temp" / "shared-eternal-integration-build" / "eternal-integration-build-ubuntu-24.04-1"
+                staging.mkdir(parents=True)
+                subprocess.run(["tar", "-cf", str(staging / "eternal-integration.tar"), "-C", str(root / "built"),
+                                "release"], check=True)
+                work = root / "work"
+                work.mkdir()
+                environment = {**os.environ, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                               "RUNNER_TEMP": str(root / "temp"), "RUNNER_OS": "Linux"}
+                result = subprocess.run(["bash", "-eo", "pipefail", "-c", script], cwd=work, env=environment,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if kept:
+                    self.assertNotIn("::warning::", result.stdout)
+                    # Stamped after the checkout: no longer the archive's old time.
+                    self.assertGreater((work / "target" / "release" / "binary").stat().st_mtime, 1_000_000)
+                else:
+                    self.assertIn("::warning::The shared Eternal integration build is of commit", result.stdout)
+                    self.assertFalse((work / "target").exists())
 
     def test_the_eternal_integration_jobs_run_where_the_group_ran_and_gate_the_merge(self):
         text = WORKFLOW.read_text(encoding="utf-8")

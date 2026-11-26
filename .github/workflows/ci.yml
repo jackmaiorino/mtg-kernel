@@ -445,7 +445,7 @@ jobs:
 
       - name: Retain generated catalog source
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: generated-catalog-source-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/release/build/mtg-kernel-*/out/card_defs.rs
@@ -727,7 +727,7 @@ jobs:
 
       - name: Retain registered full-text native event samples
         if: always() && matrix.group == 'eternal'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: feb-native-event-samples-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: feb-native-event-samples/
@@ -992,7 +992,7 @@ jobs:
 
       - name: Upload the default-feature library case list
         if: matrix.part == 'default-list'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: limited-default-list-${{ matrix.os }}-${{ github.run_attempt }}
           path: default-library-list.json
@@ -1027,7 +1027,7 @@ jobs:
 
       - name: Upload the shared Limited ${{ matrix.part }}
         if: matrix.part != 'default-list'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: limited-build-${{ matrix.os }}-${{ matrix.part }}-${{ github.run_attempt }}
           path: limited-${{ matrix.part }}.tar
@@ -1226,7 +1226,7 @@ jobs:
       # Self-hosted runners keep their own persistent target directories.
       - name: Download the shared Limited build
         if: runner.environment == 'github-hosted'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           # A partial retry keeps successful producer artifacts from the prior
           # attempt. Every match belongs to this run and its immutable head.
@@ -1284,7 +1284,7 @@ jobs:
 
       - name: Retain generated Limited catalog source
         if: always() && matrix.group == 'limited' && matrix.os == 'ubuntu-24.04'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: generated-limited-catalog-source-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.CARGO_TARGET_DIR || 'target' }}/release/build/mtg-kernel-*/out/card_defs.rs
@@ -1461,7 +1461,7 @@ jobs:
 
       - name: Retain actual Drakuseth event sample
         if: ${{ always() && matrix.group == 'limited-only' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: drakuseth-event-sample-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: fdn-event-samples/DrakusethDamageSourceV76.json
@@ -1474,7 +1474,7 @@ jobs:
       # of cases each; three shards hold about 23 minutes each).
       - name: Download the default-feature library case list
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           # A partial retry keeps the list of the prior attempt; the step
           # below takes the newest.
@@ -1627,22 +1627,31 @@ jobs:
       # Builds the plain library and the suite's test binary with the same
       # Cargo command the parts use, then writes the names of the binary's
       # tests and runs none: the inventory job compares the parts with it.
+      # Four Cargo jobs on hosted Linux, not the two of the other heavy
+      # builds: this job compiles one target and nothing runs beside it.
+      # Measured 2026-11-24 on both hosted processors: 1,485 s against 1,740
+      # and 1,746 (EPYC 7763), 1,164 against about 1,337 (EPYC 9V74); lowest
+      # available memory 391 and 530 MiB with about 0.5 GiB of the compressed
+      # swap in use, against 950 MiB and no swap at two jobs.
       - name: Build the Eternal integration suite and list its tests
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=2
+            export CARGO_BUILD_JOBS=4
           fi
           python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --list-only eternal-integration-tests.json
 
       # Keep Cargo's fingerprints and dep-info with the outputs, so the parts
-      # reuse them only through Cargo's own freshness checks.
+      # reuse them only through Cargo's own freshness checks. The commit this
+      # job built goes into the archive: a part re-stamps the files as newer
+      # than its checkout, which is sound only for the same sources.
       - name: Package the shared Eternal integration build
         run: |
+          git rev-parse HEAD > target/release/mtg-ci-build-commit
           tar -cf eternal-integration.tar --exclude=release/incremental -C target release
           ls -l eternal-integration.tar
 
       - name: Upload the shared Eternal integration build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eternal-integration-build-${{ matrix.os }}-${{ github.run_attempt }}
           path: eternal-integration.tar
@@ -1651,7 +1660,7 @@ jobs:
           compression-level: 1
 
       - name: Upload the Eternal integration test list
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eternal-integration-list-${{ matrix.os }}-${{ github.run_attempt }}
           path: eternal-integration-tests.json
@@ -1776,7 +1785,7 @@ jobs:
       # stale, so the step may fail without failing the part.
       - name: Download the shared Eternal integration build
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           # A partial retry keeps the build job's artifact from the prior
           # attempt. Every match belongs to this run and its immutable head.
@@ -1806,6 +1815,13 @@ jobs:
           fi
           tar -xf "$archive" -C target
           rm -rf -- "$staging"
+          # Only a build of this checkout's commit may be stamped as current.
+          built=$(cat target/release/mtg-ci-build-commit 2>/dev/null || true)
+          if [ "$built" != "$(git rev-parse HEAD)" ]; then
+            echo "::warning::The shared Eternal integration build is of commit '${built:-unknown}', not this checkout: this part compiles the suite itself."
+            rm -rf -- target
+            exit 0
+          fi
           stamp=$(date +%s)
           find target -exec touch -d "@$stamp" {} +
 
@@ -1845,7 +1861,7 @@ jobs:
 
       - name: Upload the names of the tests this part executed
         if: matrix.group != 'eternal-standard'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eternal-integration-executed-${{ matrix.os }}-${{ matrix.group }}-${{ github.run_attempt }}
           path: eternal-integration-executed.json
@@ -1880,14 +1896,14 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Download the Eternal integration test list
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: eternal-integration-list-${{ matrix.os }}-*
           merge-multiple: false
           path: eternal-integration-lists
 
       - name: Download the names of the tests the parts executed
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: eternal-integration-executed-${{ matrix.os }}-*
           merge-multiple: false
@@ -1977,7 +1993,7 @@ jobs:
           mode: save
 
       - name: Upload the Python test binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: python-env-${{ matrix.os }}-${{ github.run_attempt }}
           # The generated build-script sources go too: the card database
@@ -2141,7 +2157,7 @@ jobs:
       # take the newest attempt.
       - name: Download the shared Python test binaries
         if: runner.arch != 'ARM64'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: python-env-${{ matrix.os }}-*
           path: ${{ runner.temp }}/python-env
