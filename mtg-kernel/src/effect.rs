@@ -10569,32 +10569,11 @@ fn validate_nonterminal_discard_other_stage(
                 eternal_vintage_e7b_v1::E7bChoiceV1,
                 standard_cards_v1::StandardOpV1 as S,
             };
-            // A draw's replacement choice (a dredge, or Jace's empty-library
-            // replacement) at a printed draw of this program holds exactly
-            // the rest of the program below that draw, as at any other draw:
-            // the discard was made before it or is among the frames to come.
             if matches!(
                 choice.kind,
                 E3ChoiceKindV1::E7bV1(E7bChoiceV1::DredgeV1 | E7bChoiceV1::JaceOrHullbreacherV1)
-            ) && jace_draw_replacement_origin(
-                state,
-                pending,
-                choice.player,
-                &choice.path,
-                &choice.remaining,
             ) {
-                if let Some(selected) = answered_selected {
-                    if pending.frames.len() != choice.remaining.len() + 1
-                        || pending.frames[..choice.remaining.len()] != choice.remaining[..]
-                        || selected.len() > usize::from(choice.max)
-                        || selected
-                            .iter()
-                            .any(|target| !choice.candidates.contains(target))
-                    {
-                        return Err(err());
-                    }
-                }
-                return Ok(());
+                return validate_nonterminal_discard_draw_choice(state, pending, choice);
             }
             if choice.kind == E3ChoiceKindV1::E7aV1(E7aChoiceV1::ArchonSacrificeV1) {
                 let root = validated_definition_owned_root_effect(state, pending)?;
@@ -10641,6 +10620,123 @@ fn validate_nonterminal_discard_other_stage(
     #[cfg(not(feature = "eternal-fixtures"))]
     let _ = (state, pending);
     Err(err())
+}
+
+/// Records a draw replacement choice (a dredge, or Jace's empty-library
+/// replacement) of a draw inside a program with a nonterminal discard: its
+/// offer, which the interpreter makes only once every earlier instruction
+/// is done, and its answer, which spends that offer before the attempt is
+/// made. Nothing is recorded for any other program or for an owned draw
+/// stage, whose own progress authenticates it.
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn record_draw_replacement_choice(
+    state: &mut GameState,
+    pending: &EffectContinuation,
+    choice: &crate::eternal_cards_v1::e3::E3ChoiceV1,
+    answered: bool,
+) {
+    if state.eternal_owned_draw_progress_v1.is_some()
+        || !definition_has_nonterminal_discard(state, pending)
+    {
+        return;
+    }
+    let stack_item_id = pending.resolving_item.v4.stack_item_id;
+    let path = choice.path.clone();
+    state.engine.event_history.push(if answered {
+        event::CommittedEvent::ResolutionDrawChoiceAnsweredV1 {
+            stack_item_id,
+            path,
+        }
+    } else {
+        event::CommittedEvent::ResolutionDrawChoiceOfferedV1 {
+            stack_item_id,
+            player: choice.player,
+            attempts: draw_choice_attempts(choice),
+            path,
+        }
+    });
+}
+
+/// The attempts of its draw a replacement choice leaves, counting its own:
+/// the rest of a printed draw of several cards is staged at the same path
+/// directly below the choice.
+#[cfg(feature = "eternal-fixtures")]
+fn draw_choice_attempts(choice: &crate::eternal_cards_v1::e3::E3ChoiceV1) -> u32 {
+    match choice.remaining.last() {
+        Some(EffectFrame::Program {
+            op: EffectOp::DrawCards { count, .. },
+            path,
+        }) if *path == choice.path => count.saturating_add(1),
+        _ => 1,
+    }
+}
+
+/// Authenticates a draw replacement choice, open or answered, inside a
+/// program with a nonterminal discard. The draw at its path is a printed
+/// draw of this definition-owned program with exactly the rest of the
+/// program below it; the prompt is the one the engine offers there now
+/// (`dredge::validate_draw_choice`: the drawer's dredge cards or Jace, min
+/// 0, max 1, unordered); and this resolution's history holds its offer for
+/// that drawer, path and number of attempts left, with no answer at that
+/// path after it. The offer proves the interpreter reached the draw with
+/// every earlier instruction (the discard among them) done; the missing
+/// answer proves the attempt was not already made.
+#[cfg(feature = "eternal-fixtures")]
+fn validate_nonterminal_discard_draw_choice(
+    state: &GameState,
+    pending: &EffectContinuation,
+    choice: &crate::eternal_cards_v1::e3::E3ChoiceV1,
+) -> Result<(), String> {
+    if !jace_draw_replacement_origin(
+        state,
+        pending,
+        choice.player,
+        &choice.path,
+        &choice.remaining,
+    ) {
+        return Err(
+            "draw replacement choice lost its printed draw or the rest of its program".into(),
+        );
+    }
+    crate::eternal_vintage_e7b_v1::dredge::validate_draw_choice(
+        state,
+        pending,
+        choice.player,
+        &choice.path,
+        &choice.remaining,
+        "draw replacement choice",
+    )?;
+    let stack_item_id = pending.resolving_item.v4.stack_item_id;
+    let attempts = draw_choice_attempts(choice);
+    let history = &state.engine.event_history;
+    let offered_at = history
+        .of_kinds_v2(&[EventKindV1::ResolutionDrawChoiceOfferedV1])
+        .filter(|(_, entry)| {
+            matches!(entry, event::CommittedEvent::ResolutionDrawChoiceOfferedV1 {
+                stack_item_id: item,
+                player,
+                path,
+                attempts: offered,
+            } if *item == stack_item_id
+                && *player == choice.player
+                && *path == choice.path
+                && *offered == attempts)
+        })
+        .map(|(at, _)| at)
+        .last()
+        .ok_or("draw replacement choice was not offered by this resolution")?;
+    let answered = history
+        .of_kinds_v2(&[EventKindV1::ResolutionDrawChoiceAnsweredV1])
+        .any(|(at, entry)| {
+            matches!(entry, event::CommittedEvent::ResolutionDrawChoiceAnsweredV1 {
+                stack_item_id: item,
+                path,
+            } if *item == stack_item_id && *path == choice.path && at > offered_at)
+        });
+    if answered {
+        return Err("draw replacement choice was already answered".into());
+    }
+    Ok(())
 }
 
 /// A spell-copy target candidate: objects carry their live incarnation.

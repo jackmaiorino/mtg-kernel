@@ -2310,6 +2310,24 @@ pub enum CommittedEvent {
         player: PlayerId,
         hand: Vec<crate::state::ObjectLinkV4>,
     },
+    /// A resolving stack item's draw at `path`, inside a program with a
+    /// discard before its last instruction, offered `player` a replacement
+    /// choice (a dredge, or Jace's empty-library replacement) for one
+    /// attempt, with `attempts` attempts of that draw left counting it.
+    /// History-only proof that this stack item reached that attempt, every
+    /// earlier instruction done.
+    ResolutionDrawChoiceOfferedV1 {
+        stack_item_id: StackItemId,
+        player: PlayerId,
+        path: Vec<u16>,
+        attempts: u32,
+    },
+    /// The offer of `ResolutionDrawChoiceOfferedV1` at `path` was answered
+    /// and its draw is made now. History-only proof that the offer is spent.
+    ResolutionDrawChoiceAnsweredV1 {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

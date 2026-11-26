@@ -2128,6 +2128,7 @@ fn conflicts_in_scope(
             MiracleDrawResumedV1 { .. } => false,
             // The waiting discard's bound hand, which its pending discard binds.
             ResolutionDiscardWaitsV1 { hand, .. } => hand.iter().any(|link| s.raw(link.object)),
+            ResolutionDrawChoiceOfferedV1 { .. } | ResolutionDrawChoiceAnsweredV1 { .. } => false,
             MonarchTrigger { binding } => s.raw(binding.source.source),
             KrenkoPaidV1 { .. }
             | KrenkoPaymentInputV1 { .. }

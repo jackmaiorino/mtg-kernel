@@ -1766,6 +1766,138 @@ fn archon_of_cruelty_draw_waits_for_a_first_draw_miracle_between_discard_and_lif
     }
 }
 
+/// Archon of Cruelty's trigger with Stinkweed Imp in P0's graveyard and two
+/// cards in P1's hand, after its trigger is cast and settled.
+struct ArchonDredgeLine {
+    settled: GameState,
+    /// P1's discard waits inside the resolution, before P0's draw.
+    discarding: GameState,
+    /// P0's dredge is offered at the draw.
+    offered: GameState,
+    /// The declined dredge's draw found Metamorphosis Fanatic, P0's first
+    /// draw this turn, and stops for its reveal before the life gain.
+    revealing: Option<GameState>,
+    imp: ObjectId,
+    fanatic: ObjectId,
+}
+
+/// Plays Archon of Cruelty through its trigger: P1's discard, then P0's
+/// dredge, taken when `take`, otherwise declined.
+fn archon_dredge_line(take: bool) -> ArchonDredgeLine {
+    let mut state = islands();
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+    let fanatic = put(&mut state, P0, "Metamorphosis Fanatic", Zone::Library);
+    let archon = put(&mut state, P0, "Archon of Cruelty", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 6);
+    cast(&mut state, archon, &[]);
+    let (mut discarding, mut offered, mut revealing) = (None, None, None);
+    settle_with(&mut state, |s, decision| match decision {
+        Decision::Discard { player: P1, .. } => {
+            discarding.get_or_insert_with(|| s.clone());
+            first_answer(decision)
+        }
+        Decision::ChooseEffectTargets {
+            player: P0,
+            selected_count: 0,
+            ref legal_targets,
+            ..
+        } if *legal_targets == [Target::Object(imp)] => {
+            offered.get_or_insert_with(|| s.clone());
+            if take {
+                Action::ChooseEffectTarget(Target::Object(imp))
+            } else {
+                Action::FinishEffectSelection
+            }
+        }
+        Decision::ChooseEffectOption { source, .. } if source == fanatic => {
+            revealing.get_or_insert_with(|| s.clone());
+            Action::ChooseEffectOption(1)
+        }
+        other => first_answer(other),
+    });
+    assert!(state.engine.halted.is_none());
+    ArchonDredgeLine {
+        settled: state,
+        discarding: discarding.expect("P1's discard waits inside the resolution"),
+        offered: offered.expect("P0's dredge is offered at the draw"),
+        revealing,
+        imp,
+        fanatic,
+    }
+}
+
+/// `base` with the resolution stage of `staged` restored over it: its
+/// choice, frames and answered guard, and no waiting discard.
+fn with_draw_stage(base: &GameState, staged: &GameState) -> GameState {
+    let mut forged = base.clone();
+    forged.engine.pending_discard = None;
+    let stage = staged.engine.pending_effect.as_ref().unwrap();
+    let pending = forged.engine.pending_effect.as_mut().unwrap();
+    pending.choice = stage.choice.clone();
+    pending.frames = stage.frames.clone();
+    pending.answered_choice_guard = stage.answered_choice_guard.clone();
+    forged
+}
+
+/// The validator refuses `forged` naming `reason`; `step` refuses `action`
+/// and leaves the state unchanged; advancing halts.
+fn assert_refused(forged: &GameState, action: Action, reason: &str) {
+    let error = mtg_kernel::effect::validate_pending_effect_choice(forged).unwrap_err();
+    assert!(error.contains(reason), "{error}");
+    let mut stepped = forged.clone();
+    let before = stepped.state_hash();
+    assert!(engine::step(&mut stepped, action).is_err());
+    assert_eq!(stepped.state_hash(), before);
+    let mut advanced = forged.clone();
+    assert!(matches!(
+        engine::advance_until_decision(&mut advanced),
+        Decision::Halted { .. }
+    ));
+}
+
+#[test]
+fn archon_of_cruelty_takes_a_dredge_at_its_draw_between_discard_and_life() {
+    let line = archon_dredge_line(true);
+    let state = &line.settled;
+    assert!(line.revealing.is_none(), "the dredge replaced the draw");
+    assert!(hand_contains(state, P0, line.imp));
+    assert_eq!(zone(state, line.fanatic), Zone::Graveyard, "milled");
+    assert_eq!(state.players[0].draws_this_turn, 0);
+    assert_eq!(state.players[1].hand.len(), 1, "the opponent discarded one");
+    assert_eq!(state.players[1].life, 17);
+    assert_eq!(state.players[0].life, 23);
+}
+
+#[test]
+fn archon_of_cruelty_refuses_a_restored_dredge_before_its_discard_or_after_its_draw() {
+    // The offer is this resolution's receipt that its draw was reached, the
+    // sacrifice, discard and life loss done; its answer spends it. A
+    // restored dredge, open or answered, staged while P1's discard still
+    // waits, or again at the reveal after the draw was made, is refused.
+    let line = archon_dredge_line(false);
+    let revealing = line.revealing.expect("the declined dredge's draw is a miracle");
+    mtg_kernel::effect::validate_pending_effect_choice(&line.offered).unwrap();
+    let mut answered = line.offered.clone();
+    act(&mut answered, Action::FinishEffectSelection);
+    mtg_kernel::effect::validate_pending_effect_choice(&answered).unwrap();
+    mtg_kernel::effect::validate_pending_effect_choice(&revealing).unwrap();
+    for staged in [&line.offered, &answered] {
+        assert_refused(
+            &with_draw_stage(&line.discarding, staged),
+            Action::FinishEffectSelection,
+            "was not offered by this resolution",
+        );
+        assert_refused(
+            &with_draw_stage(&revealing, staged),
+            Action::ChooseEffectOption(1),
+            "was already answered",
+        );
+    }
+}
+
 #[test]
 fn griselbrand_pays_seven_life_to_draw_seven() {
     let mut state = islands();

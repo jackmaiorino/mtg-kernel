@@ -2085,6 +2085,160 @@ fn fear_of_missing_out_discards_then_its_draw_waits_for_a_first_draw_miracle() {
     }
 }
 
+/// Fear of Missing Out's trigger with Stinkweed Imp in P0's graveyard and
+/// two cards in P0's hand, played through: its discard waits inside the
+/// resolution, its draw offers the dredge, declined, and the draw finds
+/// Metamorphosis Fanatic, P0's first draw this turn, and stops for its
+/// reveal. Returns snapshots at the discard, the offer and the reveal.
+fn fomo_dredge_line() -> (GameState, GameState, GameState) {
+    let mut state = plains();
+    put(&mut state, P0, "Shock", Zone::Hand);
+    put(&mut state, P0, "Shock", Zone::Hand);
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+    let fomo = put(&mut state, P0, "Fear of Missing Out", Zone::Hand);
+    let fanatic = put(&mut state, P0, "Metamorphosis Fanatic", Zone::Library);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, fomo, &[]);
+    let (mut discarding, mut offered, mut revealing) = (None, None, None);
+    settle_with(&mut state, |s, decision| match decision {
+        Decision::Discard { player: P0, .. } => {
+            discarding.get_or_insert_with(|| s.clone());
+            first_answer(decision)
+        }
+        Decision::ChooseEffectTargets {
+            player: P0,
+            selected_count: 0,
+            ref legal_targets,
+            ..
+        } if *legal_targets == [Target::Object(imp)] => {
+            offered.get_or_insert_with(|| s.clone());
+            Action::FinishEffectSelection
+        }
+        Decision::ChooseEffectOption { source, .. } if source == fanatic => {
+            revealing.get_or_insert_with(|| s.clone());
+            Action::ChooseEffectOption(1)
+        }
+        other => first_answer(other),
+    });
+    assert!(state.engine.halted.is_none());
+    assert_eq!(zone(&state, imp), Zone::Graveyard, "the dredge was declined");
+    assert!(hand_contains(&state, P0, fanatic));
+    (
+        discarding.expect("the discard waits inside the resolution"),
+        offered.expect("the draw offers the dredge"),
+        revealing.expect("the declined dredge's draw is a miracle"),
+    )
+}
+
+/// `base` with the resolution stage of `staged` restored over it: its
+/// choice, frames and answered guard, and no waiting discard.
+fn with_draw_stage(base: &GameState, staged: &GameState) -> GameState {
+    let mut forged = base.clone();
+    forged.engine.pending_discard = None;
+    let stage = staged.engine.pending_effect.as_ref().unwrap();
+    let pending = forged.engine.pending_effect.as_mut().unwrap();
+    pending.choice = stage.choice.clone();
+    pending.frames = stage.frames.clone();
+    pending.answered_choice_guard = stage.answered_choice_guard.clone();
+    forged
+}
+
+/// The validator refuses `forged` naming `reason`; `step` refuses `action`
+/// and leaves the state unchanged; advancing halts.
+fn assert_refused(forged: &GameState, action: Action, reason: &str) {
+    let error = mtg_kernel::effect::validate_pending_effect_choice(forged).unwrap_err();
+    assert!(error.contains(reason), "{error}");
+    let mut stepped = forged.clone();
+    let before = stepped.state_hash();
+    assert!(engine::step(&mut stepped, action).is_err());
+    assert_eq!(stepped.state_hash(), before);
+    let mut advanced = forged.clone();
+    assert!(matches!(
+        engine::advance_until_decision(&mut advanced),
+        Decision::Halted { .. }
+    ));
+}
+
+#[test]
+fn fear_of_missing_out_refuses_a_restored_dredge_before_its_discard_or_after_its_draw() {
+    // The draw's offer is this resolution's receipt that its discard was
+    // done; the answer spends it before the draw is made. A restored dredge,
+    // open or answered, staged while the discard still waits, or again at
+    // the reveal after the draw was made, is refused.
+    let (discarding, offered, revealing) = fomo_dredge_line();
+    mtg_kernel::effect::validate_pending_effect_choice(&offered).unwrap();
+    let mut answered = offered.clone();
+    act(&mut answered, Action::FinishEffectSelection);
+    mtg_kernel::effect::validate_pending_effect_choice(&answered).unwrap();
+    mtg_kernel::effect::validate_pending_effect_choice(&revealing).unwrap();
+    for staged in [&offered, &answered] {
+        assert_refused(
+            &with_draw_stage(&discarding, staged),
+            Action::FinishEffectSelection,
+            "was not offered by this resolution",
+        );
+        assert_refused(
+            &with_draw_stage(&revealing, staged),
+            Action::ChooseEffectOption(1),
+            "was already answered",
+        );
+    }
+}
+
+#[test]
+fn fear_of_missing_out_refuses_a_dredge_prompt_its_draw_does_not_offer() {
+    // The prompt at the draw is the one the engine offers there: the
+    // drawer's dredge cards, none forced. A prompt that forces the dredge,
+    // omits the dredger, lists another object or names the other player
+    // is refused.
+    use mtg_kernel::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
+    let (_, offered, _) = fomo_dredge_line();
+    for forgery in 0..4 {
+        let mut forged = offered.clone();
+        let Some(PendingEffectChoice::SelectTargets {
+            min_targets,
+            purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+            ..
+        }) = forged
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .choice
+            .as_mut()
+        else {
+            panic!("the draw offers an Eternal choice");
+        };
+        let reason = match forgery {
+            0 => {
+                *min_targets = 1;
+                choice.min = 1;
+                "changed its native replacement choice"
+            }
+            1 => {
+                choice.candidates.clear();
+                choice.bindings.clear();
+                "changed its native replacement choice"
+            }
+            2 => {
+                let mut binding = choice.bindings[0];
+                binding.object = named(&offered, P0, "Fear of Missing Out")[0];
+                binding.expected_zone = Zone::Battlefield;
+                binding.expected_zone_change_count =
+                    offered.objects.get(binding.object).zone_change_count;
+                choice.candidates.push(Target::Object(binding.object));
+                choice.bindings.push(binding);
+                "changed its native replacement choice"
+            }
+            _ => {
+                choice.player = P1;
+                "lost its printed draw"
+            }
+        };
+        assert_refused(&forged, Action::FinishEffectSelection, reason);
+    }
+}
+
 #[test]
 fn fomo_delirium_extra_combat_public_session_both_seats() {
     let delirium_red = deck(&[

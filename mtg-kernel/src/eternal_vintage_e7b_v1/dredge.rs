@@ -292,6 +292,8 @@ pub(crate) fn drive_draws(
             path,
             continuation.frames.clone(),
         );
+        #[cfg(feature = "eternal-fixtures")]
+        crate::effect::record_draw_replacement_choice(state, continuation, &choice, false);
         crate::eternal_cards_v1::e3::offer(continuation, choice);
         return Ok(true);
     }

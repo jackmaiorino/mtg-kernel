@@ -379,11 +379,14 @@ pub enum EventKindV1 {
     MiracleDrawSuspendedV1,
     MiracleDrawResumedV1,
     ResolutionDiscardWaitsV1,
+    ResolutionDrawChoiceOfferedV1,
+    ResolutionDrawChoiceAnsweredV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 336;
-const _: () = assert!(EventKindV1::ResolutionDiscardWaitsV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 338;
+const _: () =
+    assert!(EventKindV1::ResolutionDrawChoiceAnsweredV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -825,6 +828,12 @@ impl CommittedEvent {
             Self::MiracleDrawSuspendedV1 { .. } => EventKindV1::MiracleDrawSuspendedV1,
             Self::MiracleDrawResumedV1 { .. } => EventKindV1::MiracleDrawResumedV1,
             Self::ResolutionDiscardWaitsV1 { .. } => EventKindV1::ResolutionDiscardWaitsV1,
+            Self::ResolutionDrawChoiceOfferedV1 { .. } => {
+                EventKindV1::ResolutionDrawChoiceOfferedV1
+            }
+            Self::ResolutionDrawChoiceAnsweredV1 { .. } => {
+                EventKindV1::ResolutionDrawChoiceAnsweredV1
+            }
         }
     }
 }
