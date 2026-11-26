@@ -20,7 +20,6 @@ mtg_kernel::fast_global_allocator!();
 
 use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
 use mtg_kernel::cube_draft_build_v1::card_index::{CardIndexV1, CubeTableSourceV1};
-use mtg_kernel::cube_draft_build_v1::model::training::HeadUpdates;
 use mtg_kernel::cube_draft_build_v1::model::ModelCardRowsV1;
 use mtg_kernel::cube_draft_v1::{basic_land_ids, CubePool};
 use mtg_kernel::cube_owner_view_v1::cube_pool_from_ordered_ids;
@@ -572,18 +571,15 @@ fn execute(
             return Err("archived initial checkpoint state sha256 mismatch".into());
         }
         if (!args.prepare && is_builder) || (args.prepare && !is_builder) {
-            let stored_bytes = fs::read(builder_config.root.join("initial/checkpoint.json"))?;
-            let (stored, _, _) = load_checkpoint_read_only_bytes_v1(&stored_bytes, &data.table)?;
-            if stored.run != builder_run
-                || stored.segment != Segment::BuilderOnly
-                || stored.update != 0
-                || stored.head_updates != HeadUpdates::default()
-                || stored.model != source_ckpt.model
-            {
-                return Err(
-                    "stored builder initial checkpoint differs from archived initial checkpoint"
-                        .into(),
-                );
+            let expected_initial_sha = TrainingDriver::initial_state_sha256_from_checkpoint(
+                &builder_config,
+                &data.rows,
+                &source_ckpt,
+                &inputs.initial_state_sha256,
+            )?;
+            let path = builder_config.root.join("initial/checkpoint.json");
+            if stored_state_sha256(&path)? != expected_initial_sha {
+                return Err("stored builder initial checkpoint state sha256 mismatch".into());
             }
         }
         if is_builder {

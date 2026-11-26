@@ -839,7 +839,10 @@ fn restart_run_ids_parse_and_prepare_after_stopped_b1() {
         b1_init_pin["sha256"]
     );
 
-    // Authorizing b2 at seq 7 passes verify_run and rejects k2 prepare before b2 completes.
+    // Authorizing b2 at seq 7 passes verify_run; tampering with b2/initial/checkpoint.json
+    // (e.g. empty league with a valid recomputed canonical state_sha256) must be refused by
+    // both b2 run (keeping b2's pre-entry-7 prefix) and k2 prepare, as well as direct driver open.
+    let b2_prefix = spec["manifest_prefix_sha256"].clone();
     let b2_pin = pinned(&root.0.join("b2/run.json"))["sha256"].clone();
     append_entry(
         &mut manifest,
@@ -848,11 +851,59 @@ fn restart_run_ids_parse_and_prepare_after_stopped_b1() {
         json!({"run_id":"shakedown-pods/b2","tripwire":{"mode":"q9"},"files":{"b2/run.json":b2_pin}}),
     );
     spec["manifest"] = write_pin(&root.0, "manifest", manifest.as_bytes());
+
+    let b2_init_path = root.0.join("b2/initial/checkpoint.json");
+    let b2_init_raw = fs::read(&b2_init_path).unwrap();
+    let mut tampered: mtg_kernel::cube_training_driver_v1::Checkpoint =
+        serde_json::from_slice(&b2_init_raw).unwrap();
+    tampered.league.clear();
+    tampered.state_sha256.clear();
+    let mut pin_bytes = b"mtg-kernel-cube-checkpoint-state/v1\0".to_vec();
+    serde_json::to_writer(&mut pin_bytes, &tampered).unwrap();
+    tampered.state_sha256 = sha256_hex(&pin_bytes);
+    fs::write(&b2_init_path, serde_json::to_vec(&tampered).unwrap()).unwrap();
+
+    spec["manifest_prefix_sha256"] = b2_prefix;
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+    args.run = "b2".into();
+    args.prepare = false;
+    let err = launch(&args).unwrap_err().to_string();
+    assert!(err.contains("state sha256 mismatch"), "{err}");
+    assert!(!root.0.join("b2/updates/update-0000").exists());
+
+    // Direct driver open under lock also rejects the tampered staged checkpoint 0.
+    let inputs: Inputs = serde_json::from_slice(&fs::read(&args.inputs).unwrap()).unwrap();
+    let data = inputs.load().unwrap();
+    let cfg = inputs.config(&args, &data).unwrap();
+    let (src_ckpt, _, _) = load_checkpoint_read_only_bytes_v1(
+        &inputs.initial_checkpoint.as_ref().unwrap().read().unwrap(),
+        &data.table,
+    )
+    .unwrap();
+    let drv_err = TrainingDriver::open_from_initial_checkpoint(
+        cfg,
+        data.rows,
+        &src_ckpt,
+        &inputs.initial_state_sha256,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        drv_err.contains("expected canonical checkpoint 0"),
+        "{drv_err}"
+    );
+
     spec["manifest_prefix_sha256"] = spec["manifest"]["sha256"].clone();
     fs::write(&args.inputs, spec.to_string()).unwrap();
-
     args.run = "k2".into();
     args.prepare = true;
+    let err = launch(&args).unwrap_err().to_string();
+    assert!(err.contains("state sha256 mismatch"), "{err}");
+    assert!(!root.0.join("k2/run.json").exists());
+
+    // Restore valid staged b2 checkpoint 0; k2 prepare now rejects only because b2 is incomplete.
+    fs::write(&b2_init_path, &b2_init_raw).unwrap();
     let err = launch(&args).unwrap_err().to_string();
     assert!(err.contains("completed builder segment"), "{err}");
     assert!(!root.0.join("k2/run.json").exists());

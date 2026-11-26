@@ -1760,14 +1760,12 @@ impl TrainingDriver {
         Self::open_from_state(config, rows, model, optimizer, lineage, Vec::new(), None)
     }
 
-    /// Open a restarted builder-only run by loading an archived pinned initial
-    /// checkpoint (D0.12 / D0.18) without drawing the initialiser seed again.
-    pub fn open_from_initial_checkpoint(
-        config: RunConfig,
-        rows: Arc<ModelCardRowsV1>,
+    fn restore_archived_initial_checkpoint(
+        config: &RunConfig,
+        rows: &ModelCardRowsV1,
         source_checkpoint: &Checkpoint,
         expected_source_state_sha256: &str,
-    ) -> Result<Self, TrainingDriverError> {
+    ) -> Result<(ModelV1, Optimizer), TrainingDriverError> {
         if config.segment != Segment::BuilderOnly {
             return Err(invalid(
                 "initial checkpoint restart requires a builder configuration",
@@ -1811,10 +1809,67 @@ impl TrainingDriver {
                 "archived initial checkpoint parameter layout differs from model",
             ));
         }
-        let (model, optimizer) = source_checkpoint
+        source_checkpoint
             .model
             .restore(template, source_checkpoint.head_updates)
-            .map_err(TrainingDriverError::Update)?;
+            .map_err(TrainingDriverError::Update)
+    }
+
+    /// Derive the restarted builder's full canonical checkpoint-0 state digest
+    /// (including its initial league entry) from an archived pinned initial
+    /// checkpoint, without drawing any initialiser seed or performing IO.
+    pub fn initial_state_sha256_from_checkpoint(
+        config: &RunConfig,
+        rows: &ModelCardRowsV1,
+        source_checkpoint: &Checkpoint,
+        expected_source_state_sha256: &str,
+    ) -> Result<String, TrainingDriverError> {
+        let mut config = config.clone();
+        let (model, optimizer) = Self::restore_archived_initial_checkpoint(
+            &config,
+            rows,
+            source_checkpoint,
+            expected_source_state_sha256,
+        )?;
+        let layout = model_layout_pin(&model);
+        if !config.metadata.parameter_layout_sha256.is_empty()
+            && config.metadata.parameter_layout_sha256 != layout
+        {
+            return Err(invalid(
+                "configured parameter layout differs from the model",
+            ));
+        }
+        config.metadata.parameter_layout_sha256 = layout;
+        let mut checkpoint = Checkpoint::new(
+            &config,
+            CubeModelState::from_model(&model, &optimizer),
+            Vec::new(),
+            0,
+            Vec::new(),
+            pin_reasons(&config, 0),
+            optimizer.head_updates,
+        )?;
+        checkpoint
+            .league
+            .push(league_entry(&config.root, &checkpoint)?);
+        checkpoint.refresh_pin()?;
+        Ok(checkpoint.state_sha256)
+    }
+
+    /// Open a restarted builder-only run by loading an archived pinned initial
+    /// checkpoint (D0.12 / D0.18) without drawing the initialiser seed again.
+    pub fn open_from_initial_checkpoint(
+        config: RunConfig,
+        rows: Arc<ModelCardRowsV1>,
+        source_checkpoint: &Checkpoint,
+        expected_source_state_sha256: &str,
+    ) -> Result<Self, TrainingDriverError> {
+        let (model, optimizer) = Self::restore_archived_initial_checkpoint(
+            &config,
+            &rows,
+            source_checkpoint,
+            expected_source_state_sha256,
+        )?;
         Self::open_from_state(config, rows, model, optimizer, Vec::new(), Vec::new(), None)
     }
 
@@ -2031,6 +2086,31 @@ impl TrainingDriver {
                 .and_then(|switch| switch.gate.as_ref())
             {
                 publish_bytes(&config.root.join("gate-pin.json"), &json_bytes(gate)?)?;
+            }
+        }
+
+        if config.segment == Segment::BuilderOnly && initial_path.exists() {
+            let mut expected_initial = Checkpoint::new(
+                &config,
+                CubeModelState::from_model(&initial_model, &initial_optimizer),
+                initial_league.clone(),
+                0,
+                initial_lineage.clone(),
+                pin_reasons(&config, 0),
+                initial_optimizer.head_updates,
+            )?;
+            if expected_initial.league.is_empty() {
+                expected_initial
+                    .league
+                    .push(league_entry(&config.root, &expected_initial)?);
+                expected_initial.refresh_pin()?;
+            }
+            let stored_initial: Checkpoint = read_json(&initial_path)?;
+            stored_initial.validate()?;
+            if stored_initial.state_sha256 != expected_initial.state_sha256 {
+                return Err(invalid(
+                    "stored initial checkpoint differs from expected canonical checkpoint 0",
+                ));
             }
         }
 
