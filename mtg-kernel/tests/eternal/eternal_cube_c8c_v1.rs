@@ -1637,7 +1637,10 @@ fn copied_equipment() -> (GameState, ObjectId, ObjectId) {
 #[test]
 fn equipment_creature_can_target_itself_with_equip_and_resolves_after_restore() {
     let (mut state, copy, _) = copied_equipment();
+    put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
     activate(&mut state, copy, 0, &[Target::Object(copy)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
     assert_eq!(state.stack.len(), 1);
     assert_eq!(state.stack[0].targets, [Target::Object(copy)]);
     let snapshot = state.snapshot();
@@ -1701,7 +1704,11 @@ fn equipment_creature_losing_equipment_subtype_in_response_cannot_attach() {
     let reconfiguration = put(&mut state, P1, "Swift Reconfiguration", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::W], 0);
     activate(&mut state, copy, 0, &[Target::Object(host)]);
-    act(&mut state, Action::Pass);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    if state.priority_player == P0 {
+        act(&mut state, Action::Pass);
+    }
+    assert_eq!(state.priority_player, P1);
     cast(&mut state, reconfiguration, &[Target::Object(copy)]);
     settled(&mut state);
 
