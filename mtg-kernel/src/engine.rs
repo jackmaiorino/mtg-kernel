@@ -2097,6 +2097,13 @@ pub(crate) fn validate_legacy_variable_cast_targets(state: &GameState) -> Result
     }
 }
 
+/// The fixed target cardinality of `spec`, or `None` for a spell-only spec
+/// whose cardinality only its cast successor knows. Restored-state checks that
+/// run before the trigger authenticator use this, never `target_count`.
+fn fixed_target_count(spec: TargetSpec) -> Option<u8> {
+    (spec != TargetSpec::KickerControlledCreatures).then(|| target_count(spec))
+}
+
 pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::None | TargetSpec::CounterDistribution => 0,
@@ -20630,7 +20637,10 @@ fn pending_trigger_placement_choice(state: &GameState) -> Option<TriggerPlacemen
     if let Some(modes) = pending_trigger_modes(state, first) {
         return Some(TriggerPlacementChoice::Mode(modes));
     }
-    let need = target_count(first.target_spec);
+    // A spec without a fixed cardinality is no placement choice: the caller's
+    // `validate_pending_trigger` refuses it, exactly as before placement
+    // routing existed.
+    let need = fixed_target_count(first.target_spec)?;
     (first.targets.len() < usize::from(need)).then(|| TriggerPlacementChoice::Targets {
         remaining: need - first.targets.len() as u8,
         can_finish: first.targets.len() >= usize::from(target_min_count(first.target_spec)),

@@ -14291,7 +14291,10 @@ mod tests {
                     )
                     .unwrap();
             };
-            let in_order = |action: &ActionSemanticV1| matches!(action, ActionSemanticV1::OrderTriggers { order, .. } if order.as_slice() == [0, 1]);
+            let in_order = |action: &ActionSemanticV1| match action {
+                ActionSemanticV1::OrderTriggers { order, .. } => order.as_slice() == [0, 1],
+                _ => false,
+            };
             let target =
                 |action: &ActionSemanticV1| matches!(action, ActionSemanticV1::ChooseTarget { .. });
             answer(&mut session, &in_order);
@@ -14427,8 +14430,9 @@ mod tests {
             use crate::engine::{self, Action, Decision};
 
             let (mut session, _, second) = nadu_cub_batch_session();
-            answer_limited(&mut session, |action: &ActionSemanticV1| {
-                matches!(action, ActionSemanticV1::OrderTriggers { order, .. } if order.as_slice() == [0, 1])
+            answer_limited(&mut session, |action: &ActionSemanticV1| match action {
+                ActionSemanticV1::OrderTriggers { order, .. } => order.as_slice() == [0, 1],
+                _ => false,
             });
             answer_limited(&mut session, |action: &ActionSemanticV1| {
                 matches!(action, ActionSemanticV1::ChooseTarget { .. })
