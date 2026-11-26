@@ -111,3 +111,46 @@ fn restored_ordered_trigger_refuses_spell_only_cardinality_without_panicking() {
         assert_eq!(before, serde_json::to_vec(&replay).unwrap());
     }
 }
+
+/// A restored ordered trigger whose spec takes more targets than any printed
+/// mode (Mystic Confluence slots summing past `u8`) is refused by `step` and
+/// halts `advance_until_decision`; neither reaches its target count.
+#[test]
+fn restored_ordered_trigger_refuses_an_overflowing_slot_spec_without_panicking() {
+    use crate::eternal_cube_c1a_v1::targets::C1aTargetV1;
+    use crate::standard_cards_v1::StandardTargetV1;
+
+    for controller in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        state.active_player = controller;
+        state.priority_player = controller;
+        let source = put(&mut state, controller, "Journey to Nowhere", Zone::Hand);
+        let target = put(&mut state, controller, "Llanowar Elves", Zone::Battlefield);
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        collect_and_queue_triggers(&mut state);
+        assert_eq!(state.engine.pending_triggers.len(), 1);
+        assert!(matches!(
+            drain_pending_triggers_or_decide(&mut state),
+            Some(Decision::ChooseTargets { .. })
+        ));
+        validate_pending_trigger(&state, &state.engine.pending_triggers[0]).unwrap();
+        let slots = C1aTargetV1::MysticSlotsV1 {
+            spells: 200,
+            creatures: 200,
+        };
+        let spec = TargetSpec::StandardV1(StandardTargetV1::C1aV1(slots));
+        state.engine.pending_triggers[0].target_spec = spec;
+        let replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for action in [Action::ChooseTarget(Target::Object(target)), Action::Pass] {
+            let mut stepped = replay.clone();
+            assert!(step(&mut stepped, action.clone()).is_err(), "{action:?}");
+            assert_eq!(stepped, replay, "{action:?}");
+        }
+        let mut advanced = replay.clone();
+        assert!(matches!(advance_until_decision(&mut advanced), Decision::Halted { .. }));
+    }
+}

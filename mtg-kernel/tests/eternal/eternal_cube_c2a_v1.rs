@@ -12,7 +12,9 @@ use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{
+    GameObject, GameState, ObjectStateV4, StackTargetContractV4, Step, Target, Zone,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -832,6 +834,171 @@ fn a_shockland_payment_precedes_ordering_its_landfall_triggers() {
         other => panic!("the landfall triggers are ordered next, got {other:?}"),
     }
     assert!(state.stack.is_empty());
+}
+
+/// `state` restored from JSON with `waiting` as its queue of captures made
+/// while a trigger batch was being placed.
+fn with_waiting_captures(state: &GameState, waiting: Value) -> GameState {
+    let mut json = serde_json::to_value(state).unwrap();
+    json["engine"]["waiting_placement_triggers"] = waiting;
+    serde_json::from_value(json).unwrap()
+}
+
+/// `step` refuses `action` on a forged state without changing it, and
+/// `advance_until_decision` halts it.
+fn assert_forged_refused(forged: &GameState, action: Action) {
+    let mut stepped = forged.clone();
+    assert!(
+        engine::step(&mut stepped, action.clone()).is_err(),
+        "{action:?} must be refused"
+    );
+    assert_eq!(&stepped, forged);
+    let mut advanced = forged.clone();
+    let decision = engine::advance_until_decision(&mut advanced);
+    assert!(
+        matches!(decision, Decision::Halted { .. }),
+        "got {decision:?}"
+    );
+}
+
+/// The payment outranks placement, so `advance_until_decision` would pose it
+/// over a forged, partly ordered landfall group that `step` refuses. Both
+/// refuse it instead.
+#[test]
+fn a_forged_partly_ordered_group_behind_a_shockland_payment_is_refused() {
+    let mut state = plains();
+    put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
+    put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
+    let land = put(&mut state, P0, "Breeding Pool", Zone::Hand);
+    play(&mut state, land);
+    expect_choice(&mut state, land, 2);
+    engine::step(&mut state.clone(), Action::ChooseEffectOption(0)).unwrap();
+
+    let mut forged = state.clone();
+    forged.engine.pending_triggers[0].placement_ordered = true;
+    assert_forged_refused(&forged, Action::ChooseEffectOption(0));
+}
+
+/// An APNAP batch: P0's Cub is being placed, then P1's two Cubs. P1's group
+/// is ordered only once it leads, and only the trigger being placed carries
+/// targets, so a batch restored with P1's group already ordered (wholly or
+/// partly) or targeted is refused rather than skipping P1's ordering.
+#[test]
+fn forged_marks_on_a_later_trigger_group_are_refused() {
+    let mut state = plains();
+    let cub = put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
+    let theirs = [
+        put(&mut state, P1, "Scythecat Cub", Zone::Battlefield),
+        put(&mut state, P1, "Scythecat Cub", Zone::Battlefield),
+    ];
+    for player in [P0, P1] {
+        let land = put(&mut state, player, "Plains", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(land, Zone::Battlefield),
+        );
+    }
+    match next(&mut state) {
+        Decision::ChooseTargets { spell, .. } => assert_eq!(spell, cub),
+        other => panic!("P0's Cub chooses its target first, got {other:?}"),
+    }
+    let marks: Vec<_> = state
+        .engine
+        .pending_triggers
+        .iter()
+        .map(|trigger| (trigger.source, trigger.placement_ordered))
+        .collect();
+    assert_eq!(marks, [(cub, true), (theirs[0], false), (theirs[1], false)]);
+    let choose = Action::ChooseTarget(Target::Object(cub));
+    let mut placed = state.clone();
+    act(&mut placed, choose.clone());
+    match next(&mut placed) {
+        Decision::OrderTriggers { player, pending } => {
+            assert_eq!(player, P1);
+            assert_eq!(pending.len(), 2);
+        }
+        other => panic!("P1 orders its Cubs next, got {other:?}"),
+    }
+
+    let forgeries: [fn(&mut GameState); 3] = [
+        |state: &mut GameState| {
+            for trigger in &mut state.engine.pending_triggers[1..] {
+                trigger.placement_ordered = true;
+            }
+        },
+        |state: &mut GameState| state.engine.pending_triggers[1].placement_ordered = true,
+        |state: &mut GameState| {
+            let target = Target::Object(state.engine.pending_triggers[1].source);
+            let contract = StackTargetContractV4::capture(state, target);
+            let trigger = &mut state.engine.pending_triggers[1];
+            trigger.targets.push(target);
+            trigger.target_contracts.push(contract);
+        },
+    ];
+    for forge in forgeries {
+        let mut forged = state.clone();
+        forge(&mut forged);
+        assert_forged_refused(&forged, choose.clone());
+    }
+}
+
+/// Captures wait only while a batch is being placed, so a triggered ability
+/// that batch placed is on top of the stack. A capture restored above a lone
+/// spell, which no placement put there, is refused.
+#[test]
+fn a_forged_placement_capture_above_a_lone_spell_is_refused() {
+    let mut state = plains();
+    let cub = put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
+    let land = put(&mut state, P0, "Plains", Zone::Hand);
+    let mut probe = state.clone();
+    play(&mut probe, land);
+    let capture = probe.engine.pending_triggers[0].clone();
+    assert_eq!(capture.source, cub);
+    assert!(!capture.placement_ordered && capture.targets.is_empty());
+
+    opponent_bolts(&mut state, Target::Player(P0));
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P0, .. }
+    ));
+    assert_eq!(state.stack.len(), 1);
+    engine::step(&mut state.clone(), Action::Pass).unwrap();
+
+    let forged = with_waiting_captures(&state, serde_json::to_value([capture]).unwrap());
+    assert_forged_refused(&forged, Action::Pass);
+}
+
+/// A legend-rule choice outranks trigger placement, so no capture waits
+/// behind it, even with a placed triggered ability on top of the stack.
+#[test]
+fn a_forged_placement_capture_behind_a_legend_rule_choice_is_refused() {
+    let mut state = plains();
+    let cub = put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
+    let kept = put(&mut state, P0, "Ragavan, Nimble Pilferer", Zone::Battlefield);
+    let second = put(&mut state, P0, "Ragavan, Nimble Pilferer", Zone::Hand);
+    let land = put(&mut state, P0, "Plains", Zone::Hand);
+    play(&mut state, land);
+    let capture = state.engine.pending_triggers[0].clone();
+    assert_eq!(capture.source, cub);
+    assert!(!capture.placement_ordered && capture.targets.is_empty());
+    choose_target(&mut state, Target::Object(cub));
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.stack[0].source, cub);
+
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(second, Zone::Battlefield),
+    );
+    match next(&mut state) {
+        Decision::ChooseLegendPermanent { .. } => {}
+        other => panic!("the legend rule applies first, got {other:?}"),
+    }
+    let keep = Action::ChooseLegendPermanent(kept);
+    engine::step(&mut state.clone(), keep.clone()).unwrap();
+
+    let forged = with_waiting_captures(&state, serde_json::to_value([capture]).unwrap());
+    assert_forged_refused(&forged, keep);
 }
 
 #[test]

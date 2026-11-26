@@ -2097,13 +2097,6 @@ pub(crate) fn validate_legacy_variable_cast_targets(state: &GameState) -> Result
     }
 }
 
-/// The fixed target cardinality of `spec`, or `None` for a spell-only spec
-/// whose cardinality only its cast successor knows. Restored-state checks that
-/// run before the trigger authenticator use this, never `target_count`.
-fn fixed_target_count(spec: TargetSpec) -> Option<u8> {
-    (spec != TargetSpec::KickerControlledCreatures).then(|| target_count(spec))
-}
-
 pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::None | TargetSpec::CounterDistribution => 0,
@@ -15726,7 +15719,10 @@ fn advance_until_decision_historical(state: &mut GameState) -> Decision {
         return Decision::Halted { mechanic, source };
     }
     // A halted state only ever returns its halt, so keep its own source.
-    if state.engine.halted.is_none() && waiting_placement_v1::validate(state).is_err() {
+    if state.engine.halted.is_none()
+        && (waiting_placement_v1::validate(state).is_err()
+            || validate_trigger_placement_group(state).is_err())
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -20617,30 +20613,36 @@ enum TriggerPlacementChoice {
     Targets { remaining: u8, can_finish: bool },
 }
 
-fn pending_trigger_placement_choice(state: &GameState) -> Option<TriggerPlacementChoice> {
-    let first = state.engine.pending_triggers.first()?;
+/// The length of the leading same-controller group while it still needs
+/// ordering.
+fn pending_trigger_order_group(state: &GameState) -> Option<usize> {
     let group = &state.engine.pending_triggers;
+    let first = group.first()?;
     let group_len = group
         .iter()
         .take_while(|trigger| trigger.controller == first.controller)
         .count();
-    if group_len >= 2
-        && group[..group_len]
-            .iter()
-            .any(|trigger| !trigger.placement_ordered)
-    {
+    let unordered = group[..group_len].iter().any(|trigger| !trigger.placement_ordered);
+    (group_len >= 2 && unordered).then_some(group_len)
+}
+
+fn pending_trigger_placement_choice(state: &GameState) -> Option<TriggerPlacementChoice> {
+    if let Some(group_len) = pending_trigger_order_group(state) {
         return Some(TriggerPlacementChoice::Order(group_len));
     }
+    let first = state.engine.pending_triggers.first()?;
+    // Every later choice reads the leading trigger's restored spec. Only an
+    // authenticated trigger poses one, so an unordered trigger or a spec its
+    // definition does not own (spell-only, or past any printed cardinality)
+    // never reaches `target_count`; the callers refuse it.
+    validate_pending_trigger(state, first).ok()?;
     if counter_distribution_v1::waiting(first) {
         return Some(TriggerPlacementChoice::DistributeCounters);
     }
     if let Some(modes) = pending_trigger_modes(state, first) {
         return Some(TriggerPlacementChoice::Mode(modes));
     }
-    // A spec without a fixed cardinality is no placement choice: the caller's
-    // `validate_pending_trigger` refuses it, exactly as before placement
-    // routing existed.
-    let need = fixed_target_count(first.target_spec)?;
+    let need = target_count(first.target_spec);
     (first.targets.len() < usize::from(need)).then(|| TriggerPlacementChoice::Targets {
         remaining: need - first.targets.len() as u8,
         can_finish: first.targets.len() >= usize::from(target_min_count(first.target_spec)),
@@ -20665,34 +20667,63 @@ fn trigger_placement_waits_for_action(state: &GameState) -> bool {
         || state.engine.pending_optional_cost_sacrifice.is_some()
 }
 
-/// The placement marks of the leading same-controller group. Ordering marks
-/// a whole group at once (`apply_order_triggers`); otherwise only the lone
-/// trigger being placed is marked (`drain_pending_triggers_or_decide`), and
-/// targets are chosen only for a marked trigger. Captures made during
-/// placement wait outside `pending_triggers`, so no group is ever partly
-/// marked and no unmarked trigger carries targets.
+/// The decisions `advance_until_decision` serves ahead of trigger placement.
+/// While one is pending it is the decision, never a placement choice.
+fn decision_precedes_trigger_placement(state: &GameState) -> bool {
+    crate::graveyard_order_v1::owns_operation(state)
+        || crate::graveyard_order_v1::paused(state)
+        || crate::linked_aura_operation_v1::has_pending(state)
+        || crate::twinflame_tyrant_v1::combat::has_pending(state)
+        || crate::london_mulligan_v1::has_pending(state)
+        || crate::eternal_opening_v1::owns_action(state)
+        || state.leyline_opening_v1.is_some()
+        || (!crate::eternal_opening_v1::enabled(state)
+            && crate::leyline_axe_v1::requires_initial_advance(state).unwrap_or(true))
+        || (!state.engine.time_stop_v1.is_empty() && !time_stop_v1::at_priority(state))
+        || (!state.engine.ordinary_cleanup_v1.is_empty()
+            && !ordinary_cleanup_v1::at_priority(state))
+        || state.pending_legend_rule_v1.is_some()
+        || crate::attack_target_v1::has_pending(state)
+        || crate::combat_damage_v1::has_pending_assignment(state)
+        || !matches!(muldrotha_v1::decision(state), Ok(None))
+        || trigger_placement_waits_for_action(state)
+}
+
+/// The placement marks of the whole pending batch. Collection and every
+/// later append (APNAP batching, captures carried into a checkpoint) add only
+/// unmarked, untargeted triggers. Ordering marks the leading same-controller
+/// group at once (`apply_order_triggers`); otherwise only the lone leading
+/// trigger is marked as it is placed (`drain_pending_triggers_or_decide`).
+/// Modes, counters and targets are chosen only for the marked leading trigger
+/// (`apply_choose_target`, `finish_optional_trigger_targets`), which then
+/// leaves the batch (`push_trigger_onto_stack`, or 603.3d removal). Captures
+/// made while it is put on the stack wait outside `pending_triggers`. So the
+/// leading group is uniformly marked, nothing after it is marked, and only a
+/// marked leading trigger carries targets.
 fn validate_trigger_placement_group(state: &GameState) -> Result<(), String> {
-    let Some(first) = state.engine.pending_triggers.first() else {
+    let triggers = &state.engine.pending_triggers;
+    let Some(first) = triggers.first() else {
         return Ok(());
     };
-    let group = state
-        .engine
-        .pending_triggers
+    let group_len = triggers
         .iter()
-        .take_while(|trigger| trigger.controller == first.controller);
-    let mut ordered = false;
-    let mut unordered = false;
-    for trigger in group {
-        if trigger.placement_ordered {
-            ordered = true;
-        } else if !trigger.targets.is_empty() || !trigger.target_contracts.is_empty() {
-            return Err("an unordered pending trigger already carries targets".into());
-        } else {
-            unordered = true;
-        }
-    }
-    if ordered && unordered {
+        .take_while(|trigger| trigger.controller == first.controller)
+        .count();
+    let (group, rest) = triggers.split_at(group_len);
+    if group
+        .iter()
+        .any(|trigger| trigger.placement_ordered != first.placement_ordered)
+    {
         return Err("a pending trigger group is only partly ordered".into());
+    }
+    if rest.iter().any(|trigger| trigger.placement_ordered) {
+        return Err("a pending trigger after the leading group is already ordered".into());
+    }
+    let targeted = |trigger: &PendingTrigger| {
+        !trigger.targets.is_empty() || !trigger.target_contracts.is_empty()
+    };
+    if (!first.placement_ordered && targeted(first)) || triggers[1..].iter().any(targeted) {
+        return Err("only the ordered leading pending trigger may carry targets".into());
     }
     Ok(())
 }
@@ -20734,8 +20765,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 source,
             });
         }
-        let choice = pending_trigger_placement_choice(state);
-        if let Some(TriggerPlacementChoice::Order(group_len)) = choice {
+        if let Some(group_len) = pending_trigger_order_group(state) {
             return Some(Decision::OrderTriggers {
                 player: state.engine.pending_triggers[0].controller,
                 pending: state.engine.pending_triggers[..group_len].to_vec(),
@@ -20756,6 +20786,8 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.source,
             });
         }
+        // Marked and authenticated: the remaining choice reads a valid spec.
+        let choice = pending_trigger_placement_choice(state);
         match &choice {
             Some(TriggerPlacementChoice::DistributeCounters) => {
                 return counter_distribution_v1::decision(state, &pending);
@@ -20852,25 +20884,9 @@ fn pending_trigger_modes(
 /// trigger from the identical semantic variant emitted during `pending_cast`
 /// (`Decision::ChooseSpellMode`).
 pub(crate) fn pending_trigger_choose_mode_active_v1(state: &GameState) -> bool {
-    if crate::graveyard_order_v1::owns_operation(state)
-        || crate::graveyard_order_v1::paused(state)
-        || crate::linked_aura_operation_v1::has_pending(state)
-        || crate::twinflame_tyrant_v1::combat::has_pending(state)
-        || check_game_over(state).is_some()
+    if check_game_over(state).is_some()
         || state.engine.halted.is_some()
-        || crate::london_mulligan_v1::has_pending(state)
-        || crate::eternal_opening_v1::owns_action(state)
-        || state.leyline_opening_v1.is_some()
-        || (!crate::eternal_opening_v1::enabled(state)
-            && crate::leyline_axe_v1::requires_initial_advance(state).unwrap_or(true))
-        || (!state.engine.time_stop_v1.is_empty() && !time_stop_v1::at_priority(state))
-        || (!state.engine.ordinary_cleanup_v1.is_empty()
-            && !ordinary_cleanup_v1::at_priority(state))
-        || state.pending_legend_rule_v1.is_some()
-        || crate::attack_target_v1::has_pending(state)
-        || crate::combat_damage_v1::has_pending_assignment(state)
-        || !matches!(muldrotha_v1::decision(state), Ok(None))
-        || trigger_placement_waits_for_action(state)
+        || decision_precedes_trigger_placement(state)
     {
         return false;
     }

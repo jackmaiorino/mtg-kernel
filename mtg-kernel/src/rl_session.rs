@@ -14540,6 +14540,54 @@ mod tests {
                 ],
             );
         }
+
+        /// After both Cubs are ordered, only the first, being placed, may
+        /// carry targets: the second chooses its own once it leads.
+        #[cfg(feature = "eternal-fixtures")]
+        #[test]
+        fn forged_targets_on_a_later_ordered_trigger_are_refused() {
+            use crate::engine::{self, Action, Decision};
+
+            let (mut session, first, second) = nadu_cub_batch_session();
+            answer_limited(&mut session, |action: &ActionSemanticV1| match action {
+                ActionSemanticV1::OrderTriggers { order, .. } => order.as_slice() == [0, 1],
+                _ => false,
+            });
+            let mut legit = session.state.clone();
+            let marks = legit
+                .engine
+                .pending_triggers
+                .iter()
+                .map(|trigger| (trigger.source, trigger.placement_ordered, trigger.targets.len()))
+                .collect::<Vec<_>>();
+            assert_eq!(marks, [(first, true, 0), (second, true, 0)]);
+            let Decision::ChooseTargets {
+                spell,
+                legal_targets,
+                ..
+            } = engine::advance_until_decision(&mut legit)
+            else {
+                panic!("the first Cub chooses its target");
+            };
+            assert_eq!(spell, first);
+            let choose = Action::ChooseTarget(legal_targets[0]);
+            engine::step(&mut legit.clone(), choose.clone()).unwrap();
+
+            assert_forgeries_refused(
+                &legit,
+                &choose,
+                &[(
+                    "later ordered trigger with a target",
+                    |state: &mut GameState| {
+                        let target = Target::Object(state.engine.pending_triggers[0].source);
+                        let contract = crate::state::StackTargetContractV4::capture(state, target);
+                        let pending = &mut state.engine.pending_triggers[1];
+                        pending.targets.push(target);
+                        pending.target_contracts.push(contract);
+                    },
+                )],
+            );
+        }
     }
 
     fn goad(state: &mut GameState, attacker: crate::ids::ObjectId) {

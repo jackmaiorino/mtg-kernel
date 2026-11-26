@@ -3,10 +3,10 @@
 //! queue writes no `Hash` input and no serialized field, so every state that
 //! never holds such a capture keeps its previously pinned bytes.
 use super::{
-    pending_trigger_placement_choice, trigger_placement_waits_for_action,
+    decision_precedes_trigger_placement, pending_trigger_placement_choice,
     validate_pending_trigger_identity,
 };
-use crate::state::GameState;
+use crate::state::{GameState, StackItemKind};
 use crate::trigger::PendingTrigger;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -31,20 +31,28 @@ impl QueueV1 {
 
 /// A restored queue must be one placement can leave. Only
 /// `push_trigger_onto_stack` fills it, with the captures its hooks made while
-/// that trigger was put on the stack, and the next trigger checkpoint empties
-/// it before priority or any other decision. So a non-empty queue has a
-/// non-empty stack (the trigger whose placement made the captures), no
-/// decision that outranks trigger placement, and only fresh captures:
-/// unordered and untargeted, with a valid source.
+/// it put a batch's trigger (or Madness offer) on top of the stack. The same
+/// `drain_pending_triggers_or_decide` then either poses the batch's next
+/// placement choice or, once the batch is empty, takes the queue into the
+/// next checkpoint; after `finish_optional_trigger_targets` places from
+/// `step`, the next advance continues that drain. Until then only placement
+/// answers are taken, and they neither resolve, cast, activate nor move an
+/// object. So a non-empty queue has:
+/// - a triggered ability or Madness offer on top of the stack, the last one
+///   the batch placed (a spell or activated ability on top means no batch is
+///   being placed);
+/// - no decision `advance_until_decision` serves ahead of trigger placement;
+/// - only fresh captures: unordered and untargeted, with a valid source.
 pub(super) fn validate(state: &GameState) -> Result<(), String> {
     let queue = &state.engine.waiting_placement_triggers.0;
     if queue.is_empty() {
         return Ok(());
     }
-    if state.stack.is_empty() {
-        return Err("waiting placement captures have no placed trigger".into());
+    let top = state.stack.last().map(|item| item.kind);
+    if !matches!(top, Some(StackItemKind::TriggeredAbility | StackItemKind::MadnessOffer)) {
+        return Err("waiting placement captures have no placed trigger on top".into());
     }
-    if trigger_placement_waits_for_action(state) {
+    if decision_precedes_trigger_placement(state) {
         return Err("waiting placement captures cannot wait behind another decision".into());
     }
     for trigger in queue {
