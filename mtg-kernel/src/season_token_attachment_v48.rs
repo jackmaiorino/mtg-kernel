@@ -86,11 +86,11 @@ pub(crate) fn validate_choice(state: &GameState, choice: &ChoiceV48) -> Result<(
             choice.source.source,
             crate::card_def::CardType::Artifact,
         )
-        || crate::engine::object_has_type(
+        || (crate::engine::object_has_type(
             state,
             choice.source.source,
             crate::card_def::CardType::Creature,
-        )
+        ) && !crate::engine::equipment_has_reconfigure(state, choice.source.source))
         || source.owner != choice.source.owner
         || source.card_def != choice.source.card_def
         || crate::card_def::CARD_DEFS[usize::from(source.card_def)]

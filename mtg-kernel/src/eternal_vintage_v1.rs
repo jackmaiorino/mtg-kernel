@@ -1288,6 +1288,32 @@ pub(crate) fn has_type_override(
     {
         return Some(answer);
     }
+    // CR 613.4 / 613.7 / 702.151b: Karn and Tezzeret Robot animation effects
+    // apply after Reconfigure's attached noncreature static ability so an
+    // animated attached Lion Sash (or copy) becomes a creature and detaches
+    // via CR 704.5n.
+    if matches!(card_type, CardType::Creature | CardType::Artifact) {
+        if let Some(eternal) = state.eternal_v1.as_ref() {
+            let vintage = &eternal.vintage;
+            if (!vintage.karn_animated.is_empty() || !vintage.robots.is_empty())
+                && state
+                    .objects
+                    .try_get(object)
+                    .is_some_and(|live| live.zone == Zone::Battlefield)
+            {
+                let live = state.objects.get(object);
+                let link = ObjectLinkV4 {
+                    object,
+                    zone_change_count: live.zone_change_count,
+                };
+                if vintage.karn_animated.iter().any(|(host, _)| *host == link)
+                    || vintage.robots.contains(&link)
+                {
+                    return Some(true);
+                }
+            }
+        }
+    }
     // Lion Sash isn't a creature while attached (wave E8a).
     if let Some(answer) =
         crate::eternal_legacy_e8a_v1::statics::has_type_override(state, object, card_type)

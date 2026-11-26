@@ -2049,18 +2049,158 @@ fn impossible_equip_preserves_existing_attachment_cr_701_3b() {
     assert_eq!(state.objects.get(host_a).attachments, [jitte]);
     assert!(state.objects.get(host_b).attachments.is_empty());
 
-    // Equip targeting the creature it is already attached to does nothing.
-    activate(&mut state, jitte, 3, &[Target::Object(host_a)]);
+    // Untargeted attach with an existing attachment (CR 701.3b): P1's Umezawa's
+    // Jitte is attached to P1's Elvish Mystic. P0 casts kicked Thieving Skydiver
+    // targeting Jitte, then gives Skydiver protection from colorless while
+    // SkydiverEtbV1 is on the stack. SkydiverEtbV1's target (Jitte) stays legal,
+    // P0 gains control of Jitte, can_attach_equipment_to_host rejects Skydiver,
+    // and Jitte remains attached to P1's Elvish Mystic.
+    let mut state = plains();
+    let opp_jitte = put(&mut state, P1, "Umezawa's Jitte", Zone::Battlefield);
+    let opp_host = put(&mut state, P1, "Elvish Mystic", Zone::Battlefield);
+    state.active_player = P1;
+    state.priority_player = P1;
+    pool(&mut state, P1, &[], 2);
+    activate(&mut state, opp_jitte, 3, &[Target::Object(opp_host)]);
     settled(&mut state);
     assert_eq!(
         state
             .objects
-            .get(jitte)
+            .get(opp_jitte)
             .v4
             .attached_to
             .map(|link| link.object),
-        Some(host_a)
+        Some(opp_host)
     );
+    state.active_player = P0;
+    state.priority_player = P0;
+    let giver = put(&mut state, P0, "Giver of Runes", Zone::Battlefield);
+    let skydiver = put(&mut state, P0, "Thieving Skydiver", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, skydiver, &[]);
+    run_until(
+        &mut state,
+        |s| zone(s, skydiver) == Zone::Battlefield && !s.stack.is_empty(),
+        |_, decision| match decision {
+            Decision::ChooseKicker { .. } => Some(Action::ChooseKicker(true)),
+            Decision::ChooseEffectOption { .. } => Some(Action::ChooseEffectOption(1)),
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(opp_jitte))),
+            _ => None,
+        },
+    );
+    activate(&mut state, giver, 0, &[Target::Object(skydiver)]);
+    settle_option(&mut state, 5); // protection from colorless
+    assert_eq!(state.objects.get(opp_jitte).controller, P0);
+    assert_eq!(
+        state
+            .objects
+            .get(opp_jitte)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(opp_host),
+        "CR 701.3b: impossible untargeted Skydiver attach must preserve Jitte's existing attachment"
+    );
+    assert_eq!(state.objects.get(opp_host).attachments, [opp_jitte]);
+    assert!(state.objects.get(skydiver).attachments.is_empty());
+}
+
+#[test]
+fn karn_animated_attached_lion_sash_and_copy_detach_and_lose_buff() {
+    // 1. Plain Lion Sash with a +1/+1 counter attached via Reconfigure to Elvish
+    //    Mystic, then animated by Karn +1: CR 613.4/613.7 + 704.5n must make it
+    //    a creature, unattach it, and remove the +1/+1 host buff.
+    let mut state = plains();
+    let sash = put(&mut state, P0, "Lion Sash", Zone::Battlefield);
+    state.objects.get_mut(sash).counters.plus1_plus1 = 1;
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    pool(&mut state, P0, &[], 6);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, sash, 1, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(sash)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host)
+    );
+    assert_eq!(
+        (
+            engine::effective_power(&state, host),
+            engine::effective_toughness(&state, host),
+        ),
+        (2, 2)
+    );
+    activate(&mut state, karn, 0, &[Target::Object(sash)]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(sash).v4.attached_to,
+        None,
+        "CR 704.5n: Karn-animated attached Lion Sash must detach"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert_eq!(
+        (
+            engine::effective_power(&state, host),
+            engine::effective_toughness(&state, host),
+        ),
+        (1, 1),
+        "host must lose Lion Sash's +1/+1 buff after Karn detaches it"
+    );
+
+    // 2. Absorbing Man copying Lion Sash (with a +1/+1 counter) attached via
+    //    Reconfigure, then animated by Karn +1: must likewise detach and drop buff.
+    let mut state = plains();
+    let ab_man = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+    state.objects.get_mut(ab_man).counters.plus1_plus1 = 1;
+    let bf_sash = put(&mut state, P0, "Lion Sash", Zone::Battlefield);
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let turn_start = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > turn_start
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(bf_sash))),
+            _ => None,
+        },
+    );
+    assert_eq!(state.objects.get(ab_man).card_def, id("Lion Sash"));
+    pool(&mut state, P0, &[], 6);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, ab_man, 1, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(ab_man)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host)
+    );
+    assert_eq!(power_toughness(&state, host), (2, 2));
+    activate(&mut state, karn, 0, &[Target::Object(ab_man)]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(ab_man).v4.attached_to,
+        None,
+        "CR 704.5n: Karn-animated Absorbing Man copying attached Lion Sash must detach"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert_eq!(power_toughness(&state, host), (1, 1));
 }
 
 #[test]

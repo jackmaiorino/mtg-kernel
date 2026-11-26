@@ -24609,18 +24609,14 @@ fn execute_in_departure_scope_v1(
                         _ => None,
                     })
                     .expect("genuine token attachment choice emits its input");
-                // Untargeted attachment still respects CR 301.5c / 702.151b /
-                // 702.16d protection, while Shroud and the Equipment's present
-                // controller do not target-filter it.
+                // Untargeted attachment still respects CR 301.5c / 701.3b /
+                // 702.151b / 702.16d protection, resolving without moving when
+                // the selected host cannot legally be equipped.
                 if !crate::engine::can_attach_equipment_to_host(
                     state,
                     source.source,
                     selected.object,
                 ) {
-                    state.engine.halted = Some((
-                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                        ctx.source,
-                    ));
                     return;
                 }
                 let attachment_start = state.engine.event_history.len();
