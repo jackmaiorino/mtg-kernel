@@ -331,6 +331,25 @@ fn the_export_scores_in_game_decisions_as_the_flat_v7_policy_does() {
     assert_eq!(result["mismatches"], json!(0), "{result:#}");
     assert_eq!(result["v7_only_refusals"], json!(0), "{result:#}");
     assert_eq!(result["equal"], json!(true));
+    // Cast X announcements are Nyxborn Hydra's only, and every numeric-choice
+    // decision is one of them.
+    let cast_x = result["cast_x_decisions"].as_object().unwrap();
+    assert!(
+        cast_x.keys().all(|name| name == "Nyxborn Hydra"),
+        "{cast_x:?}"
+    );
+    let forced: u64 = cast_x
+        .values()
+        .map(|entry| entry["forced_zero_numeric"].as_u64().unwrap())
+        .sum();
+    assert_eq!(result["numeric_choice_decisions"], json!(forced));
+    eprintln!(
+        "equality: rows {} numeric {} cast_x {} kinds {}",
+        result["rows"],
+        result["numeric_choice_decisions"],
+        result["cast_x_decisions"],
+        result["action_kind_rows"]
+    );
     assert!(result["rows"].as_u64().unwrap() >= 120, "{result:#}");
     assert_eq!(
         result["model_state_sha256"],

@@ -447,6 +447,9 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
         (0u64, 0u64, 0u64, 0u64);
     let mut numeric_equal = 0u64;
     let mut numeric_cases = Vec::new();
+    // Every cast X announcement posed to a seat, by card: the decisions where
+    // a cast waits for its X and every row announces one.
+    let mut cast_x = std::collections::BTreeMap::<&'static str, [u64; 2]>::new();
     let mut kinds = std::collections::BTreeMap::<usize, u64>::new();
     let mut first_mismatch = Value::Null;
     let mut games = Vec::new();
@@ -594,6 +597,33 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
                     v7_driver = v7_policy.duplicate_loaded_v1()?;
                 }
             }
+            let pending_x = session
+                .game_state()
+                .engine
+                .pending_cast
+                .as_ref()
+                .filter(|pending| pending.selected_x_v59().is_none())
+                .map(|pending| pending.spell);
+            if let Some(spell) = pending_x {
+                let semantics = session
+                    .diagnostic_current_action_semantics()
+                    .unwrap_or_default();
+                if !semantics.is_empty()
+                    && semantics.iter().all(|semantic| {
+                        matches!(
+                            semantic,
+                            crate::rl::ActionSemanticV1::ChooseEffectOption { .. }
+                                | crate::rl::ActionSemanticV1::ChooseEffectNumber { .. }
+                        )
+                    })
+                {
+                    let card = session.game_state().objects.get(spell).card_def;
+                    let name = crate::card_def::CARD_DEFS[card as usize].name;
+                    let entry = cast_x.entry(name).or_default();
+                    entry[0] += 1;
+                    entry[1] += u64::from(numeric);
+                }
+            }
             let row = v4_choice["selected_row"]
                 .as_u64()
                 .ok_or("the V4 scorer chose no row")?;
@@ -621,6 +651,7 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
         "numeric_choice_decisions": numeric_choice,
         "numeric_choice_equal_to_trainer_path": numeric_equal,
         "numeric_choice_cases": numeric_cases,
+        "cast_x_decisions": cast_x.iter().map(|(name, [all, forced])| (name.to_string(), json!({"decisions": all, "forced_zero_numeric": forced}))).collect::<serde_json::Map<_, _>>(),
         "v7_only_refusals": v7_only_refusals,
         "action_kind_rows": kinds.iter().map(|(kind, count)| (kind.to_string(), json!(count))).collect::<serde_json::Map<_, _>>(),
         "first_mismatch": first_mismatch,
