@@ -25,8 +25,8 @@
 
 use super::arms::{Limits, Roles, Selection};
 use super::bank::{
-    act_plain, bank_roles, err, guide_ctx, guide_record, outcome, plain_logged, source_session,
-    walk, BankShared, SourceSpec,
+    act_plain, bank_roles, err, guide_ctx, guide_record, opening_session, outcome, plain_logged,
+    source_session, walk, BankShared, LondonOpening, SourceSpec,
 };
 use super::canon2::{KeyMode, KeyStats, Keyer, Step as KeyStep};
 use super::labels::{classify, spy_defs};
@@ -157,6 +157,8 @@ pub(super) struct GuideRun {
     pub(super) world: super::world::WorldMode,
     /// Flat-root searches (`BudgetExtras::flat_root`).
     pub(super) flat_root: bool,
+    /// The explicit search-count ceiling (`BudgetExtras::max_searches`).
+    pub(super) max_searches: Option<u64>,
 }
 
 impl GuideRun {
@@ -170,6 +172,7 @@ impl GuideRun {
         node_stats: false,
         world: super::world::WorldMode::Fresh,
         flat_root: false,
+        max_searches: None,
     };
 }
 
@@ -196,6 +199,12 @@ pub(super) struct BudgetExtras {
     /// set by the runner after parsing; `parse` leaves it false; collab
     /// LANES/searchpm-20261116, measurement only).
     pub(super) flat_root: bool,
+    /// The London v1 opening with per-seat windows (`S4A_OPENING`, set by
+    /// the runner after parsing; `parse` leaves it None, the keep-seven game).
+    pub(super) london: Option<LondonOpening>,
+    /// At most this many searches per game, each with its full allocation
+    /// (`S4A_MAX_SEARCHES`, set by the runner; `parse` leaves it None).
+    pub(super) max_searches: Option<u64>,
 }
 
 /// Row field naming the rollout opponent's label, present only when
@@ -287,6 +296,8 @@ impl BudgetExtras {
             rollout: None,
             world: super::world::WorldMode::Fresh,
             flat_root: false,
+            london: None,
+            max_searches: None,
         })
     }
 
@@ -314,6 +325,56 @@ pub(super) fn rule(
             budget => Step::Refresh(budget),
         },
     }
+}
+
+/// The explicit search-count ceiling (`S4A_MAX_SEARCHES`, EXECUTOR-SUPPORT.md
+/// 5.1 item 6): with `max` set, a decision starts no search once `run`
+/// searches have run, nor one granted less than its `full` allocation, so a
+/// game has at most `max` searches and no partial last one. The second
+/// result marks a refusal even if the transition budget is also exhausted.
+pub(super) fn search_ceiling(step: Step, max: Option<u64>, run: usize, full: u64) -> (Step, bool) {
+    match (step, max) {
+        (Step::Execute(_), _) | (_, None) => (step, false),
+        (_, Some(max)) if run as u64 >= max => (Step::Plain, true),
+        (Step::Refresh(budget), Some(_)) if budget < full => (Step::Plain, true),
+        _ => (step, false),
+    }
+}
+
+/// Chooser of a London pregame decision (keep or mulligan, bottoms): always
+/// the plain sampled policy, never a search (the V4 search root cannot take
+/// a pending London decision).
+pub(super) const PREGAME_CHOOSER: &str = "plain-pregame";
+
+/// The decision record of a plain draw, in the plain control's shape.
+fn plain_record(
+    s: &FastActorSessionV1,
+    d: &crate::rl_session::FastActorDecisionV1,
+    a: u32,
+    focal: PlayerId,
+    chooser: &str,
+    remaining: u64,
+) -> Value {
+    let defs = spy_defs();
+    let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+    let (mut cast_offered, mut own_offered, mut dr_offered) = (false, false, false);
+    for x in &sem {
+        let (cast, own, dr) = classify(x, s.game_state(), focal, &defs);
+        cast_offered |= cast;
+        own_offered |= own;
+        dr_offered |= dr;
+    }
+    let (cast_chosen, own_chosen, dr_chosen) =
+        sem.get(a as usize).map_or((false, false, false), |x| {
+            classify(x, s.game_state(), focal, &defs)
+        });
+    json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+        "substep":d.substep_index,"k":d.legal_action_count,"chooser":chooser,
+        "search":null,"lookup":null,"refreshed":null,"edge_backups":null,
+        "remaining_before":remaining,"remaining_after":remaining,
+        "spy_cast_offered":cast_offered,"spy_cast_chosen":cast_chosen,
+        "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
+        "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen})
 }
 
 /// The current tree and where the actual history stands in it; keys use the
@@ -774,16 +835,36 @@ fn guide_inner(
             if let Some(observer) = searches.observer.as_deref_mut() {
                 observer.before(&s, d);
             }
-            let a = if acting(&d) == focal && d.legal_action_count >= 2 {
+            let a = if acting(&d) == focal
+                && d.legal_action_count >= 2
+                && s.pauper_london_pending_v1()
+            {
+                // London pregame: a plain draw from the focal stream, as in
+                // the plain control; the initial search waits for the first
+                // in-game focal choice. Never true for a keep-seven game.
+                let a = act_plain(live_focal, &s, &d, &mut c)?;
+                let remaining = allocation.total.saturating_sub(searches.used);
+                decisions.push(plain_record(&s, &d, a, focal, PREGAME_CHOOSER, remaining));
+                super::play::observe(suffix.as_mut(), &s, a, focal, &defs);
+                a
+            } else if acting(&d) == focal && d.legal_action_count >= 2 {
                 let remaining_before = allocation.total.saturating_sub(searches.used);
                 let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
                 let mut refreshed = None;
-                let step = if run.opening && searches.records.is_empty() {
+                let initial = run.opening && searches.records.is_empty();
+                let step = if initial {
                     // The initial search: min(initial allocation, ceiling).
                     Step::Refresh(allocation.anchor.min(allocation.total))
                 } else {
                     rule(lookup, allocation, searches.used, false)
                 };
+                let full = if initial {
+                    allocation.anchor
+                } else {
+                    allocation.refresh
+                };
+                let (step, ceiling_hit) =
+                    search_ceiling(step, run.max_searches, searches.records.len(), full);
                 if let Step::Refresh(budget) = step {
                     let reason = if searches.records.is_empty() {
                         "initial"
@@ -942,6 +1023,10 @@ fn guide_inner(
                     decisions.last_mut().expect("just recorded decision")["reuse_witness"] =
                         witness;
                 }
+                if ceiling_hit {
+                    decisions.last_mut().expect("just recorded decision")["search_ceiling"] =
+                        json!(true);
+                }
                 if let Some(stats) = node_stats {
                     decisions.last_mut().expect("just recorded decision")["node_stats"] = stats;
                 }
@@ -1029,6 +1114,10 @@ fn guide_inner(
             "sequence":suffix.as_ref().map(|x| x.json()),"real_transitions":meter.spent,
             "wall":started.elapsed().as_secs_f64()});
     run.reuse_witnesses.annotate(&mut game);
+    // Only a London session has an opening record.
+    if let Some(record) = s.pauper_opening_record_v1() {
+        game["opening_record"] = json!(record);
+    }
     Ok((game, kept))
 }
 
@@ -1102,7 +1191,11 @@ pub(super) fn budget_case_with_executor(
         Some(r) if r < sh.opponents.len() && r < sh.labels.len() => r,
         Some(r) => return Err(format!("rollout opponent index {r} is out of range")),
     };
-    let opening = source_session(&sh.spec, src)?;
+    let cpu = extras
+        .london
+        .map(|_| super::process_cpu::seconds())
+        .transpose()?;
+    let opening = opening_session(&sh.spec, src, extras.london)?;
     let allocation = extras.allocation(total);
     let (rec, _) = guide(
         sh,
@@ -1124,6 +1217,7 @@ pub(super) fn budget_case_with_executor(
             node_stats: extras.node_stats,
             world: extras.world,
             flat_root: extras.flat_root,
+            max_searches: extras.max_searches,
         },
     )?;
     let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -1150,6 +1244,15 @@ pub(super) fn budget_case_with_executor(
     if let Some(m) = bestline {
         row["backup"] = json!(bestline_rule(m));
     }
+    if let Some(max) = extras.max_searches {
+        row["max_searches"] = json!(max);
+    }
+    if let Some(london) = extras.london {
+        london.annotate(&mut row);
+    }
+    if let Some(cpu0) = cpu {
+        row["cpu"] = json!(super::process_cpu::seconds()? - cpu0);
+    }
     Ok(row)
 }
 
@@ -1157,12 +1260,27 @@ pub(super) fn budget_case_with_executor(
 /// roles use exactly the search arm's opening and guide sampling streams.
 /// No search roles, tree, initial search or refresh are constructed here.
 /// The terminal replay still constructs the existing diagnostic replay keys.
+#[cfg(test)]
 pub(super) fn budget_plain_case(
     sh: &BankShared,
     policy: &FrozenPlayPolicyV1,
     src: &SourceSpec,
     binding: &str,
 ) -> Result<Value, String> {
+    budget_plain_case_opening(sh, policy, src, binding, None)
+}
+
+/// [`budget_plain_case`] from an opt-in London opening (`None` is that
+/// function exactly). London pregame decisions are recorded with
+/// [`PREGAME_CHOOSER`]; the row gains the opening fields and process CPU.
+pub(super) fn budget_plain_case_opening(
+    sh: &BankShared,
+    policy: &FrozenPlayPolicyV1,
+    src: &SourceSpec,
+    binding: &str,
+    london: Option<LondonOpening>,
+) -> Result<Value, String> {
+    let cpu = london.map(|_| super::process_cpu::seconds()).transpose()?;
     let started = Instant::now();
     let opp = sh
         .labels
@@ -1174,7 +1292,7 @@ pub(super) fn budget_plain_case(
     live_focal.reset_sampling_v1(src.guide_policy_seeds);
     live_opp.reset_sampling_v1(src.guide_policy_seeds);
     let focal = PlayerId(src.seat);
-    let opening = source_session(&sh.spec, src)?;
+    let opening = opening_session(&sh.spec, src, london)?;
     let mut s = opening.clone();
     let defs = spy_defs();
     let mut suffix = super::labels::Suffix::new(true);
@@ -1203,7 +1321,8 @@ pub(super) fn budget_plain_case(
             super::play::observe(Some(&mut suffix), &s, a, focal, &defs);
             decisions.push(
                 json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
-                "substep":d.substep_index,"k":d.legal_action_count,"chooser":"plain",
+                "substep":d.substep_index,"k":d.legal_action_count,
+                "chooser":if s.pauper_london_pending_v1() { PREGAME_CHOOSER } else { "plain" },
                 "search":null,"lookup":null,"refreshed":null,"edge_backups":null,
                 "remaining_before":0,"remaining_after":0,
                 "spy_cast_offered":cast_offered,"spy_cast_chosen":cast_chosen,
@@ -1217,8 +1336,7 @@ pub(super) fn budget_plain_case(
     let end = outcome(&s, focal);
     let valid = end.is_some_and(|e| e != "nonnatural");
     let (starts, _) = guide_record(&opening, focal, &actions)?;
-    Ok(
-        json!({"kind":"budget_game","schema":"search-total-budget-v1/game","arm":"plain-v1",
+    let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","arm":"plain-v1",
         "id":src.id,"lineage":sh.spec.lineage,"own":src.own,"other":src.other,
         "seat":src.seat,"opp":src.opp,"seed":src.seed,"starting_player":src.starting_player,
         "live_policy_seeds":src.guide_policy_seeds,"search_root":src.search_root,
@@ -1228,8 +1346,17 @@ pub(super) fn budget_plain_case(
             "searches":[],"transitions_used":0,"key_mode":null,
             "search_keys":KeyStats::default().json(),"execution_keys":KeyStats::default().json(),
             "sequence":suffix.json(),"real_transitions":meter.spent,"wall":started.elapsed().as_secs_f64()},
-        "wall":started.elapsed().as_secs_f64()}),
-    )
+        "wall":started.elapsed().as_secs_f64()});
+    if let Some(london) = london {
+        london.annotate(&mut row);
+        if let Some(record) = s.pauper_opening_record_v1() {
+            row["game"]["opening_record"] = json!(record);
+        }
+    }
+    if let Some(cpu0) = cpu {
+        row["cpu"] = json!(super::process_cpu::seconds()? - cpu0);
+    }
+    Ok(row)
 }
 
 /// Replay check of one recorded budget game (analysis only): rebuilds the
@@ -1241,9 +1368,19 @@ pub(super) fn budget_replay(
     src: &SourceSpec,
     actions: &[u32],
 ) -> Result<Value, String> {
+    budget_replay_opening(sh, src, actions, None)
+}
+
+/// [`budget_replay`] from an opt-in London opening (`None` is that function).
+pub(super) fn budget_replay_opening(
+    sh: &BankShared,
+    src: &SourceSpec,
+    actions: &[u32],
+    london: Option<LondonOpening>,
+) -> Result<Value, String> {
     let focal = PlayerId(src.seat);
     let defs = spy_defs();
-    let mut s = source_session(&sh.spec, src)?;
+    let mut s = opening_session(&sh.spec, src, london)?;
     let mut suffix = super::labels::Suffix::new(true);
     let mut meter = Meter::new(u64::MAX);
     for &a in actions {
@@ -1254,11 +1391,85 @@ pub(super) fn budget_replay(
         apply(&mut s, &d, a, &mut meter, focal, Some(&mut suffix), &defs).map_err(err)?;
     }
     // Focal physical decision starts (with replay identities) for reset cuts.
-    let (starts, witnesses) = guide_record(&source_session(&sh.spec, src)?, focal, actions)?;
+    let (starts, witnesses) =
+        guide_record(&opening_session(&sh.spec, src, london)?, focal, actions)?;
     Ok(
         json!({"id":src.id,"end":outcome(&s, focal),"sequence":suffix.json(),"actions":actions.len(),
         "starts":starts,"witnesses":witnesses}),
     )
+}
+
+/// The parity replay (`BUDGET_ARM=replay-v1`; the declaration's parity gate,
+/// draft 2 section 13 check 3): rebuilds the case's opening, applies an
+/// external action list (one trainer episode) for both seats, and records
+/// at every decision the acting seat, the observation and menu digests
+/// (`decision_replay_key`) and, with two or more legal actions, the acting
+/// seat's frozen policy's logit and value bits; then the terminal. Nothing
+/// is sampled or searched. A failed replay keeps the decisions recorded
+/// before the error and the terminal if reached.
+pub(super) fn budget_parity_replay(
+    sh: &BankShared,
+    policy: &FrozenPlayPolicyV1,
+    src: &SourceSpec,
+    actions: &[u32],
+    binding: &str,
+    london: Option<LondonOpening>,
+) -> Result<Value, String> {
+    let opp = sh
+        .labels
+        .iter()
+        .position(|l| *l == src.opp)
+        .ok_or("unknown guide opponent")?;
+    let focal = PlayerId(src.seat);
+    let mut scorers = [
+        policy.fork_for_collection_v3()?,
+        sh.opponents[opp].fork_for_collection_v3()?,
+    ];
+    let mut s = opening_session(&sh.spec, src, london)?;
+    let mut decisions = Vec::with_capacity(actions.len());
+    let execution = (|| -> Result<(), String> {
+        for (i, &a) in actions.iter().enumerate() {
+            let d = decision(&s).ok_or_else(|| format!("action {i} follows the terminal"))?;
+            let (obs, menu) = super::decision_replay_key(&s, d)?;
+            let mut record = json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+                "substep":d.substep_index,"acting":acting(&d).0,"k":d.legal_action_count,
+                "action":a,"pregame":s.pauper_london_pending_v1(),"obs_hash":obs,"menu_hash":menu});
+            if d.legal_action_count >= 2 {
+                let scorer = &mut scorers[usize::from(acting(&d) != focal)];
+                let scores = scorer.score_fast_session_v1(&s)?;
+                record["logit_bits"] = json!(scores
+                    .logits
+                    .iter()
+                    .map(|x| x.to_bits())
+                    .collect::<Vec<u32>>());
+                record["value_bits"] = json!(scores.value.to_bits());
+            }
+            decisions.push(record);
+            s.step(d.episode_id, d.step, a)
+                .map_err(|e| format!("action {i} ({a}) at step {}: {e:?}", d.step))?;
+        }
+        if decision(&s).is_some() {
+            return Err("the replayed actions end before the terminal".into());
+        }
+        Ok(())
+    })();
+    let mut row = json!({"kind":"budget_parity_replay","schema":"s4a-budget-parity-replay-v1/game",
+        "arm":"replay-v1","id":src.id,"lineage":sh.spec.lineage,"own":src.own,"other":src.other,
+        "seat":src.seat,"opp":src.opp,"seed":src.seed,"starting_player":src.starting_player,
+        "bank_binding_sha256":binding,"actions":actions.len(),"decisions":decisions,
+        "opening_record":s.pauper_opening_record_v1()});
+    if let crate::rl_session::FastActorResponseV1::Terminal(t) = s.current_response() {
+        row["end"] = json!(outcome(&s, focal));
+        row["terminal"] = json!({"winner":t.winner,"classification":t.terminal_classification});
+    }
+    if let Err(error) = execution {
+        row["kind"] = json!("error");
+        row["error"] = json!(error);
+    }
+    if let Some(london) = london {
+        london.annotate(&mut row);
+    }
+    Ok(row)
 }
 
 /// Rebuilds the bank's anchor for `src` and plays the requested arms.
@@ -1797,6 +2008,7 @@ pub(super) mod tests {
                             node_stats: false,
                             world: super::super::world::WorldMode::Fresh,
                             flat_root: false,
+                            max_searches: None,
                         },
                     )
                     .unwrap()

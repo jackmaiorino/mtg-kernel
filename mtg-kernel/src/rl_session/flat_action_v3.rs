@@ -1701,6 +1701,9 @@ mod tests {
                 paid_cost_refs: Vec::new(),
             },
         );
+        // Only the leading group is ever marked: Hunter's trigger, now behind
+        // the filler, is marked again when it leads.
+        state.engine.pending_triggers[1].placement_ordered = false;
         let decision = crate::engine::advance_until_decision(&mut state);
         assert!(
             matches!(&decision, Decision::ChooseTargets { spell, .. } if *spell == hunter),

@@ -233,6 +233,14 @@ fn parse_entries(raw: &[u8]) -> Result<Vec<Entry<'_>>, PodRunnerError> {
     Ok(entries)
 }
 
+/// Decode structured D0.3b entries after checking sequence, framing and byte prefixes.
+pub fn shakedown_entry_values(raw: &[u8]) -> Result<Vec<Value>, PodRunnerError> {
+    Ok(parse_entries(raw)?
+        .into_iter()
+        .map(|entry| entry.value)
+        .collect())
+}
+
 fn git_command(repo: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(repo).args(args);

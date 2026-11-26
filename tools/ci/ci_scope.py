@@ -1,16 +1,31 @@
 """Which checks a CI run needs: the one table behind the workflow's scoped checks and docs/CI-SCOPES.md.
 
 A ready pull request whose files all map to one scope runs only that scope's checks; files of more than one
-scope, or any file no rule names, run the whole pull request set. Docs files never decide. The full matrix
-still runs on every merge (main, tags, release lines) as a monitor, so a scope only decides what gates a merge
-(collab HANDOFFS/20261117/COORD.md, "Standing rule, merges (2026-11-21 07:27 ET)").
+scope, or any file no rule names, run the whole pull request set. Docs files never decide. A change that includes
+website files runs exactly what the same change without the website files runs: website files alone, with or
+without docs, schedule no Rust or Python job (they are the viewer scope; viewer/README.md alone is docs, because
+the markdown rule comes first, which runs the same). So website files plus files that are not Rust-relevant schedule
+no Rust job (python/mtg_kernel_rl/** and the named Rust runner files in python/tools are Rust-relevant), website plus
+a trainer file runs the trainer scope, plus a Limited binary the rules-limited scope, and plus viewer.yml the
+workflow scope (nothing in ci.yml). Before the viewer scope each of those ran the whole Rust set only because the
+website path had no scope; the reductions are intended and equal what the other files alone already got. The full
+matrix still runs on every push to main and every tag (and on a dispatch without `scope`, the way release lines are
+checked) as a monitor, so a scope only decides what gates a merge (collab HANDOFFS/20261117/COORD.md, "Standing
+rule, merges (2026-11-21 07:27 ET)"). One exception: a dispatch without inputs at the head of a ready pull request
+runs only the Windows complement when that pull request's own run at the same commit says (its ci-plan job) and
+shows that it scheduled the whole pull request set: every Linux Rust group, and the Python build on both systems
+unless its paths were not Python-relevant (tools/ci/pr_lookup.py pr-run); otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out.
+A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. An unlabelled Rust-only pull request runs no Python before
+the merge (ci:full schedules Python).
+`full_matrix=true` skips that lookup; `fallback_scope` and an explicit `scope` input take precedence over it.
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE (the group set chosen before), INPUT_SCOPE,
                               LABELS (JSON list), and NUL-delimited paths on stdin for pull requests;
                               writes checks=<name> to GITHUB_OUTPUT
                               and a summary (with the bit-identity rows for trainer) to GITHUB_STEP_SUMMARY.
-  ci_scope.py file-scope      print the scope of the JSON pages from the GitHub pull request files API on stdin.
+  ci_scope.py relevance       detect-changes step: NUL-delimited pull request paths on stdin and FULL_LABEL;
+                              writes python_relevant and rust_relevant to GITHUB_OUTPUT.
   ci_scope.py commands SCOPE  print the shell commands a scope's local run executes, one per line.
   ci_scope.py trainer-filters [--shard N]  print the trainer scope's library test filters (or shard N's).
   ci_scope.py markdown        print docs/CI-SCOPES.md.
@@ -35,6 +50,11 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
     # modules); those run the Python set, and w5-tools.yml still runs on them by its own paths.
     (("tools/w5/*", ".github/workflows/w5-tools.yml"), "w5-tools"),
     ((".github/workflows/*",), "workflow"),
+    # The website (viewer.yml builds, tests and publishes it). No crate source, Rust test, Python test or other
+    # workflow reads a file under viewer/ (tools/ci/tests/test_ci_scope.py pins the files that name it);
+    # python/tools/viewer_* and python/tests/test_viewer_* are Python files and keep the Python set. Neutral
+    # like docs: with other files, those files decide alone.
+    (("viewer/*",), "viewer"),
     # Tool directories whose tests all live beside them (no python/tests or python/tools module reads them);
     # every other tools/** directory has tests in python/tests and runs the Python set.
     (tuple(f"tools/{name}/*" for name in TOOLS_DIRS), "tools"),
@@ -57,7 +77,8 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
     (("mtg-kernel/src/bin/kernel_limited_training_v1.rs",), "pr"),
     (("mtg-kernel/src/bin/kernel_limited_*",), "rules-limited"),
     # Python files that change which Rust tests run stay with the whole set.
-    (("python/tools/run_rust_workspace_tests.py", "python/tools/run_rust_lib_filters.py",
+    (("python/tools/run_rust_workspace_tests.py", "python/tools/rust_workspace_lib_plan.py",
+      "python/tools/rust_workspace_lib_seconds.json", "python/tools/run_rust_lib_filters.py",
       "python/tools/rust_case_seconds.json", "python/tools/rust_case_timeout_seconds.json",
       "python/tools/rust_limited_only_known_failures.json", "python/tools/run_rust_integration_tests.py",
       "python/tools/rust_integration_module_seconds.json", "python/tools/check_rust_integration_inventory.py",
@@ -65,7 +86,7 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
       "python/tools/limited_*_session_v*.py"), "pr"),
     (("python/tests/*", "python/tools/*"), "python"),
 ]
-NEUTRAL = {"docs"}
+NEUTRAL = {"docs", "viewer"}
 # What each scope runs. `jobs` are ci.yml job ids; the whole-set jobs gate themselves by scope as before.
 SCOPES: dict[str, dict] = {
     "pr": {"jobs": ["the whole pull request set"],
@@ -84,6 +105,9 @@ SCOPES: dict[str, dict] = {
                       "summary": "formatting and Clippy, the shared Limited build and every Limited group, Linux "
                                  "(only Limited process binaries map here; Limited library code is engine code)"},
     "workflow": {"jobs": [], "summary": "nothing in ci.yml: the changed workflow runs itself on its own paths"},
+    "viewer": {"jobs": [], "summary": "no Rust or Python job (only detect-changes and the ci-plan job run): viewer.yml "
+                                      "builds and tests the "
+                                      "website on these paths (and publishes it from main)"},
     "docs": {"jobs": [], "summary": "nothing"},
 }
 SCOPED = [name for name in SCOPES if name != "pr"]
@@ -273,6 +297,48 @@ TOOLS_COMMANDS = [f"uv run --no-sync python -m unittest discover -v -s tools/{na
 TOOLS_COMMANDS = [c.replace("/ -p", " -p") for c in TOOLS_COMMANDS]
 
 
+# Which job families a pull request's paths make relevant (the only copy: detect-changes' "Classify changed
+# paths" step calls relevance()). Python jobs care about python sources, tools
+# and tests, the data artifacts they validate, workflow changes and the pinned interpreter and lock config.
+# Top-level tools/** is Python only; python/tests imports several of its packages, and the lease adapter's tests
+# run in the Python job's lease guard step.
+PYTHON_RELEVANT = ["python/*", "data/*", ".github/*", "uv.lock", "pyproject.toml", ".python-version", "tools/*"]
+# Rust jobs run unless a file is provably outside the crate's input surface (first match decides; a path no rule
+# names is relevant). python/mtg_kernel_rl/** stays relevant (embedded authorities: features.py and twins); data/**
+# stays relevant (include_str goldens). Native CI runners are also relevant because they determine which tests
+# execute. Other non-embedded python, top-level tools/** (Python and PowerShell scripts no crate source or test
+# reads), docs and markdown are irrelevant. build.rs still hashes every tracked file into its provenance digest; no
+# test pins that value. viewer/** (the website, the viewer scope, neutral like docs) is irrelevant too: no crate
+# source, Rust or Python test, or other workflow reads a file there (tools/ci/tests/test_ci_scope.py pins the
+# files that name viewer/), and viewer.yml builds and tests it on those paths.
+RUST_RELEVANT_RULES: list[tuple[tuple[str, ...], bool]] = [
+    (("python/tools/run_rust_workspace_tests.py", "python/tools/rust_workspace_lib_plan.py",
+      "python/tools/rust_workspace_lib_seconds.json", "python/tools/run_rust_lib_filters.py",
+      "python/tools/rust_case_seconds.json", "python/tools/rust_case_timeout_seconds.json",
+      "python/tools/rust_limited_only_known_failures.json", "python/tools/run_rust_integration_tests.py",
+      "python/tools/rust_integration_module_seconds.json", "python/tools/check_rust_integration_inventory.py",
+      "python/tools/check_rust_integration_parts.py", "python/tools/limited_muldrotha_session_v12.py",
+      "python/tools/limited_tinybones_session_v13.py", "python/tools/limited_liliana_session_v14.py",
+      "python/tools/limited_chandra_session_v15.py", "python/tools/limited_kaito_session_v16.py"), True),
+    (("python/tests/*", "python/tools/*", "tools/*", "docs/*", "*.md", "viewer/*"), False),
+]
+
+
+def relevance(paths: list[str], full_label: bool = False) -> tuple[bool, bool]:
+    """(python_relevant, rust_relevant) of a pull request's paths. ci:full asks for the whole pull request set:
+    every Rust and Python job, whatever the paths. No paths (a diff that came back empty) fails closed: both.
+    Patterns match like shell case patterns (`*` crosses `/`)."""
+    if full_label or not paths:
+        return True, True
+    python = rust = False
+    for path in paths:
+        python = python or any(fnmatch.fnmatchcase(path, pattern) for pattern in PYTHON_RELEVANT)
+        rule = next((value for patterns, value in RUST_RELEVANT_RULES
+                     if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)), True)
+        rust = rust or rule
+    return python, rust
+
+
 def scope_of(path: str) -> str | None:
     for patterns, scope in PATH_RULES:
         if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns):
@@ -281,39 +347,20 @@ def scope_of(path: str) -> str | None:
 
 
 def scope_of_files(paths: list[str]) -> str:
-    """One scope for a change: docs files never decide; one remaining scope wins; none means docs; anything
-    else (mixed, shared or unmapped) is the whole pull request set."""
-    found = set()
+    """One scope for a change: docs and website files never decide; one remaining scope wins; none means viewer
+    if a website file changed, else docs; anything else (mixed, shared or unmapped) is the whole pull request set.
+    So website files plus other files classify exactly as the other files alone."""
+    found, neutral = set(), set()
     for path in paths:
         scope = scope_of(path)
-        if scope not in NEUTRAL:
-            found.add(scope)
+        (neutral if scope in NEUTRAL else found).add(scope)
     if not found:
-        return "docs"
+        return "viewer" if "viewer" in neutral else "docs"
     if len(found) == 1:
         (only,) = found
         if only in SCOPES and only != "pr":
             return only
     return "pr"
-
-
-def pull_request_paths(pages: object) -> list[str]:
-    # GitHub's REST OpenAPI diff-entry.status enum.
-    statuses = ("added", "removed", "modified", "renamed", "copied", "changed", "unchanged")
-    if not isinstance(pages, list) or not pages or any(not isinstance(page, list) for page in pages):
-        raise ValueError("expected an array of file pages")
-    paths = []
-    for page in pages:
-        for entry in page:
-            if not isinstance(entry, dict) or entry.get("status") not in statuses:
-                raise ValueError("expected a changed-file object with a recognized status")
-            names = [entry.get("filename")]
-            if entry["status"] == "renamed" or "previous_filename" in entry:
-                names.append(entry.get("previous_filename"))
-            if any(not isinstance(name, str) or not name or "\0" in name for name in names):
-                raise ValueError("expected a nonempty filename for each changed path")
-            paths.extend(names)
-    return paths
 
 
 def choose(event: str, group_set: str, input_scope: str, labels: list[str], files: list[str]) -> str:
@@ -323,7 +370,8 @@ def choose(event: str, group_set: str, input_scope: str, labels: list[str], file
         return input_scope if input_scope in DISPATCH_SCOPES else "all"
     if event != "pull_request" or group_set != "pr":
         return "all"
-    if "ci:full" in labels:
+    if "ci:full" in labels or not files:
+        # An empty file list (a diff that came back empty) fails closed, like relevance().
         return "all"
     # Labels never narrow a run: paths decide, ci:full widens.
     scope = scope_of_files(files)
@@ -344,13 +392,27 @@ def markdown() -> str:
            "Generated by `python tools/ci/ci_scope.py markdown` from `tools/ci/ci_scope.py`; "
            "`tools/ci/tests/test_ci_scope.py` fails if this file and the table differ.", "",
            "A ready pull request whose files all map to one scope runs only that scope's checks. Files of more than "
-           "one scope, a shared file, or a file no rule names run the whole pull request set. Docs files never "
-           "decide. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor: pushes to a "
-           "line share one concurrency group (one running, one waiting, a newer merge replaces the waiting one), and "
-           "a red monitor's report names every merge it covers. `ci:full` on a pull request forces the whole pull "
-           "request set from the next push, reopen or ready-for-review event (adding the label starts no run); "
-           "labels never narrow a run. `gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one "
-           "scope on any ref.", "",
+           "one scope, a shared file, or a file no rule names run the whole pull request set. Docs files "
+           "never decide. A change that includes website files runs exactly what the same change without the "
+           "website files runs: website files alone, with or without docs, schedule no Rust or Python job (`viewer`; "
+           "`viewer/README.md` alone is `docs`, because the markdown rule comes first, which runs the same). So "
+           "website files plus files that are not Rust-relevant schedule no Rust job (`python/mtg_kernel_rl/**` and "
+           "the named Rust runner files in `python/tools` are Rust-relevant), website plus a trainer file runs the "
+           "trainer scope, plus a Limited binary the rules-limited scope, and plus `viewer.yml` the workflow scope. "
+           "Before the viewer scope each of those ran the whole Rust set only because the website path had no scope; "
+           "the reductions are intended and equal what the other files alone already got. Main pushes, tags and "
+           "dispatches without `scope` run the full matrix as a monitor (one exception: a dispatch without inputs at "
+           "the head of a ready pull request runs only the Windows complement when that pull request's own run at "
+           "the same commit says (its ci-plan job) and shows that it scheduled the whole pull request set, every "
+           "Linux Rust group and, unless its paths were not Python-relevant, the Python build on both systems; "
+           "otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out. A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. An unlabelled Rust-only pull request runs no "
+           "Python before the merge (`ci:full` schedules Python); `full_matrix=true` skips that lookup, and `fallback_scope` or an explicit `scope` "
+           "input takes precedence over it): pushes to a line share one concurrency group (one running, one "
+           "waiting, a newer merge replaces the waiting one), and a red monitor's report names every merge it "
+           "covers. `ci:full` on a pull request forces the whole pull request set (every Rust and Python job, "
+           "whatever the paths) from the next push, reopen or ready-for-review event (adding the label starts no "
+           "run); labels never narrow a run. `gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one scope on "
+           "any ref.", "",
            "## Path rules (first match decides)", "", "| paths | scope |", "|---|---|"]
     for patterns, scope in PATH_RULES:
         out.append(f"| {', '.join('`' + p + '`' for p in patterns)} | {scope} |")
@@ -400,13 +462,37 @@ def main(argv: list[str]) -> int:
             return 2
         print("\n".join(lines))
         return 0
-    if command == "file-scope":
-        try:
-            paths = pull_request_paths(json.load(sys.stdin.buffer))
-        except ValueError as exc:
-            print(f"Invalid pull request files response: {exc}", file=sys.stderr)
+    if command == "relevance" and len(argv) != 2:
+        print(f"{command} takes no arguments", file=sys.stderr)
+        return 2
+    if command == "relevance":
+        # Both outputs or neither: every Rust job reads a missing rust_relevant as "not relevant" and would skip
+        # while this step stayed green. So any error exits non-zero (the detect job goes red), and the two lines
+        # are written in ONE write, as the last act, after the whole verdict is computed (a test fails if any
+        # statement follows the write). A partial append is still possible if the write or the flush at close
+        # fails after some bytes (a full disk), leaving python_relevant without rust_relevant; but that failure
+        # raises, the step exits non-zero, detect-changes fails, and every job that needs it is skipped while the
+        # run is red: no green run can read the partial state as "not relevant". A temporary file would not help:
+        # publishing it into GITHUB_OUTPUT is again an append that can fail midway.
+        output = os.environ.get("GITHUB_OUTPUT")
+        if not output:
+            print("GITHUB_OUTPUT is not set: refusing to classify without a place for both outputs", file=sys.stderr)
             return 2
-        print(scope_of_files(paths))
+        raw = sys.stdin.buffer.read().split(b"\0")
+        files = [path.decode("utf-8", errors="surrogateescape") for path in raw if path]
+        print("changed files:")
+        for path in files:
+            print(f"  {path!r}")
+        full_label = os.environ.get("FULL_LABEL") == "true"
+        python, rust = relevance(files, full_label)
+        if full_label:
+            print("ci:full: every Rust and Python job runs")
+        elif not files:
+            print("no changed files listed: every Rust and Python job runs (fail closed)")
+        text = f"python_relevant={str(python).lower()}\nrust_relevant={str(rust).lower()}\n"
+        print("verdict: " + text.replace("\n", " ").strip())
+        with open(output, "a", encoding="utf-8") as out:
+            out.write(text)
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")

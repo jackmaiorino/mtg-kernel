@@ -65,11 +65,19 @@ never changes what it means. It keeps its own records beside it, under
 
 Background jobs (`run --background` or Windows `adopt --background`) yield
 to both timed reservations and ordinary claims. Ordinary admission waits
-for complete suspension before using borrowed CPUs. Background tickets
-come after every ordinary ticket. OS --priority is independent of this
-allocation class; CI uses --background --priority idle. `adopt` watches a
-verified existing worker and all descendants until its job object empties.
+for complete suspension before using borrowed CPUs. Once a background or
+shared command exits, its remaining descendants drain on the CPUs they still
+need. Shared claims give back lent CPUs if their descendants can narrow.
+Timed reservations and acknowledged handoffs still take precedence, and new
+requests wait for CPUs the draining tree still holds. Background tickets come after
+every ordinary ticket. OS --priority is independent of this allocation class;
+CI uses --background --priority idle. `adopt` watches a verified existing worker
+and all descendants until its job object empties.
 Idle CI listeners do not need a claim.
+
+Rollout: switch all launchers on the host together, once there are no claim
+or queue records (running, suspended or waiting). Old and new launchers
+must never run together on the same host.
 
 Optional per-host config, <root>/<HOST>.slots/config.json:
   {"cores": "23-0", "keep_free": 0, "priority": "below_normal", "ci_floor": 0}
@@ -758,6 +766,14 @@ def live_tickets() -> list[dict]:
     return _live("queue-*.json")
 
 
+def _check_drain_rollout(claims: list[dict]) -> None:
+    for claim in claims:
+        if (claim.get("background") or claim.get("shared")) and "draining" not in claim:
+            raise Refused(f"legacy background or shared claim {claim.get('id', claim.get('path'))} "
+                          "lacks the draining field. "
+                          "Empty the host's claims and queue before switching all launchers.")
+
+
 def _core_list(value) -> list[int] | None:
     """A non-empty list of distinct non-negative ints, or None."""
     if (isinstance(value, list) and value and len(set(value)) == len(value)
@@ -766,14 +782,17 @@ def _core_list(value) -> list[int] | None:
     return None
 
 
-def held(claim: dict) -> list[int]:
-    """The cores a claim holds against new admissions. A shared claim holds its guaranteed cores and lends the rest
-    of its current cores; any other claim, or a shared record whose guarantee is malformed, holds all its cores."""
+def _guaranteed_cores(claim: dict) -> list[int]:
     if claim.get("shared") is True:
         guaranteed = _core_list(claim.get("guaranteed"))
         if guaranteed is not None and set(guaranteed) <= set(claim["cores"]):
             return guaranteed
     return claim["cores"]
+
+
+def held(claim: dict) -> list[int]:
+    """Draining claims stop lending their current cores to new admissions."""
+    return claim["cores"] if claim.get("draining") else _guaranteed_cores(claim)
 
 
 def lent(claim: dict) -> list[int]:
@@ -793,8 +812,8 @@ def available(config: dict, timed: dict, claims: list[dict], *, background: bool
               core_pool: list[int] | None = None, ci: bool | None = None) -> list[int]:
     """Cores a new claim may take now, in preference order. A shared claim's lent cores count as
     free: the new claim may take them, and the shared claim gives them back before the new claim's command starts.
-    `background` says whether background claims' cores count as used (a background request, or a backfill, which
-    never takes them); `ci` (default: the same) says whether the request is CI work that may use the CI floor."""
+    `background` says whether preemptible background cores count as used (a background request, or a backfill,
+    which never takes them); `ci` (default: the same) says whether the request is CI work that may use the CI floor."""
     ci = background if ci is None else ci
     if timed["held"] and timed["cores"] is None:
         return []
@@ -803,7 +822,7 @@ def available(config: dict, timed: dict, claims: list[dict], *, background: bool
     # The CI floor is for background (CI) claims only, which try it first; ordinary work never counts it as room.
     allowed = config["cores"] if ci else [core for core in config["cores"] if core not in floor]
     order = _preferred(allowed, floor) if ci else allowed
-    used = {core for claim in claims if background or not claim.get("background", False)
+    used = {core for claim in claims if background or not claim.get("background", False) or claim.get("draining")
             for core in held(claim)}
     room = len(allowed) - config["keep_free"] - len(used & set(allowed))
     free = [core for core in order if core not in blocked and core not in used
@@ -854,7 +873,9 @@ def conflicts(cores) -> bool:
 def claim_conflicts(cores, background: bool) -> bool:
     """Called under the admission mutex. Background work also yields to ordinary claims."""
     return conflicts(cores) or (background and any(
-        not claim.get("background", False) and set(claim["cores"]) & set(cores)
+        not claim.get("background", False) and set(cores).intersection(
+            _guaranteed_cores(claim) if claim.get("draining") and claim.get("state") == "suspended"
+            else claim["cores"])
         for claim in live_claims()))
 
 
@@ -879,10 +900,8 @@ def over_budget(config: dict, claims: list[dict]) -> int:
 
 
 def lending(claim: dict) -> bool:
-    """A running shared claim that lends cores (the only kind that must narrow for someone else). A suspended one
-    counts as not lending: its processes cannot run, and its runner narrows (give_back) before it resumes, in the
-    same mutex hold, so a claim may start on its lent cores without waiting for it."""
-    return claim.get("shared") is True and claim.get("state") != "suspended" and bool(lent(claim))
+    """Whether a running claim occupies more than its guarantee, including while its helpers drain."""
+    return claim.get("state") != "suspended" and len(_guaranteed_cores(claim)) < len(claim["cores"])
 
 
 def budget_pending(config: dict, claims: list[dict], claim_id: str) -> bool:
@@ -1463,6 +1482,8 @@ def _claim_record(base: dict, cores: list[int], priority: str, acquired_at: str,
     cores that no claim of any class runs on."""
     record = {**base, "cores": cores, "priority": priority, "state": "running", "acquired_at": acquired_at,
               "enqueued_at": enqueued_at, "queued_seconds": round(queued_seconds, 3)}
+    if base.get("background") or base.get("shared"):
+        record["draining"] = False
     took = sorted(set(cores) & {core for claim in claims for core in lent(claim)})
     if took:
         record["took_lent"] = took
@@ -1577,6 +1598,8 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                 # queue order or the claims unknown: no request starts while a queue file ahead of it is
                 # unreadable, and nothing backfills while any queue, claim or delay file is.
                 snap = _snapshot()
+                if snap is not None:
+                    _check_drain_rollout(snap["claims"])
                 tickets = [] if snap is None else snap["tickets"]
                 tickets.sort(key=lambda ticket: bool(ticket.get("background", False)))
                 if snap is None or any(name.startswith("queue-") and name < ticket.name
@@ -1724,18 +1747,74 @@ def _record_lends(claim: Path) -> bool:
     return record is None or _core_list(record.get("cores")) is None or bool(lent(record))
 
 
-def _set_state_locked(claim: Path, state: str) -> None:
+def _set_state_locked(claim: Path, state: str) -> bool:
     """Publish under the same mutex that protects timed admission and tree transitions."""
-    _update_claim_locked(claim, state=state)
+    return _update_claim_locked(claim, state=state)
 
 
-def _share_step(tree: "Tree", claim: Path, claim_id: str, share: dict, *, grow: bool) -> bool:
+def _acknowledge_suspension_locked(claim: Path, complete: bool, vacated: bool) -> bool:
+    if complete:
+        _set_state_locked(claim, "suspended")
+        # A failed read-back can still mean the write reached disk.
+        return True
+    return vacated
+
+
+def _resume_tree_locked(tree: "Tree", claim: Path) -> bool:
+    # Make the record busy before any process can resume. A partial resume is busy too.
+    state = "resuming" if tree.suspended else "running"
+    if not _set_state_locked(claim, state) or not tree.set_suspended(False):
+        return False
+    if state == "resuming":
+        _set_state_locked(claim, "running")
+    return True
+
+
+def _drain_conflict(tree: "Tree", claim: Path, claim_id: str, guard: list[int],
+                    background: bool, shared: bool, vacated: bool) -> bool:
+    """Stop lending the current footprint, and continue to honor handoffs already acknowledged."""
+    record = read_json(claim)
+    if record is None:
+        return True
+    # The published mask can be wider than tree.cores after a failed shared-affinity change.
+    cores = set(record["cores"]) | set(tree.cores)
+    if not _update_claim_locked(claim, draining=True, cores=sorted(cores)) or conflicts(cores):
+        return True
+    if not vacated:
+        return False
+    lent_cores = cores - set(guard) if shared else set()
+    claims = live_claims()
+    for other in claims:
+        if other["id"] == claim_id:
+            continue
+        if background and not other.get("background"):
+            # A suspended shared lender still owns its guarantee. On its lent CPUs it yields
+            # to its borrower, even when both are draining.
+            occupied = _guaranteed_cores(other) if other.get("state") == "suspended" else other["cores"]
+            if cores.intersection(occupied):
+                return True
+        if lent_cores.intersection(held(other)):
+            return True
+    if lent_cores and len(claims) > 1:
+        # A suspended shared drainer with extra cores checks the budget before resuming too.
+        # Charge only its guarantee here so either tree can drain first if it fits.
+        owners = [{**c, "cores": _guaranteed_cores(c)}
+                  if c["id"] != claim_id and c.get("draining") and c.get("state") == "suspended" else c
+                  for c in claims]
+        try:
+            return over_budget(load_config(), owners) > 0
+        except ValueError:
+            pass
+    return False
+
+
+def _share_step(tree: "Tree", claim: Path, claim_id: str, share: dict, *, grow: bool, draining: bool = False) -> bool:
     """One give-back (and optionally growth) step of a shared claim, under the admission mutex. The lent cores
     `give_back` names are given back first: the job affinity narrows, and only then does the record publish the
     narrower cores, so a claim waiting for them (`background_busy`, `budget_pending`) never starts while this tree
     can still run there. Growth, onto unclaimed cores and only while no queue file exists, publishes first and
     widens second. Returns False when a narrowing could not be applied; the caller then suspends the tree until a
-    later step succeeds."""
+    later step succeeds. A draining shared tree tries to give back every lent core."""
     snap = _snapshot()
     try:
         config = load_config()
@@ -1753,7 +1832,7 @@ def _share_step(tree: "Tree", claim: Path, claim_id: str, share: dict, *, grow: 
     if getattr(tree, "applied", tree.cores) != tree.cores and not tree.set_cores(tree.cores):
         return False
     me = {"id": claim_id, "shared": True, "guaranteed": share["guaranteed"], "cores": tree.cores}
-    back = give_back(me, timed, claims, config, queued=queued or closed)
+    back = give_back(me, timed, claims, config, queued=queued or closed or draining)
     if back and not tree.set_cores(sorted(set(tree.cores) - set(back))):
         return False
     # The record must show exactly the job's cores (this also repairs an earlier failed publish); until it does,
@@ -1803,7 +1882,7 @@ def _overdue_step(tree: "Tree", claim: Path, claim_id: str, overdue: dict, share
             _set_lending_marker(claim_id, False)
     fields = {"overdue": True, "overdue_action": action, "overdue_at": now_utc()}
     if action == "demote":
-        fields["background"] = True
+        fields.update(background=True, draining=False)
     if not _update_claim_locked(claim, **fields) and action != "kill":
         return None           # retried next poll; a kill does not depend on its record
     overdue["done"] = True
@@ -1835,20 +1914,27 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
             with Mutex():
                 narrowed = _share_step(tree, claim, claim_id, share, grow=False) if share else True
                 conflict = claim_conflicts(guard, background) or not narrowed
-                if not conflict and not background_busy(tree.cores, claim_id) and not _budget_wait(claim_id):
-                    _set_state_locked(claim, "running")
-                    child = tree.start(command, cwd, env)
-                    _event("start", {"id": claim_id, "cores": cores})
-                    break
+                budget_wait = not conflict and _budget_wait(claim_id)
+                if not conflict and not budget_wait and not background_busy(tree.cores, claim_id):
+                    if _set_state_locked(claim, "running"):
+                        child = tree.start(command, cwd, env)
+                        _event("start", {"id": claim_id, "cores": cores})
+                        break
                 # No child exists yet, so these cores are already vacated.
                 _set_state_locked(claim, "suspended")
-            if not conflict and time.monotonic() > deadline:
-                raise Refused("background or shared work did not vacate the requested CPUs")
-            if conflict:
+                # A lender may have started draining after this claim had already left the queue.
+                draining = not conflict and any(
+                    c.get("draining") and c["id"] != claim_id and c.get("state") != "suspended"
+                    and (set(c["cores"]).intersection(tree.cores) or (budget_wait and lending(c)))
+                    for c in live_claims())
+            if conflict or draining:
                 deadline = time.monotonic() + TIMED_VACATE_SECONDS
+            elif time.monotonic() > deadline:
+                raise Refused("background or shared work did not vacate the requested CPUs")
             time.sleep(poll_seconds())
         code = None
         kill_pending = False
+        vacated = False
         grow_at = time.monotonic() + grow_seconds()
         while True:
             if kill_pending:
@@ -1864,10 +1950,9 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                     code = child.wait(timeout=poll_seconds())
                 except subprocess.TimeoutExpired:
                     pass
+            # A member seen in this snapshot could spawn another before exiting. Wait for an empty snapshot.
             if code is not None and not tree.members():
                 break
-            if code is not None:
-                time.sleep(poll_seconds())
             with Mutex():
                 if overdue is not None and code is None:
                     action = _overdue_step(tree, claim, claim_id, overdue, share)
@@ -1875,19 +1960,32 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                         share, background, guard = None, True, tree.cores
                     elif action == "kill":
                         kill_pending = True
-                grow = share is not None and time.monotonic() >= grow_at
-                narrowed = _share_step(tree, claim, claim_id, share, grow=False) if share else True
-                conflict = claim_conflicts(guard, background) or not narrowed
-                complete = tree.set_suspended(conflict)
-                # A partial suspension leaves the claim busy. Retry incomplete
-                # transitions on later polls without acknowledging vacated cores.
-                _set_state_locked(claim, "suspended" if conflict and complete else "running")
-                if grow and not conflict:
-                    if not _share_step(tree, claim, claim_id, share, grow=True):
-                        # The job's mask or record is not settled: suspend until a later step settles it.
+                complete = None
+                if code is None or not (background or share):
+                    narrowed = _share_step(tree, claim, claim_id, share, grow=False) if share else True
+                    conflict = claim_conflicts(guard, background) or not narrowed
+                    if conflict and code is None and (background or share):
+                        # An exit can race a complete or partial suspension. Recheck before acknowledging it.
                         complete = tree.set_suspended(True)
-                        _set_state_locked(claim, "suspended" if complete else "running")
-                    grow_at = time.monotonic() + grow_seconds()
+                        code = child.poll()
+                if code is not None and (background or share):
+                    if share:
+                        # If narrowing fails, drain using the still-published footprint.
+                        _share_step(tree, claim, claim_id, share, grow=False, draining=True)
+                    conflict = _drain_conflict(tree, claim, claim_id, guard, background, share is not None, vacated)
+                if conflict:
+                    if complete is None:
+                        complete = tree.set_suspended(True)
+                    vacated = _acknowledge_suspension_locked(claim, complete, vacated)
+                elif _resume_tree_locked(tree, claim):
+                    vacated = False
+                    if share and code is None and time.monotonic() >= grow_at:
+                        if not _share_step(tree, claim, claim_id, share, grow=True):
+                            # The job's mask or record is not settled: suspend until a later step settles it.
+                            vacated = _acknowledge_suspension_locked(claim, tree.set_suspended(True), vacated)
+                        grow_at = time.monotonic() + grow_seconds()
+            if code is not None:
+                time.sleep(poll_seconds())
         return code
     except BaseException:
         # Retain containment on every exit, including partial suspension errors.
@@ -1912,14 +2010,25 @@ def _run_adopted(claim: Path, cores: list[int], priority: str, claim_id: str,
             # now so a long legitimate preemption cannot become an admission timeout.
             write_json(ready, {"id": claim_id, "pid": os.getpid(), "creation_time": self_identity()[1],
                                "cores": cores, "worker_pid": pid, "worker_creation": creation})
+        vacated = True
+        draining = False
         while tree.members():
             with Mutex():
-                # A background worker already yields to every ordinary claim (shared ones included); any other
-                # adopted worker would also wait for lenders to narrow and make budget room.
-                conflict = claim_conflicts(cores, background) or (not background and (
-                    background_busy(cores, claim_id) or _budget_wait(claim_id)))
-                complete = tree.set_suspended(conflict)
-                _set_state_locked(claim, "suspended" if conflict and complete else "running")
+                complete = None
+                draining = draining or process_state(pid, creation) == "absent"
+                if not draining:
+                    conflict = claim_conflicts(cores, background)
+                    if conflict:
+                        complete = tree.set_suspended(True)
+                        draining = process_state(pid, creation) == "absent"
+                if draining:
+                    conflict = _drain_conflict(tree, claim, claim_id, cores, background, False, vacated)
+                if conflict:
+                    if complete is None:
+                        complete = tree.set_suspended(True)
+                    vacated = _acknowledge_suspension_locked(claim, complete, vacated)
+                elif _resume_tree_locked(tree, claim):
+                    vacated = False
             time.sleep(poll_seconds())
         return 0
     except BaseException:
@@ -1949,6 +2058,7 @@ def timed(cores: list[int], command: list[str], cwd: str | None = None,
     pid, creation = self_identity()
     share = slots_dir() / f"share-{digest[:16]}.json"
     with Mutex():
+        _check_drain_rollout(live_claims())
         existing = read_json(share)
         if existing is not None and process_state(existing.get("pid"), existing.get("creation_time")) != "absent":
             raise Refused("this reservation already declared its cores")
@@ -1981,6 +2091,8 @@ def timed(cores: list[int], command: list[str], cwd: str | None = None,
 
 def submit(options: list[str], command: list[str], log: str) -> dict:
     """Start a detached `run --wait` and return its claim id at once."""
+    with Mutex():
+        _check_drain_rollout(live_claims())
     claim_id = uuid.uuid4().hex
     argv = [sys.executable, os.path.abspath(__file__), "run", "--wait", "--id", claim_id, *options, "--", *command]
     Path(log).parent.mkdir(parents=True, exist_ok=True)
@@ -2007,7 +2119,7 @@ def status() -> dict:
         for marker in slots_dir().glob(f"{LENDING_MARKER}*.json"):   # a killed lender's marker
             if marker.name.removeprefix(LENDING_MARKER).removesuffix(".json") not in live:
                 marker.unlink(missing_ok=True)
-    keep = ("id", "lane", "work_id", "pid", "cores", "priority", "state", "acquired_at", "background")
+    keep = ("id", "lane", "work_id", "pid", "cores", "priority", "state", "acquired_at", "background", "draining")
     shared_keep = ("shared", "guaranteed", "max_cores", "core_pool", "core_pool_reason",
                    "max_seconds", "on_overdue", "overdue", "overdue_action")
     now = datetime.now(timezone.utc)

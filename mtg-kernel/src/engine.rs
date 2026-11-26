@@ -97,6 +97,9 @@ pub(crate) use standard_spell_copy::{
 pub(crate) mod niv_mizzet_resolution_v1;
 pub mod ordinary_cleanup_v1;
 pub mod time_stop_v1;
+mod waiting_placement_v1;
+#[cfg(all(test, feature = "eternal-fixtures"))]
+pub(crate) use waiting_placement_v1::queued_for_test as waiting_placement_triggers_for_test;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -205,6 +208,14 @@ pub struct EngineState {
     /// grouped APNAP (active player's group first); see
     /// `drain_pending_triggers_or_decide`.
     pub pending_triggers: Vec<PendingTrigger>,
+    /// Immediate captures created during placement, due at the next SBA
+    /// and APNAP checkpoint after the entire current batch is placed.
+    /// Empty contributes no `Hash` input and no serialized field.
+    #[serde(
+        default,
+        skip_serializing_if = "waiting_placement_v1::QueueV1::is_empty"
+    )]
+    waiting_placement_triggers: waiting_placement_v1::QueueV1,
     /// This turn's combat, reset fresh at every `Step::BeginCombat`.
     pub combat: CombatState,
     /// "Until end of turn" continuous effects, cleared at every
@@ -15707,6 +15718,16 @@ fn advance_until_decision_historical(state: &mut GameState) -> Decision {
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
+    // A halted state only ever returns its halt, so keep its own source.
+    if state.engine.halted.is_none()
+        && (waiting_placement_v1::validate(state).is_err()
+            || validate_trigger_placement_group(state).is_err())
+    {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if halt_on_invalid_battlefield_pt(state) {
         let (mechanic, source) = state.engine.halted.expect("PT refusal halted");
         return Decision::Halted { mechanic, source };
@@ -20625,46 +20646,174 @@ pub(crate) fn validate_pending_activation(
     Ok(())
 }
 
-/// If there are pending triggers, either auto-places a singleton group (no
-/// real choice to make) or returns `Decision::OrderTriggers` for a group of
-/// 2+ sharing a controller.
+enum TriggerPlacementChoice {
+    Order(usize),
+    DistributeCounters,
+    Mode(Vec<(TargetSpec, EffectOp)>),
+    Targets { remaining: u8, can_finish: bool },
+}
+
+/// The length of the leading same-controller group while it still needs
+/// ordering.
+fn pending_trigger_order_group(state: &GameState) -> Option<usize> {
+    let group = &state.engine.pending_triggers;
+    let first = group.first()?;
+    let group_len = group
+        .iter()
+        .take_while(|trigger| trigger.controller == first.controller)
+        .count();
+    let unordered = group[..group_len]
+        .iter()
+        .any(|trigger| !trigger.placement_ordered);
+    (group_len >= 2 && unordered).then_some(group_len)
+}
+
+fn pending_trigger_placement_choice(state: &GameState) -> Option<TriggerPlacementChoice> {
+    if let Some(group_len) = pending_trigger_order_group(state) {
+        return Some(TriggerPlacementChoice::Order(group_len));
+    }
+    let first = state.engine.pending_triggers.first()?;
+    // Every later choice reads the leading trigger's restored spec. Only an
+    // authenticated trigger poses one, so an unordered trigger or a spec its
+    // definition does not own (spell-only, or past any printed cardinality)
+    // never reaches `target_count`; the callers refuse it.
+    validate_pending_trigger(state, first).ok()?;
+    if counter_distribution_v1::waiting(first) {
+        return Some(TriggerPlacementChoice::DistributeCounters);
+    }
+    if let Some(modes) = pending_trigger_modes(state, first) {
+        return Some(TriggerPlacementChoice::Mode(modes));
+    }
+    let need = target_count(first.target_spec);
+    (first.targets.len() < usize::from(need)).then(|| TriggerPlacementChoice::Targets {
+        remaining: need - first.targets.len() as u8,
+        can_finish: first.targets.len() >= usize::from(target_min_count(first.target_spec)),
+    })
+}
+
+/// The decisions `advance_until_decision` serves ahead of trigger placement
+/// that can be pending together with a placement batch. While one is pending
+/// it is the decision: the batch waits and no placement action answers it.
+fn trigger_placement_waits_for_action(state: &GameState) -> bool {
+    state.engine.pending_land_play.is_some()
+        // Shockland, Multiversal Passage and other as-enters choices, and the
+        // first-draw Miracle reveal (eternal waves).
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::e3::entry_choice_pending(state))
+        || state.engine.pending_spell_copy.is_some()
+        || state.engine.pending_effect.is_some()
+        || state.engine.pending_discard.is_some()
+        || state.engine.pending_cast.is_some()
+        || state.engine.pending_activation.is_some()
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
+}
+
+/// The decisions `advance_until_decision` serves ahead of trigger placement.
+/// While one is pending it is the decision, never a placement choice.
+fn decision_precedes_trigger_placement(state: &GameState) -> bool {
+    crate::graveyard_order_v1::owns_operation(state)
+        || crate::graveyard_order_v1::paused(state)
+        || crate::linked_aura_operation_v1::has_pending(state)
+        || crate::twinflame_tyrant_v1::combat::has_pending(state)
+        || crate::london_mulligan_v1::has_pending(state)
+        || crate::eternal_opening_v1::owns_action(state)
+        || state.leyline_opening_v1.is_some()
+        || (!crate::eternal_opening_v1::enabled(state)
+            && crate::leyline_axe_v1::requires_initial_advance(state).unwrap_or(true))
+        || (!state.engine.time_stop_v1.is_empty() && !time_stop_v1::at_priority(state))
+        || (!state.engine.ordinary_cleanup_v1.is_empty()
+            && !ordinary_cleanup_v1::at_priority(state))
+        || state.pending_legend_rule_v1.is_some()
+        || crate::attack_target_v1::has_pending(state)
+        || crate::combat_damage_v1::has_pending_assignment(state)
+        || !matches!(muldrotha_v1::decision(state), Ok(None))
+        || trigger_placement_waits_for_action(state)
+}
+
+/// The placement marks of the whole pending batch. Collection and every
+/// later append (APNAP batching, captures carried into a checkpoint) add only
+/// unmarked, untargeted triggers. Ordering marks the leading same-controller
+/// group at once (`apply_order_triggers`); otherwise only the lone leading
+/// trigger is marked as it is placed (`drain_pending_triggers_or_decide`).
+/// Modes, counters and targets are chosen only for the marked leading trigger
+/// (`apply_choose_target`, `finish_optional_trigger_targets`), which then
+/// leaves the batch (`push_trigger_onto_stack`, or 603.3d removal). Captures
+/// made while it is put on the stack wait outside `pending_triggers`. So the
+/// leading group is uniformly marked, nothing after it is marked, and only a
+/// marked leading trigger carries targets.
+fn validate_trigger_placement_group(state: &GameState) -> Result<(), String> {
+    let triggers = &state.engine.pending_triggers;
+    let Some(first) = triggers.first() else {
+        return Ok(());
+    };
+    let group_len = triggers
+        .iter()
+        .take_while(|trigger| trigger.controller == first.controller)
+        .count();
+    let (group, rest) = triggers.split_at(group_len);
+    if group
+        .iter()
+        .any(|trigger| trigger.placement_ordered != first.placement_ordered)
+    {
+        return Err("a pending trigger group is only partly ordered".into());
+    }
+    if rest.iter().any(|trigger| trigger.placement_ordered) {
+        return Err("a pending trigger after the leading group is already ordered".into());
+    }
+    let targeted = |trigger: &PendingTrigger| {
+        !trigger.targets.is_empty() || !trigger.target_contracts.is_empty()
+    };
+    if (!first.placement_ordered && targeted(first)) || triggers[1..].iter().any(targeted) {
+        return Err("only the ordered leading pending trigger may carry targets".into());
+    }
+    Ok(())
+}
+
+/// Place a checkpoint's triggers in APNAP order, pausing for its choices.
 fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
     loop {
         if state.engine.pending_triggers.is_empty() {
-            // Targeting markers created while putting the just-drained batch
-            // on the stack can create Ward triggers. They form a fresh
-            // trigger-placement checkpoint only after the prior APNAP batch
-            // is fully placed, so collect them here rather than interleaving
-            // them with an older same-controller group.
-            if state.engine.event_log.is_empty() {
+            // CR 603.3b: targets announced during placement can generate
+            // immediate captures and event-matched triggers (such as Ward).
+            // Both belong to the next SBA and APNAP checkpoint.
+            if state.engine.event_log.is_empty()
+                && state.engine.waiting_placement_triggers.is_empty()
+            {
                 return None;
             }
-            collect_and_queue_triggers(state);
+            let waiting = state.engine.waiting_placement_triggers.take();
+            if waiting.is_empty() {
+                collect_and_queue_triggers(state);
+            } else {
+                state.engine.pending_triggers =
+                    trigger::collect_and_process_with_waiting(state, waiting);
+                if let Some(decision) = check_game_over(state) {
+                    return Some(decision);
+                }
+                if let Some((mechanic, source)) = state.engine.halted {
+                    return Some(Decision::Halted { mechanic, source });
+                }
+            }
             if state.engine.pending_triggers.is_empty() {
                 return None;
             }
         }
-        let first = state.engine.pending_triggers[0].clone();
-        let controller = first.controller;
-        let group_len = state
-            .engine
-            .pending_triggers
-            .iter()
-            .take_while(|trigger| trigger.controller == controller)
-            .count();
-        let group_is_ordered = state.engine.pending_triggers[..group_len]
-            .iter()
-            .all(|trigger| trigger.placement_ordered);
-
-        if group_len >= 2 && !group_is_ordered {
+        if validate_trigger_placement_group(state).is_err() {
+            let source = state.engine.pending_triggers[0].source;
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+            return Some(Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            });
+        }
+        if let Some(group_len) = pending_trigger_order_group(state) {
             return Some(Decision::OrderTriggers {
-                player: controller,
+                player: state.engine.pending_triggers[0].controller,
                 pending: state.engine.pending_triggers[..group_len].to_vec(),
             });
         }
-        if group_len == 1 && !first.placement_ordered {
-            state.engine.pending_triggers[0].placement_ordered = true;
-        }
+        state.engine.pending_triggers[0].placement_ordered = true;
 
         let pending = state.engine.pending_triggers[0].clone();
         if let Err(_error) = validate_pending_trigger(state, &pending) {
@@ -20679,16 +20828,21 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.source,
             });
         }
-        if let Some(decision) = counter_distribution_v1::decision(state, &pending) {
-            return Some(decision);
-        }
-        if let Some(modes) = pending_trigger_modes(state, &pending) {
-            return Some(Decision::ChooseTriggerMode {
-                player: pending.controller,
-                source: pending.source,
-                mode_count: modes.len() as u8,
-                legal_modes: legal_pending_trigger_modes(state, &pending, &modes),
-            });
+        // Marked and authenticated: the remaining choice reads a valid spec.
+        let choice = pending_trigger_placement_choice(state);
+        match &choice {
+            Some(TriggerPlacementChoice::DistributeCounters) => {
+                return counter_distribution_v1::decision(state, &pending);
+            }
+            Some(TriggerPlacementChoice::Mode(modes)) => {
+                return Some(Decision::ChooseTriggerMode {
+                    player: pending.controller,
+                    source: pending.source,
+                    mode_count: modes.len() as u8,
+                    legal_modes: legal_pending_trigger_modes(state, &pending, modes),
+                });
+            }
+            _ => {}
         }
         if !pending_trigger_targets_can_complete(&pending, state) {
             // 603.3d at the actual placement checkpoint: legality can change
@@ -20713,47 +20867,15 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             state.engine.pending_triggers.remove(0);
             continue;
         }
-        let need = target_count(pending.target_spec);
-        if pending.targets.len() < usize::from(need) {
-            let trigger_source = pending_trigger_targeting_source(&pending, state);
-            if !target_prefix_can_complete_for_controller_and_source(
-                pending.target_spec,
-                &pending.targets,
-                pending.controller,
-                trigger_source,
-                state,
-            ) {
-                // 603.3c: if all of a triggered ability's targets are
-                // illegal (here: none were ever legal, e.g. every creature
-                // on the battlefield has protection from this monocolored
-                // source), the ability is removed instead of being put on
-                // the stack -- it does nothing. Drop it and keep draining
-                // rather than exposing an impossible `Decision::
-                // ChooseTargets` (empty `legal_targets`, `can_finish:
-                // false`), which `drain_pending_cast_or_decide`'s matching
-                // `targeting_can_complete`/`abort_cast` guard already
-                // avoids for spell casts.
-                if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
-                    || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
-                    || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
-                    || crate::fiendish_panda_v1::custody::unavailable(state, &pending).is_err()
-                {
-                    state.engine.halted = Some((
-                        UnsupportedMechanic::InvalidEffectContinuation,
-                        pending.source,
-                    ));
-                    return Some(Decision::Halted {
-                        mechanic: UnsupportedMechanic::InvalidEffectContinuation,
-                        source: pending.source,
-                    });
-                }
-                state.engine.pending_triggers.remove(0);
-                continue;
-            }
+        if let Some(TriggerPlacementChoice::Targets {
+            remaining,
+            can_finish,
+        }) = choice
+        {
             return Some(Decision::ChooseTargets {
                 player: pending.controller,
                 spell: pending.source,
-                remaining: need - pending.targets.len() as u8,
+                remaining,
                 legal_targets: completable_next_targets_for_controller_and_source(
                     pending.target_spec,
                     &pending.targets,
@@ -20761,8 +20883,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                     pending_trigger_targeting_source(&pending, state),
                     state,
                 ),
-                can_finish: pending.targets.len()
-                    >= usize::from(target_min_count(pending.target_spec)),
+                can_finish,
             });
         }
 
@@ -20805,57 +20926,21 @@ fn pending_trigger_modes(
 /// trigger from the identical semantic variant emitted during `pending_cast`
 /// (`Decision::ChooseSpellMode`).
 pub(crate) fn pending_trigger_choose_mode_active_v1(state: &GameState) -> bool {
-    if crate::graveyard_order_v1::owns_operation(state)
-        || crate::graveyard_order_v1::paused(state)
-        || crate::linked_aura_operation_v1::has_pending(state)
-        || crate::twinflame_tyrant_v1::combat::has_pending(state)
-        || check_game_over(state).is_some()
+    if check_game_over(state).is_some()
         || state.engine.halted.is_some()
-        || crate::london_mulligan_v1::has_pending(state)
-        || crate::eternal_opening_v1::owns_action(state)
-        || state.leyline_opening_v1.is_some()
-        || (!crate::eternal_opening_v1::enabled(state)
-            && crate::leyline_axe_v1::requires_initial_advance(state).unwrap_or(true))
-        || (!state.engine.time_stop_v1.is_empty() && !time_stop_v1::at_priority(state))
-        || (!state.engine.ordinary_cleanup_v1.is_empty()
-            && !ordinary_cleanup_v1::at_priority(state))
-        || state.pending_legend_rule_v1.is_some()
-        || crate::attack_target_v1::has_pending(state)
-        || crate::combat_damage_v1::has_pending_assignment(state)
-        || !matches!(muldrotha_v1::decision(state), Ok(None))
-        || state.engine.pending_land_play.is_some()
-        || state.engine.pending_spell_copy.is_some()
-        || state.engine.pending_effect.is_some()
-        || state.engine.pending_discard.is_some()
-        || state.engine.pending_cast.is_some()
-        || state.engine.pending_activation.is_some()
-        || state.engine.pending_optional_cost.is_some()
-        || state.engine.pending_optional_cost_sacrifice.is_some()
+        || decision_precedes_trigger_placement(state)
     {
-        return false;
-    }
-    #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_cards_v1::e3::entry_choice_decision(state).is_some() {
         return false;
     }
     let Some(first) = state.engine.pending_triggers.first() else {
         return false;
     };
-    let group_len = state
-        .engine
-        .pending_triggers
-        .iter()
-        .take_while(|trigger| trigger.controller == first.controller)
-        .count();
-    if !state.engine.pending_triggers[..group_len]
-        .iter()
-        .all(|trigger| trigger.placement_ordered)
-        || validate_pending_trigger(state, first).is_err()
-        || counter_distribution_v1::waiting(first)
-    {
-        return false;
-    }
-    pending_trigger_modes(state, first).is_some()
+    first.placement_ordered
+        && validate_pending_trigger(state, first).is_ok()
+        && matches!(
+            pending_trigger_placement_choice(state),
+            Some(TriggerPlacementChoice::Mode(_))
+        )
 }
 
 fn legal_pending_trigger_modes(
@@ -21369,6 +21454,7 @@ pub(crate) fn validate_pending_trigger_identity(
 }
 
 fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(), String> {
+    let remaining_batch = state.engine.pending_triggers.len();
     validate_pending_trigger_for_stack(state, &t)?;
     let madness_source_contract = t
         .is_madness_offer
@@ -21624,6 +21710,12 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
     crate::drakuseth_damage_source_v76::publish(state, stack_item_id)?;
     crate::extra_turn_v1::record_trigger_publication(state, &finalized);
+    // Immediate capture hooks append to the queue. Preserve the exact
+    // remaining batch and carry those captures into the next checkpoint.
+    state
+        .engine
+        .waiting_placement_triggers
+        .extend(state.engine.pending_triggers.drain(remaining_batch..));
     // 117.3c/117.5: placing triggers precedes priority; it does not change
     // the player who would have received it (including an off-turn caster).
     // Clear the pass streak without bumping `priority_round`: this is not
@@ -29249,6 +29341,9 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    // Restored trigger placement state, before any route can mutate.
+    waiting_placement_v1::validate_for_step(state)?;
+    validate_trigger_placement_group(state)?;
     if crate::graveyard_order_v1::owns_operation(state) {
         return crate::graveyard_order_v1::step(state, action);
     }
@@ -29417,51 +29512,39 @@ pub(crate) fn step_without_linked_aura_v1(
             return Err("only the exact Discard action may answer a pending discard".to_string());
         }
     }
-    if let Some(pending_trigger) = state.engine.pending_triggers.first() {
-        if pending_trigger.placement_ordered && counter_distribution_v1::waiting(pending_trigger) {
-            return counter_distribution_v1::answer(state, &action);
+    if let Some(pending) = state
+        .engine
+        .pending_triggers
+        .first()
+        .filter(|_| !trigger_placement_waits_for_action(state))
+    {
+        let choice = pending_trigger_placement_choice(state);
+        if pending.placement_ordered && !matches!(choice, Some(TriggerPlacementChoice::Order(_))) {
+            validate_pending_trigger(state, pending)?;
         }
-        let group = state
-            .engine
-            .pending_triggers
-            .iter()
-            .take_while(|trigger| trigger.controller == pending_trigger.controller)
-            .collect::<Vec<_>>();
-        if group
-            .iter()
-            .any(|trigger| pending_trigger_modes(state, trigger).is_some())
-            && group.iter().any(|trigger| !trigger.placement_ordered)
-            && !matches!(&action, Action::OrderTriggers(_))
-        {
-            return Err(
-                "modal trigger placement must complete ordering before other actions".into(),
-            );
-        }
-        if pending_trigger.placement_ordered
-            && pending_trigger_modes(state, pending_trigger).is_some()
-        {
-            validate_pending_trigger(state, pending_trigger)?;
-            if !matches!(&action, Action::ChooseTriggerMode(_)) {
+        match choice {
+            Some(TriggerPlacementChoice::Order(_))
+                if !matches!(&action, Action::OrderTriggers(_)) =>
+            {
+                return Err("only OrderTriggers may answer a pending trigger order".into());
+            }
+            Some(TriggerPlacementChoice::DistributeCounters) => {
+                return counter_distribution_v1::answer(state, &action);
+            }
+            Some(TriggerPlacementChoice::Mode(_))
+                if !matches!(&action, Action::ChooseTriggerMode(_)) =>
+            {
                 return Err("only ChooseTriggerMode may answer a pending trigger mode".into());
             }
-        }
-        if pending_trigger.placement_ordered {
-            // Authenticate the restored spec before fixed-cardinality dispatch.
-            validate_pending_trigger(state, pending_trigger)?;
-        }
-        if pending_trigger.placement_ordered
-            && pending_trigger.targets.len()
-                < usize::from(target_count(pending_trigger.target_spec))
-        {
-            let may_finish = pending_trigger.targets.len()
-                >= usize::from(target_min_count(pending_trigger.target_spec));
-            if !(matches!(&action, Action::ChooseTarget(_))
-                || may_finish && matches!(&action, Action::FinishEffectSelection))
+            Some(TriggerPlacementChoice::Targets { can_finish, .. })
+                if !(matches!(&action, Action::ChooseTarget(_))
+                    || can_finish && matches!(&action, Action::FinishEffectSelection)) =>
             {
                 return Err(
-                    "only ChooseTarget may answer a pending triggered ability target".to_string(),
+                    "only ChooseTarget may answer a pending triggered ability target".into(),
                 );
             }
+            _ => {}
         }
     }
     if state
@@ -30926,6 +31009,9 @@ fn expected_spell_copy(
     copy.is_copy = true;
     copy.is_flashback = false;
     copy.madness_offer = false;
+    // A copy is not cast: no cost was paid for it (707.10).
+    copy.discarded = Vec::new();
+    copy.v4.paid_cost_refs = Vec::new();
     copy
 }
 
@@ -31605,6 +31691,81 @@ fn has_supported_spell_copy_offer_program(state: &GameState, item: &StackItem) -
         ]))
 }
 
+/// The object payments a spell-copy parent may carry: none, except the
+/// route-owned ones of escape (exactly the escape cost's other graveyard
+/// cards, now exiled, of the caster) and a retrace cast (exactly one land
+/// card of the caster, discarded). The caster is the player who cast the
+/// parent, from its cast receipt, even if its control has since changed
+/// (Commandeer).
+fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackItem) -> bool {
+    let Some(source) = state.objects.try_get(parent.source) else {
+        return false;
+    };
+    let Some(def) = card_def::CARD_DEFS.get(usize::from(source.card_def)) else {
+        return false;
+    };
+    let caster = if cfg!(feature = "eternal-fixtures") {
+        crate::eternal_vintage_e7b_v1::spell_caster(state, parent).unwrap_or(parent.controller)
+    } else {
+        parent.controller
+    };
+    let refs = &parent.v4.paid_cost_refs;
+    let origin = source.v4.spell_cast_origin;
+    let route = origin.map(|origin| origin.route);
+    // Retrace (702.81, Wrenn and Six's emblem) is the route that discards a
+    // land. Whether a cast was a retrace cast is decided when it is
+    // announced and recorded as its route, `RetraceV1` (`begin_cast`), so a
+    // graveyard permission that begins later (Yawgmoth's Will cast at
+    // instant speed) does not change it. Every other route discards no land.
+    let retrace = cfg!(feature = "eternal-fixtures")
+        && origin.is_some_and(|origin| {
+            origin.origin_zone == Zone::Graveyard && origin.route == SpellCastRouteV4::RetraceV1
+        });
+    match (parent.v4.cast_method, route) {
+        (Some(CastMethodV4::Escape), Some(route)) if route.is_escape() => {
+            let count =
+                spell_costs_v1::escape_cost_v1(def, route == SpellCastRouteV4::BreachEscapeV1)
+                    .and_then(|cost| {
+                        cost.iter().find_map(|part| match part {
+                            CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+                                Some(usize::from(*n))
+                            }
+                            _ => None,
+                        })
+                    });
+            parent.discarded.is_empty()
+                && count == Some(refs.len())
+                && refs.iter().enumerate().all(|(index, card)| {
+                    card.owner == caster
+                        && card.zone == Zone::Exile
+                        && card.object != parent.source
+                        && !refs[..index]
+                            .iter()
+                            .any(|prior| prior.object == card.object)
+                })
+        }
+        // A retrace cast pays with exactly one discarded land card of the
+        // caster, other than the spell itself. The discard puts it into the
+        // graveyard, or into exile if a replacement effect applies (Dauthi
+        // Voidwalker; 614.6). Retrace's discard is an object cost, recorded
+        // only in `paid_cost_refs`; `discarded` holds a printed discard cost,
+        // which a copy-offer spell has none of.
+        (Some(CastMethodV4::Normal), Some(_)) if retrace => match refs.as_slice() {
+            [land] => {
+                parent.discarded.is_empty()
+                    && land.object != parent.source
+                    && land.owner == caster
+                    && matches!(land.zone, Zone::Graveyard | Zone::Exile)
+                    && card_def::CARD_DEFS
+                        .get(usize::from(land.card_def))
+                        .is_some_and(|land_def| land_def.has_type(CardType::Land))
+            }
+            _ => false,
+        },
+        _ => refs.is_empty() && parent.discarded.is_empty(),
+    }
+}
+
 pub(crate) fn validate_pending_spell_copy(
     state: &GameState,
     pending: &PendingSpellCopy,
@@ -31623,17 +31784,29 @@ pub(crate) fn validate_pending_spell_copy(
         );
     }
     let (parent_index, parent) = pending_spell_copy_parent(state, pending)?;
+    // 707.10: the copy offer does not depend on how the parent was cast. A
+    // parent cast with flashback (a Chain Lightning given flashback by
+    // Snapcaster Mage) offers it too; its copy is not a flashback spell
+    // (`expected_spell_copy`), and the parent is exiled as it departs.
+    // Escape (Underworld Breach) and retrace (Wrenn and Six's emblem) are
+    // graveyard routes too; their exiled or discarded cards are the parent's
+    // own paid costs, already authenticated against its route by
+    // `validate_spell_stack_source` in `pending_spell_copy_parent`, and the
+    // copy carries none of them.
+    let cast_with_flashback = parent.v4.cast_method == Some(CastMethodV4::Flashback);
     if parent.inline_effect.is_some()
-        || !parent.discarded.is_empty()
-        || parent.is_flashback
+        || parent.is_flashback != cast_with_flashback
         || parent.madness_offer
         || parent.kicked
         || parent.mode_chosen != 0
-        || parent.v4.cast_method != Some(CastMethodV4::Normal)
+        || !matches!(
+            parent.v4.cast_method,
+            Some(CastMethodV4::Normal | CastMethodV4::Flashback | CastMethodV4::Escape)
+        )
         || parent.v4.face_index != 0
         || parent.v4.x_value != 0
-        || !parent.v4.paid_cost_refs.is_empty()
         || parent.v4.activated_ability_index.is_some()
+        || !spell_copy_parent_route_payments_are_exact(state, &parent)
     {
         return Err("the spell-copy continuation parent has invalid cast provenance".to_string());
     }
@@ -32372,19 +32545,11 @@ fn apply_declare_blockers(
 }
 
 fn apply_order_triggers(state: &mut GameState, perm: Vec<usize>) -> Result<(), String> {
-    if state.engine.pending_triggers.is_empty() {
-        return Err("no pending triggers to order".to_string());
-    }
-    let controller = state.engine.pending_triggers[0].controller;
-    let group_len = state
-        .engine
-        .pending_triggers
-        .iter()
-        .take_while(|t| t.controller == controller)
-        .count();
-    if group_len < 2 {
-        return Err("fewer than two triggers do not require ordering".to_string());
-    }
+    let Some(TriggerPlacementChoice::Order(group_len)) = pending_trigger_placement_choice(state)
+        .filter(|_| !trigger_placement_waits_for_action(state))
+    else {
+        return Err("no pending trigger group needs ordering".into());
+    };
 
     let mut sorted = perm.clone();
     sorted.sort_unstable();
@@ -32958,6 +33123,25 @@ fn materialize_begin_cast_with_quote_v1(
                     holder: player,
                     graveyard_generation: origin_zone_change_count,
                 }
+            }
+            // A cast that only retrace allows (702.81: Wrenn and Six's
+            // emblem, Six) is a retrace cast, and records the retrace route
+            // whether or not another route competed, so that it stays a
+            // retrace cast if another graveyard permission begins while it
+            // is on the stack.
+            CastMethodV4::Normal
+                if cfg!(feature = "eternal-fixtures")
+                    && origin_zone == Zone::Graveyard
+                    && !graveyard_bestow
+                    && graveyard_permission == Some(origin_zone_change_count)
+                    && crate::eternal_vintage_e7b_v1::retrace_cast(
+                        state,
+                        spell_id,
+                        player,
+                        origin_zone_change_count,
+                    ) =>
+            {
+                SpellCastRouteV4::RetraceV1
             }
             CastMethodV4::Normal if origin_zone == Zone::Graveyard => {
                 SpellCastRouteV4::GraveyardPermissionV1 {
@@ -43871,6 +44055,312 @@ mod tests {
             crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, &copied).is_none(),
             "a cost equal to a printed one but not that ability"
         );
+    }
+
+    /// A hand-cast Chain Lightning has no object payments: a payment record
+    /// added to it must still be refused when its copy offer is answered.
+    #[test]
+    fn chain_copy_rejects_fabricated_payment_records_on_a_hand_cast_parent() {
+        let mut state = ready_game_in_main1(1);
+        let chain = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        let red1 = put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let mut with_payment = state.clone();
+        let payment = crate::state::PaidCostRefV4::capture(&with_payment, red1);
+        with_payment
+            .stack
+            .last_mut()
+            .unwrap()
+            .v4
+            .paid_cost_refs
+            .push(payment);
+        let before = with_payment.clone();
+        assert!(step(&mut with_payment, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(with_payment, before);
+
+        let mut with_discard = state.clone();
+        with_discard.stack.last_mut().unwrap().discarded.push(red1);
+        let before = with_discard.clone();
+        assert!(step(&mut with_discard, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(with_discard, before);
+
+        // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// P0 casts Chain Lightning from their graveyard at P1, with Wrenn and
+    /// Six's emblem (retrace) if `emblem`, and after resolving Yawgmoth's Will
+    /// (another graveyard permission) if `will`, discarding the Mountain in
+    /// P0's hand if the cast asks for a land. Returns the state once the cast
+    /// is complete (the spell on the stack), the spell and the Mountain. P1
+    /// has two red sources for the copy.
+    #[cfg(feature = "eternal-fixtures")]
+    fn chain_lightning_cast_from_graveyard(
+        emblem: bool,
+        will: bool,
+    ) -> (GameState, ObjectId, ObjectId) {
+        let mut state = ready_game_in_main1(0);
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        if will {
+            let will = put_in_hand(&mut state, PlayerId::P0, "Yawgmoth's Will");
+            state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+            state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+            step(&mut state, Action::CastSpell(will)).unwrap();
+            assert!(matches!(
+                pass_until_stack_resolves(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert!(state.stack.is_empty());
+        }
+        if emblem {
+            crate::eternal_vintage_e7b_v1::e7b_state(&mut state).wrenn_emblems[0] = 1;
+        }
+        let chain = put_in_graveyard(&mut state, PlayerId::P0, "Chain Lightning");
+        let land = put_in_hand(&mut state, PlayerId::P0, "Mountain");
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { .. } => step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(PlayerId::P1)),
+                )
+                .unwrap(),
+                Decision::ChooseCostTargets { candidates, .. } => {
+                    assert!(candidates.contains(&land));
+                    step(&mut state, Action::ChooseCostTarget(land)).unwrap()
+                }
+                // With both Yawgmoth's Will and the emblem, the cast chooses
+                // its route: the ordinary permission (listed before retrace).
+                Decision::ChooseEffectOption {
+                    option_count: 2, ..
+                } if will && emblem => step(&mut state, Action::ChooseEffectOption(0)).unwrap(),
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision casting Chain Lightning: {other:?}"),
+            }
+        }
+        assert!(state.engine.pending_cast.is_none());
+        assert_eq!(state.stack.last().map(|item| item.source), Some(chain));
+        (state, chain, land)
+    }
+
+    /// Review round 3, finding 3: a graveyard cast is a retrace cast (and
+    /// discards a land) only on the retrace route, or on a graveyard
+    /// permission route that retrace alone allows. A Chain Lightning cast
+    /// under Yawgmoth's Will (with or without Wrenn and Six's emblem) paid no
+    /// land: a land payment added to it is refused when its copy offer is
+    /// answered.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_rejects_a_land_payment_on_a_non_retrace_graveyard_cast() {
+        for emblem in [false, true] {
+            let (mut state, _, land) = chain_lightning_cast_from_graveyard(emblem, true);
+            assert_eq!(
+                state.objects.get(land).zone,
+                Zone::Hand,
+                "no retrace discard"
+            );
+            assert!(matches!(
+                state
+                    .objects
+                    .get(state.stack.last().unwrap().source)
+                    .v4
+                    .spell_cast_origin
+                    .map(|origin| origin.route),
+                Some(SpellCastRouteV4::GraveyardPermissionV1 { .. })
+            ));
+            assert!(state.stack.last().unwrap().v4.paid_cost_refs.is_empty());
+            assert!(matches!(
+                pass_until_stack_resolves(&mut state),
+                Decision::ChooseSpellCopyPayment { .. }
+            ));
+            // A land card of the caster's, in their graveyard, recorded as
+            // the parent's discarded payment.
+            let mut forged = state.clone();
+            event::propose_and_commit(
+                &mut forged,
+                ProposedEvent::zone_change(land, Zone::Graveyard),
+            );
+            let payment = crate::state::PaidCostRefV4::capture(&forged, land);
+            let parent = forged.stack.last_mut().unwrap();
+            parent.v4.paid_cost_refs.push(payment);
+            parent.discarded.push(land);
+            let before = forged.clone();
+            assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+            assert_eq!(forged, before);
+
+            // The genuine parent still offers its copy.
+            assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+        }
+    }
+
+    /// Review round 3, finding 3: a retrace cast, recorded on the retrace
+    /// route even with no competing route, must carry its discarded land;
+    /// the same parent with that payment stripped is refused.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_rejects_a_retrace_cast_with_its_land_payment_stripped() {
+        let (mut state, _, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(
+            state.objects.get(land).zone,
+            Zone::Graveyard,
+            "retrace discard"
+        );
+        assert_eq!(
+            state
+                .objects
+                .get(state.stack.last().unwrap().source)
+                .v4
+                .spell_cast_origin
+                .map(|origin| origin.route),
+            Some(SpellCastRouteV4::RetraceV1)
+        );
+        assert_eq!(state.stack.last().unwrap().v4.paid_cost_refs.len(), 1);
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let mut stripped = state.clone();
+        let parent = stripped.stack.last_mut().unwrap();
+        parent.v4.paid_cost_refs.clear();
+        parent.discarded.clear();
+        let before = stripped.clone();
+        assert!(step(&mut stripped, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(stripped, before);
+
+        // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Review round 3, finding 1: the parent's route payments belong to the
+    /// player who cast it (its cast receipt), not its current controller. A
+    /// retraced Chain Lightning whose control changed (Commandeer's effect)
+    /// still offers its copy; its discarded land is its caster's.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_reads_the_caster_of_a_retraced_parent_whose_control_changed() {
+        let (mut state, chain, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(
+            state.objects.get(land).zone,
+            Zone::Graveyard,
+            "retrace discard"
+        );
+        assert!(gain_control_of_spell_v1(&mut state, chain, PlayerId::P1).is_some());
+        assert_eq!(state.stack.last().unwrap().controller, PlayerId::P1);
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { player, .. } if player == PlayerId::P1
+        ));
+        assert!(state.engine.halted.is_none());
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Review round 4, finding 1: whether a cast was a retrace cast is
+    /// fixed when it is announced. P0 retraces Chain Lightning (no other
+    /// graveyard permission, so it discards a Mountain), then, with Teferi,
+    /// Time Raveler's +1, casts Yawgmoth's Will at instant speed and lets it
+    /// resolve. Another permission now allows the graveyard cast, but the
+    /// retraced parent still offers its copy without halting.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_of_a_retraced_parent_survives_a_later_yawgmoths_will() {
+        let (mut state, chain, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+        let origin = state.objects.get(chain).v4.spell_cast_origin.unwrap();
+        assert_eq!(origin.route, SpellCastRouteV4::RetraceV1);
+        crate::eternal_legacy_e8a_v1::e8a_state(&mut state)
+            .sorcery_flash
+            .push(PlayerId::P0);
+        let will = put_in_hand(&mut state, PlayerId::P0, "Yawgmoth's Will");
+        state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        step(&mut state, Action::CastSpell(will)).unwrap();
+        assert_eq!(state.stack.len(), 2);
+        pass_until_one_stack_item_resolves(&mut state);
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack.last().unwrap().source, chain);
+        assert!(
+            crate::standard_cards_v1::graveyard_cast_granted_without_retrace(
+                &state,
+                chain,
+                PlayerId::P0,
+                origin.origin_zone_change_count,
+            ),
+            "Yawgmoth's Will now allows the graveyard cast too"
+        );
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        assert!(state.engine.halted.is_none());
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+        assert!(state.engine.halted.is_none());
+    }
+
+    /// Review round 4, finding 2(a): retrace's discarded land is recorded
+    /// only as the parent's paid object cost. The same land also recorded
+    /// as the parent's printed discard is refused.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_rejects_a_retrace_land_also_recorded_as_a_printed_discard() {
+        let (mut state, _, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+        assert!(state.stack.last().unwrap().discarded.is_empty());
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let mut forged = state.clone();
+        forged.stack.last_mut().unwrap().discarded.push(land);
+        let before = forged.clone();
+        assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(forged, before);
+
+        // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Review round 4, finding 2(b): a retrace cast cannot pay with the
+    /// spell itself. The parent's land payment rewritten to name the parent
+    /// (keeping the land's characteristics) is refused.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_rejects_a_retrace_payment_naming_the_parent_itself() {
+        let (mut state, chain, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let mut forged = state.clone();
+        let parent = forged.stack.last_mut().unwrap();
+        assert_eq!(parent.source, chain);
+        let [payment] = parent.v4.paid_cost_refs.as_mut_slice() else {
+            panic!("a retrace cast pays exactly one land");
+        };
+        assert_eq!(payment.object, land);
+        payment.object = chain;
+        let before = forged.clone();
+        assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(forged, before);
+
+        // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
     }
 }
 

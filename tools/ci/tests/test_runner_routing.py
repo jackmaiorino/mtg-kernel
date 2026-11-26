@@ -5,7 +5,13 @@ they use (&&, ||, ==, !=, parentheses, string literals, context lookups, fromJSO
 and format).
 """
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -234,7 +240,8 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(sorted(self.expressions), ["detect-changes", "eternal-integration-build", "limited-build",
                                                     "python-env-build", "python-tests",
                                                     "rust-eternal-integration-parts", "rust-limited-groups",
-                                                    "rust-test-groups", "rust-tests"])
+                                                    "rust-test-groups", "rust-tests", "rust-workspace-lib-parts",
+                                                    "workspace-lib-build"])
 
     def test_a_fork_pull_request_always_runs_on_hosted_runners(self):
         fork = event(head="someone/fork", **EVERY_POOL)
@@ -305,10 +312,10 @@ class RoutingTests(unittest.TestCase):
 
     def test_pull_request_windows_groups_follow_the_budget_output(self):
         # The variable names the candidates; only the groups detect-changes chose within the budget route.
-        settings = {**EVERY_POOL, "vars.MTG_CI_PR_WINDOWS_GROUPS": '["workspace-lib", "workspace-targets"]',
+        settings = {**EVERY_POOL, "vars.MTG_CI_PR_WINDOWS_GROUPS": '["native-store", "workspace-targets"]',
                     "needs.detect-changes.outputs.pr_windows_groups": '["workspace-targets"]'}
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **settings), PR_POOL)
-        self.assertEqual(self.route("windows-2025", "workspace-lib", **event(), **settings), WINDOWS_POOL)
+        self.assertEqual(self.route("windows-2025", "native-store", **event(), **settings), WINDOWS_POOL)
         none = {**settings, "needs.detect-changes.outputs.pr_windows_groups": ""}
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **none), WINDOWS_POOL)
 
@@ -362,15 +369,16 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.route("windows-2025", "eternal", **event("push"), **linux_only), "windows-2025")
 
     def test_the_values_set_today_route_what_they_routed_before(self):
-        # A named Linux group to the Linux pool, workspace-lib of a pull request to the pull request Windows
-        # pool. (From 2026-11-18 to 11-24 the named group was the Eternal integration suite, then one job
-        # of this matrix; it now runs in hosted parts of its own.)
+        # A named Linux group to the Linux pool, a named Windows group of a pull request to the pull request
+        # Windows pool. (From 2026-11-18 to 11-24 the named Linux group was the Eternal integration suite,
+        # then one job of this matrix, and the named Windows group workspace-lib; both now run in hosted
+        # parts of their own, which no variable routes.)
         today = {"vars.MTG_CI_LINUX_GROUPS": '["workspace-targets"]', "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL),
-                 "needs.detect-changes.outputs.pr_windows_groups": '["workspace-lib"]',
+                 "needs.detect-changes.outputs.pr_windows_groups": '["workspace-targets"]',
                  "vars.MTG_CI_PR_WINDOWS_RUNNER": json.dumps(PR_POOL)}
         self.assertEqual(self.route("ubuntu-24.04", "workspace-targets", **event(), **today), LINUX_POOL)
         self.assertEqual(self.route("ubuntu-24.04", "eternal", **event(), **today), "ubuntu-24.04")
-        self.assertEqual(self.route("windows-2025", "workspace-lib", **event(), **today), PR_POOL)
+        self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **today), PR_POOL)
         for part in ("native-store", "native-store-1"):
             with self.subTest(part=part):
                 self.assertEqual(self.route("windows-2025", part, **event(), **today), "windows-2025")
@@ -405,7 +413,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_windows_routing_is_unchanged(self):
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **EVERY_POOL), PR_POOL)
-        self.assertEqual(self.route("windows-2025", "workspace-lib", **event(), **EVERY_POOL), WINDOWS_POOL)
+        self.assertEqual(self.route("windows-2025", "native-store", **event(), **EVERY_POOL), WINDOWS_POOL)
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event("push"), **EVERY_POOL), WINDOWS_POOL)
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **EVERY_POOL,
                                     **{"inputs.windows_runner": '"windows-2025"'}), "windows-2025")
@@ -504,8 +512,8 @@ class DetectStepTests(unittest.TestCase):
         block = job_block("detect-changes", "rust-quality")
         self.assertIn("if command -v gh > /dev/null 2>&1; then", block)
         self.assertIn("python3 tools/ci/pr_lookup.py open-pr-head", block)
-        self.assertIn('python3 tools/ci/pr_lookup.py pr-files "$1"', block)
-        self.assertEqual(block.count("gh api"), 2)
+        self.assertIn('python3 tools/ci/pr_lookup.py pr-run "$GITHUB_SHA"', block)
+        self.assertEqual(block.count("gh api"), 1)
 
 
 def job_block(name, following):
@@ -520,10 +528,15 @@ def matrix_groups(block):
     return re.findall(r"^          - ([a-z0-9-]+)$", listing, re.MULTILINE)
 
 
+# A use of an artifact action, quoted or not.
+ARTIFACT_USE = re.compile(r"""uses:\s*["']?(actions/(?:upload|download)-artifact@[^\s"']+)""")
 # The Eternal group of rust-test-groups; the integration suites run in jobs of their own.
 ETERNAL_GROUPS = {"eternal"}
 ETERNAL_PARTS = 8
 ETERNAL_JOBS = ("eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory")
+# The workspace library tests (the workspace-lib group of the matrix until 2026-11-24): each job and the job after it.
+LIBRARY_JOBS = ("workspace-lib-build", "rust-workspace-lib-parts", "workspace-lib-inventory")
+LIBRARY_BLOCKS = tuple(zip(LIBRARY_JOBS, LIBRARY_JOBS[1:] + ("python-env-build",)))
 
 
 class MatrixTests(unittest.TestCase):
@@ -559,9 +572,11 @@ class MatrixTests(unittest.TestCase):
         # smaller one would fail the extra parts. Parts are named <group>, <group>-1, ..., <group>-(n-1).
         limited = job_block("rust-limited-groups", "rust-tests")
         eternal = job_block("rust-eternal-integration-parts", "eternal-integration-inventory")
+        library = job_block("rust-workspace-lib-parts", "workspace-lib-inventory")
         cases = [(limited, "limited-only", "--limited-only-workflow"),
                  (limited, "limited-model", "current_mixed_policy_v1::"),
-                 (eternal, "eternal-integration", "--executed-list")]
+                 (eternal, "eternal-integration", "--executed-list"),
+                 (library, "workspace-lib", "--executed-list")]
         for block, family, marker in cases:
             with self.subTest(family=family):
                 (line,) = [line for line in block.splitlines() if marker in line and "--shard-count" in line]
@@ -590,7 +605,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(calls(job_block("rust-test-groups", "limited-build"), "standard_integration"), [])
         build = job_block("eternal-integration-build", "rust-eternal-integration-parts")
         parts = job_block("rust-eternal-integration-parts", "eternal-integration-inventory")
-        inventory = job_block("eternal-integration-inventory", "python-env-build")
+        inventory = job_block("eternal-integration-inventory", "workspace-lib-build")
         # The build job compiles the Eternal suite, lists its tests and runs none. The parts start when it
         # ends, so it runs nothing else.
         (listing,) = calls(build, "eternal_integration")
@@ -619,7 +634,15 @@ class MatrixTests(unittest.TestCase):
                          + ["eternal-standard"])
         # A part without a downloadable build compiles the suite itself instead of failing.
         self.assertIn("        continue-on-error: true\n", steps["Download the shared Eternal integration build"])
-        self.assertIn('if [ -z "$archive" ]; then', steps["Unpack the shared Eternal integration build as current output"])
+        unpack = steps["Unpack the shared Eternal integration build as current output"]
+        self.assertIn('if [ -z "$archive" ]; then', unpack)
+        # The build names its commit, and a part stamps the files as current only for its own checkout.
+        self.assertIn("git rev-parse HEAD > target/release/mtg-ci-build-commit\n          tar -cf eternal-integration.tar",
+                      build)
+        check = unpack.index('if [ "$built" != "$(git rev-parse HEAD)" ]; then')
+        self.assertLess(unpack.index('tar -xf "$archive" -C target'), check)
+        self.assertLess(check, unpack.index("rm -rf -- target\n            exit 0"))
+        self.assertLess(unpack.index("rm -rf -- target\n            exit 0"), unpack.index("find target -exec touch"))
         # The inventory job compares the build job's list with every part's executed names.
         self.assertIn(f"check_rust_integration_parts.py --listed eternal-integration-lists "
                       f"--parts eternal-integration-parts --count {ETERNAL_PARTS}", inventory)
@@ -631,11 +654,82 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("name: eternal-integration-build-${{ matrix.os }}-${{ github.run_attempt }}", build)
         self.assertIn("pattern: eternal-integration-build-${{ matrix.os }}-*", parts)
 
+    def test_artifact_actions_are_pinned_by_commit(self):
+        # Every workflow and composite action, either file suffix, quoted or not.
+        files = [path for suffix in ("*.yml", "*.yaml") for path in WORKFLOW.parent.parent.rglob(suffix)]
+        self.assertIn(WORKFLOW, files)
+        self.assertTrue(any(path.parent.parent.name == "actions" for path in files))
+        uses = 0
+        for workflow in sorted(files):
+            for use in ARTIFACT_USE.findall(workflow.read_text(encoding="utf-8")):
+                uses += 1
+                with self.subTest(workflow=workflow.name, use=use):
+                    self.assertRegex(use, r"@[0-9a-f]{40}$")
+        self.assertGreater(uses, 10)
+
+    def test_the_pin_check_sees_quoted_and_unquoted_uses(self):
+        text = ('        uses: actions/upload-artifact@v4\n'
+                '      - uses: "actions/download-artifact@v4"\n'
+                "        uses:   'actions/upload-artifact@main'  # note\n")
+        self.assertEqual(ARTIFACT_USE.findall(text), ["actions/upload-artifact@v4", "actions/download-artifact@v4",
+                                                      "actions/upload-artifact@main"])
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("bash") and shutil.which("tar"),
+                         "runs the step's own bash on Linux")
+    def test_a_part_trusts_only_a_build_of_its_own_commit(self):
+        # The unpack step itself, run on three archives: a build of this checkout's commit is stamped as
+        # current; a build of another commit, or one that names no commit, is thrown away with a warning.
+        # The same step of the workspace library parts, with its own names.
+        suites = [(job_block("rust-eternal-integration-parts", "eternal-integration-inventory"), "Eternal integration",
+                   "eternal-integration"),
+                  (job_block("rust-workspace-lib-parts", "workspace-lib-inventory"), "workspace library",
+                   "workspace-lib")]
+        for parts, title, name in suites:
+            with self.subTest(suite=name):
+                self.check_unpack_step(parts, title, name)
+
+    def check_unpack_step(self, parts, title, name):
+        step = next(step for step in parts.split("\n      - name: ")
+                    if step.startswith(f"Unpack the shared {title} build as current output"))
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        self.assertNotIn("${{", script)
+        own = "1" * 40
+        for marker, kept in ((own, True), ("2" * 40, False), (None, False)):
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "bin").mkdir()
+                (root / "bin" / "git").write_text(f"#!/bin/sh\necho {own}\n", encoding="utf-8")
+                (root / "bin" / "git").chmod(0o755)
+                built = root / "built" / "release"
+                built.mkdir(parents=True)
+                (built / "binary").write_text("x", encoding="utf-8")
+                os.utime(built / "binary", (1, 1))
+                if marker:
+                    (built / "mtg-ci-build-commit").write_text(marker + "\n", encoding="utf-8")
+                staging = root / "temp" / f"shared-{name}-build" / f"{name}-build-ubuntu-24.04-1"
+                staging.mkdir(parents=True)
+                subprocess.run(["tar", "-cf", str(staging / f"{name}.tar"), "-C", str(root / "built"),
+                                "release"], check=True)
+                work = root / "work"
+                work.mkdir()
+                environment = {**os.environ, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                               "RUNNER_TEMP": str(root / "temp"), "RUNNER_OS": "Linux"}
+                result = subprocess.run(["bash", "-eo", "pipefail", "-c", script], cwd=work, env=environment,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if kept:
+                    self.assertNotIn("::warning::", result.stdout)
+                    # Stamped after the checkout: no longer the archive's old time.
+                    self.assertGreater((work / "target" / "release" / "binary").stat().st_mtime, 1_000_000)
+                else:
+                    self.assertIn(f"::warning::The shared {title} build is of commit", result.stdout)
+                    self.assertFalse((work / "target").exists())
+
     def test_the_eternal_integration_jobs_run_where_the_group_ran_and_gate_the_merge(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         blocks = [job_block("eternal-integration-build", "rust-eternal-integration-parts"),
                   job_block("rust-eternal-integration-parts", "eternal-integration-inventory"),
-                  job_block("eternal-integration-inventory", "python-env-build")]
+                  job_block("eternal-integration-inventory", "workspace-lib-build")]
         conditions = {re.search(r"^    if: (.+)$", block, re.MULTILINE).group(1) for block in blocks}
         systems = {re.search(r"^        os: \$\{\{ (.+) \}\}$", block, re.MULTILINE).group(1) for block in blocks}
         (condition,), (system,) = conditions, systems
@@ -664,11 +758,14 @@ class MatrixTests(unittest.TestCase):
         # Without always() a failed part would skip the gate, and a skipped check does not block a merge.
         self.assertTrue(re.search(r"^    if: (.+)$", gate, re.MULTILINE).group(1).startswith("always() && "))
         # A change to the tools the parts use must itself run them.
-        detect = job_block("detect-changes", "rust-quality")
-        (relevant,) = [line for line in detect.splitlines() if "python/tools/run_rust_integration_tests.py|" in line]
+        # (Relevance lives in ci_scope.py; the classify step calls it.)
+        import sys
+        sys.path.insert(0, str(WORKFLOW.parents[2] / "tools" / "ci"))
+        import ci_scope
+        self.assertIn("python3 tools/ci/ci_scope.py relevance", job_block("detect-changes", "rust-quality"))
         for tool in ("run_rust_integration_tests.py", "rust_integration_module_seconds.json",
                      "check_rust_integration_parts.py"):
-            self.assertIn(f"python/tools/{tool}|", relevant)
+            self.assertEqual(ci_scope.relevance([f"python/tools/{tool}"]), (True, True))
         for job in ETERNAL_JOBS:
             with self.subTest(job=job):
                 self.assertIn(job, needs.split(", "))
@@ -678,6 +775,126 @@ class MatrixTests(unittest.TestCase):
         # Parts wait for the build, and the inventory for both.
         self.assertIn("    needs: [detect-changes, eternal-integration-build]\n", blocks[1])
         self.assertIn("    needs: [detect-changes, eternal-integration-build, rust-eternal-integration-parts]\n", blocks[2])
+
+    def test_the_workspace_library_jobs_run_where_the_group_ran_and_gate_the_merge(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        blocks = [job_block(*pair) for pair in LIBRARY_BLOCKS]
+        conditions = {re.search(r"^    if: (.+)$", block, re.MULTILINE).group(1) for block in blocks}
+        systems = {re.search(r"^        os: \$\{\{ (.+) \}\}$", block, re.MULTILINE).group(1) for block in blocks}
+        (condition,), (system,) = conditions, systems
+        scope = "needs.detect-changes.outputs.scope"
+        relevant = {"needs.detect-changes.outputs.rust_relevant": "true", "needs.detect-changes.outputs.checks": "all"}
+        # The rows workspace-lib had in rust-test-groups until 2026-11-24: that job's systems (both for the
+        # pr and full sets, Windows for the others) without its excluded rows (Windows in the
+        # windows-complement set), under the same job condition (none for a draft).
+        expected = {"pr": ["ubuntu-24.04", "windows-2025"], "full": ["ubuntu-24.04", "windows-2025"],
+                    "windows-pr": ["windows-2025"], "windows-full": ["windows-2025"],
+                    "windows-complement": None, "draft": None}
+        for name, rows in expected.items():
+            with self.subTest(scope=name):
+                runs = evaluate(condition, **relevant, **{scope: name})
+                self.assertEqual(bool(runs), rows is not None)
+                if rows is not None:
+                    self.assertEqual(evaluate(system, **{scope: name}), rows)
+        self.assertFalse(evaluate(condition, **{**relevant, "needs.detect-changes.outputs.checks": "trainer", scope: "pr"}))
+        self.assertFalse(evaluate(condition, **{**relevant, "needs.detect-changes.outputs.rust_relevant": "false",
+                                                scope: "pr"}))
+        # The group matrix no longer has the group, so nothing runs the library tests twice.
+        groups = job_block("rust-test-groups", "limited-build")
+        self.assertNotIn("workspace-lib", matrix_groups(groups))
+        self.assertNotIn('"workspace-lib"', groups[groups.index("        exclude:"):].splitlines()[0])
+        self.assertNotIn("--part lib", groups)
+        self.assertIn("python python/tools/run_rust_workspace_tests.py --part targets --no-fail-fast", groups)
+        # The build and the parts never leave hosted runners; the inventory check has a fixed one.
+        self.assertEqual([re.search(r"^    runs-on: (.+)$", block, re.MULTILINE).group(1) for block in blocks],
+                         ["${{ matrix.os }}", "${{ matrix.os }}", "ubuntu-24.04"])
+        # The Rust gate needs all three and requires each result wherever they run; the post-merge report
+        # sees them.
+        gate = job_block("rust-tests", "eternal-integration-build")
+        (needs,) = re.findall(r"^    needs: \[(.+)\]$", gate, re.MULTILINE)
+        gate_condition = re.search(r"^    if: (.+)$", gate, re.MULTILINE).group(1)
+        self.assertTrue(gate_condition.startswith("always() && "))
+        (skipped, required) = re.findall(
+            r'if \[ "\$\{\{ needs\.detect-changes\.outputs\.scope \}\}" != ([a-z-]+) \]; then\n((?:\s+(?:#|test ).*\n)+)'
+            r'\s+fi\n', gate)[-1]
+        # The gate runs in every set but a draft; in each of them it requires the jobs exactly where they ran.
+        for name, rows in expected.items():
+            if name != "draft":
+                self.assertTrue(evaluate(gate_condition.removeprefix("always() && "), **relevant, **{scope: name}))
+                self.assertEqual(rows is None, name == skipped)
+        for job in LIBRARY_JOBS:
+            with self.subTest(job=job):
+                self.assertIn(job, needs.split(", "))
+                self.assertIn(f'test "${{{{ needs.{job}.result }}}}" = success', required)
+                self.assertIn(job, re.search(r"^  post-merge-report:\n.*\n    needs: \[(.+)\]$", text,
+                                             re.MULTILINE).group(1).split(", "))
+        # A change to the tools the parts use must itself run them: the classify step asks ci_scope.py, whose
+        # rule list is the only copy of the Rust-relevant tool paths.
+        sys.path.insert(0, str(WORKFLOW.parents[2] / "tools" / "ci"))
+        import ci_scope
+        detect = job_block("detect-changes", "rust-quality")
+        self.assertIn('python3 tools/ci/ci_scope.py relevance < "$RUNNER_TEMP/ci-changed-paths"', detect)
+        for tool in ("run_rust_workspace_tests.py", "rust_workspace_lib_plan.py", "rust_workspace_lib_seconds.json",
+                     "run_rust_integration_tests.py", "check_rust_integration_parts.py"):
+            self.assertEqual(ci_scope.relevance([f"python/tools/{tool}"]), (True, True))
+        # Parts wait only for the build, and the inventory for both.
+        self.assertIn("    needs: [detect-changes, workspace-lib-build]\n", blocks[1])
+        self.assertIn("    needs: [detect-changes, workspace-lib-build, rust-workspace-lib-parts]\n", blocks[2])
+
+    def test_the_workspace_library_is_built_once_and_run_in_parts(self):
+        def calls(block):
+            return [line.strip() for line in block.splitlines() if "run_rust_workspace_tests.py" in line]
+
+        build, parts, inventory = (job_block(*pair) for pair in LIBRARY_BLOCKS)
+        # The build job compiles the library tests, lists them and runs none.
+        self.assertEqual(calls(build), ["run: python python/tools/run_rust_workspace_tests.py --part lib "
+                                        "--list-only workspace-lib-tests.json"])
+        steps = {step.split("\n", 1)[0]: step for step in parts.split("\n      - name: ")[1:]}
+        check, run = calls(parts)
+        self.assertEqual(check, "CARGO_TERM_COLOR=never python python/tools/run_rust_workspace_tests.py --part lib "
+                                "--no-run 2>&1 | tee workspace-lib-build.log")
+        self.assertNotIn("        if:", steps["Check that Cargo reuses the shared build"])
+        count = int(re.search(r"--shard-count (\d+)", run).group(1))
+        self.assertEqual(run, 'python python/tools/run_rust_workspace_tests.py --part lib --shard-index "$part" '
+                              f'--shard-count {count} --executed-list workspace-lib-executed.json')
+        self.assertNotIn("        if:", steps["Run this part of the workspace library tests"])
+        self.assertNotIn("        if:", steps["Upload the names of the tests this part executed"])
+        groups = matrix_groups(parts)
+        self.assertEqual(groups, ["workspace-lib"] + [f"workspace-lib-{index}" for index in range(1, count)])
+        self.assertIn(f"check_rust_integration_parts.py --listed workspace-lib-lists --parts workspace-lib-parts "
+                      f"--count {count}", inventory)
+        # A part without a downloadable build compiles the library tests itself instead of failing, and stamps
+        # an unpacked build as current only for its own checkout.
+        self.assertIn("        continue-on-error: true\n", steps["Download the shared workspace library build"])
+        unpack = steps["Unpack the shared workspace library build as current output"]
+        self.assertIn('if [ -z "$archive" ]; then', unpack)
+        self.assertIn("git rev-parse HEAD > target/release/mtg-ci-build-commit\n          tar -cf workspace-lib.tar",
+                      build)
+        commit = unpack.index('if [ "$built" != "$(git rev-parse HEAD)" ]; then')
+        self.assertLess(unpack.index('tar -xf "$archive" -C target'), commit)
+        self.assertLess(commit, unpack.index("rm -rf -- target\n            exit 0"))
+        self.assertLess(unpack.index("rm -rf -- target\n            exit 0"), unpack.index("find target -exec touch"))
+        # Artifacts: one name per system and attempt, and patterns no other artifact family matches.
+        for name, block in (("workspace-lib-build-${{ matrix.os }}-${{ github.run_attempt }}", build),
+                            ("workspace-lib-list-${{ matrix.os }}-${{ github.run_attempt }}", build),
+                            ("workspace-lib-executed-${{ matrix.os }}-${{ matrix.group }}-${{ github.run_attempt }}",
+                             parts)):
+            self.assertIn(f"name: {name}\n", block)
+        self.assertIn("pattern: workspace-lib-build-${{ matrix.os }}-*\n", parts)
+        self.assertIn("pattern: workspace-lib-list-${{ matrix.os }}-*\n", inventory)
+        self.assertIn("pattern: workspace-lib-executed-${{ matrix.os }}-*\n", inventory)
+        # The build restores the compiled output the group kept; one part, never part 0 (which holds the plan's
+        # heaviest unit), saves it after its tests. No other job saves that scope.
+        self.assertIn("scope: tests-workspace-lib\n", build)
+        self.assertNotIn("mode: save", build)
+        save = steps["Save compiled test output"]
+        self.assertIn(f"        if: success() && matrix.group == '{groups[-1]}'\n", save)
+        self.assertNotEqual(groups[-1], groups[0])
+        self.assertIn("scope: tests-workspace-lib\n          mode: save", save)
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertEqual(text.count("scope: tests-workspace-lib\n          mode: save"), 1)
+        self.assertLess(parts.index("      - name: Upload the names of the tests this part executed"),
+                        parts.index("      - name: Save compiled test output"))
 
     def test_limited_only_shards_read_the_default_list_one_job_writes(self):
         build = job_block("limited-build", "rust-limited-groups")
@@ -785,8 +1002,8 @@ class MacRoutingTests(unittest.TestCase):
         rows |= {"python-shard-0", "python-shard-1"}
         self.assertTrue(eligible)
         self.assertLessEqual(set(eligible), rows)
-        # The Eternal integration parts are hosted only, so the Mac list names none of them.
-        self.assertFalse([group for group in eligible if group.startswith("eternal-integration")])
+        # The Eternal integration and workspace library parts are hosted only, so the Mac list names none.
+        self.assertFalse([group for group in eligible if group.startswith(("eternal-integration", "workspace-lib"))])
 
     def test_python_shards_carry_their_group_names(self):
         block = job_block("python-tests", "hosted-fallback")

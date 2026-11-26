@@ -36,7 +36,37 @@ def workflow_step(step):
     return textwrap.dedent(run[1])
 
 
-def dispatch(repo, pages, *, after=READY, api_status=0, no_gh=False):
+# Job lists of the pull request run at the dispatched commit (see test_pr_lookup.py for real ones).
+LINUX_GROUPS = ("workspace-lib", "workspace-targets", "standard", "eternal", "cuda", "native-store", "trace",
+                "saved-input", "limited-store")
+WHOLE_SET_JOBS = [{"name": "Detect changed paths", "status": "completed", "conclusion": "success"},
+                  *({"name": f"Rust tests (ubuntu-24.04, {group})", "status": "in_progress", "conclusion": None}
+                    for group in LINUX_GROUPS),
+                  {"name": "Rust tests (windows-2025, workspace-lib)", "status": "queued", "conclusion": None},
+                  {"name": "Build Python test binaries (${{ matrix.os }})", "status": "completed", "conclusion": "skipped"},
+                  {"name": "CI plan: rust=true python=false scope=pr checks=all", "status": "completed",
+                   "conclusion": "success"}]
+# The same run if its plan had said Python was relevant: the Python build rows are missing, so no complement.
+PYTHON_MISSING_JOBS = WHOLE_SET_JOBS[:-1] + [{"name": "CI plan: rust=true python=true scope=pr checks=all",
+                                              "status": "completed", "conclusion": "success"}]
+DRAFT_JOBS = [{"name": "Detect changed paths", "status": "completed", "conclusion": "success"},
+              {"name": "Rust formatting and lint", "status": "completed", "conclusion": "success"},
+              {"name": "Rust tests (${{ matrix.os }}, ${{ matrix.group }})", "status": "completed", "conclusion": "skipped"},
+              {"name": "CI plan: rust=false python=false scope=draft checks=all", "status": "completed",
+               "conclusion": "success"}]
+
+
+def pr_runs(event="pull_request", head=HEAD, repo="fixture/repo", number=841):
+    return [{"id": 51, "event": event, "head_sha": head, "path": ".github/workflows/ci.yml",
+             "created_at": "2026-11-24T10:00:00Z", "status": "in_progress", "conclusion": None,
+             "repository": {"full_name": "fixture/repo"},
+             "head_repository": {"full_name": repo}, "pull_requests": [{"number": number}]}]
+
+
+def dispatch(repo, runs, jobs, *, after=READY, api_status=0, no_gh=False, malformed=False):
+    """Run the real "Choose the group set" step for a dispatch without inputs at HEAD, with the ready pull request
+    lookups (gh or pr_lookup.py) and the Actions listings (pr_lookup.py pr-run) answered from fixtures. Returns the
+    scope output and whether the job list was read."""
     lookup = repo / "pr_lookup_fixture.py"
     lookup.write_text(textwrap.dedent('''
         import json
@@ -48,23 +78,32 @@ def dispatch(repo, pages, *, after=READY, api_status=0, no_gh=False):
         import pr_lookup
 
         def get(path):
-            marker = Path("inventory-read")
-            if "/pulls?state=open&head=" in path:
-                key = "CI_TEST_PR_AFTER" if marker.exists() else "CI_TEST_PR_BEFORE"
-                return json.loads(os.environ[key])
-            assert path == "repos/fixture/repo/pulls/841/files?per_page=100&page=1", path
-            marker.touch()
+            assert "/pulls?state=open&head=" in path, path
+            key = "CI_TEST_PR_AFTER" if Path("evidence-read").exists() else "CI_TEST_PR_BEFORE"
+            return json.loads(os.environ[key])
+
+        def api(path, budget):
+            budget.spend()
             if os.environ["CI_TEST_API_STATUS"] != "0":
                 raise OSError("fixture API failure")
-            [page] = json.loads(os.environ["CI_TEST_PAGES"])
-            return page
+            if "/actions/workflows/ci.yml/runs?event=pull_request&head_sha=" in path:
+                rows, key = json.loads(os.environ["CI_TEST_RUNS"]), "workflow_runs"
+            else:
+                assert "/actions/runs/51/jobs?filter=latest&" in path, path
+                Path("evidence-read").touch()
+                rows = [dict(job, run_id=51, id=5100 + index)
+                        for index, job in enumerate(json.loads(os.environ["CI_TEST_JOBS"]))]
+                key = "jobs"
+            if os.environ["CI_TEST_MALFORMED"] == "true":
+                return {key: rows}
+            return {key: rows, "total_count": len(rows)}
 
         pr_lookup.get = get
+        pr_lookup.api = api
         raise SystemExit(pr_lookup.main(sys.argv[1:]))
         '''), encoding="utf-8")
     script = workflow_step("Choose the group set").replace(
-        "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_TOOLS/ci_scope.py"'
-    ).replace("python3 tools/ci/pr_lookup.py", '"$CI_TEST_PYTHON" -B "$CI_TEST_LOOKUP"')
+        "python3 tools/ci/pr_lookup.py", '"$CI_TEST_PYTHON" -B "$CI_TEST_LOOKUP"')
     script = '''
 command() {
   if [ "$1" = -v ] && [ "$2" = gh ] && [ "$CI_TEST_NO_GH" = true ]; then return 1; fi
@@ -72,13 +111,7 @@ command() {
 }
 gh() {
   [ "$CI_TEST_NO_GH" = false ] || return 127
-  if [ "$2" = --paginate ]; then
-    [ "$3" = --slurp ] && [ "$4" = repos/fixture/repo/pulls/841/files ] || return 1
-    touch inventory-read
-    printf '%s' "$CI_TEST_PAGES"
-    return "$CI_TEST_API_STATUS"
-  fi
-  if [ -f inventory-read ]; then
+  if [ -f evidence-read ]; then
     printf '%s' "$CI_TEST_PR_AFTER"
   else
     printf '%s' "$CI_TEST_PR_BEFORE"
@@ -87,20 +120,24 @@ gh() {
 ''' + script
     output = repo / "scope"
     output.unlink(missing_ok=True)
-    (repo / "inventory-read").unlink(missing_ok=True)
+    (repo / "evidence-read").unlink(missing_ok=True)
     env = dict(os.environ, GITHUB_OUTPUT=output.as_posix(), GITHUB_STEP_SUMMARY=(repo / "summary").as_posix(),
                EVENT="workflow_dispatch", WINDOWS_RUNNER="", FULL_MATRIX="false", FALLBACK_SCOPE="", INPUT_SCOPE="",
                GITHUB_REPOSITORY="fixture/repo", GITHUB_REPOSITORY_OWNER="fixture", GITHUB_REF_NAME="test",
-               GITHUB_SHA=HEAD, CI_TEST_PYTHON=Path(sys.executable).as_posix(), CI_TEST_TOOLS=CI_TOOLS.as_posix(),
-               CI_TEST_LOOKUP=lookup.as_posix(), CI_TEST_PR_BEFORE=json.dumps([READY]), CI_TEST_PR_AFTER=json.dumps([after]),
-               CI_TEST_PAGES=pages, CI_TEST_API_STATUS=str(api_status), CI_TEST_NO_GH=str(no_gh).lower())
+               GITHUB_SHA=HEAD, GH_TOKEN="unused", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
+               CI_TEST_TOOLS=CI_TOOLS.as_posix(), CI_TEST_LOOKUP=lookup.as_posix(),
+               CI_TEST_PR_BEFORE=json.dumps([READY]), CI_TEST_PR_AFTER=json.dumps([after]),
+               CI_TEST_RUNS=json.dumps(runs), CI_TEST_JOBS=json.dumps(jobs), CI_TEST_API_STATUS=str(api_status),
+               CI_TEST_MALFORMED=str(malformed).lower(), CI_TEST_NO_GH=str(no_gh).lower())
     subprocess.run([BASH, "-eo", "pipefail", "-c", script], cwd=repo, env=env, check=True, capture_output=True)
-    return output.read_text(encoding="utf-8").strip(), (repo / "inventory-read").is_file()
+    return output.read_text(encoding="utf-8").strip(), (repo / "evidence-read").is_file()
 
 
 class DraftLightTests(unittest.TestCase):
     def test_changed_path_gates_preserve_git_paths(self):
-        classify = workflow_step("Classify changed paths").replace("${{ github.event_name }}", "pull_request")
+        classify = workflow_step("Classify changed paths").replace("${{ github.event_name }}", "pull_request").replace(
+            "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
+        )
         checks = workflow_step("Choose the checks").replace(
             "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
         )
@@ -111,12 +148,23 @@ class DraftLightTests(unittest.TestCase):
             ("docs/café.md", "docs/updated.md", "false", "false", "docs"),
             ("docs/before.txt", "mtg-kernel/src/bin/kernel_limited_café.rs", "false", "true", "rules-limited"),
             ("tools/café.py", "mtg-kernel/src/bin/kernel_limited_café.rs", "true", "true", "all"),
+            # The website schedules no Rust or Python job alone or with docs; with other files they decide alone.
+            ("viewer/public/café.html", "README.md", "false", "false", "viewer"),
+            ("viewer/src/main.tsx", None, "false", "false", "viewer"),
+            ("viewer/index.html", "mtg-kernel/src/engine.rs", "false", "true", "all"),
+            ("viewer/index.html", "python/tools/café.py", "true", "false", "python"),
+            ("viewer_tools/café.py", None, "false", "true", "all"),
+            # ci:full runs every Rust and Python job whatever the paths.
+            ("viewer/src/main.tsx", None, "true", "true", "all", True),
+            ("viewer/public/café.html", "README.md", "true", "true", "all", True),
+            ("docs/café.md", None, "true", "true", "all", True),
+            ("python/tests/café.py", None, "true", "true", "all", True),
         ]
         if sys.platform != "win32":
             cases.append(('tools/"quoted"\nname.py', None, "true", "false", "python"))
 
-        for before, after, python, rust, scope in cases:
-            with self.subTest(before=before, after=after), tempfile.TemporaryDirectory() as scratch:
+        for before, after, python, rust, scope, *label in cases:
+            with self.subTest(before=before, after=after, label=label), tempfile.TemporaryDirectory() as scratch:
                 repo = Path(scratch)
                 env = os.environ.copy()
                 env.pop("GIT_CONFIG_COUNT", None)
@@ -143,7 +191,8 @@ class DraftLightTests(unittest.TestCase):
                 output = repo / "outputs"
                 env.update(RUNNER_TEMP=repo.as_posix(), GITHUB_OUTPUT=output.as_posix(),
                            GITHUB_STEP_SUMMARY=(repo / "summary").as_posix(), INPUT_SCOPE="", EVENT="pull_request",
-                           SCOPE="pr", LABELS="[]", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
+                           SCOPE="pr", LABELS='["ci:full"]' if label else "[]",
+                           FULL_LABEL="true" if label else "false", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
                            CI_TEST_SCOPE=(WORKFLOW.parents[2] / "tools/ci/ci_scope.py").as_posix())
                 for rendered in (classify, checks):
                     subprocess.run([BASH, "-eo", "pipefail", "-c", rendered], cwd=repo, env=env, check=True,
@@ -152,36 +201,26 @@ class DraftLightTests(unittest.TestCase):
                 self.assertEqual(output.read_text(encoding="utf-8").splitlines(),
                                  [f"python_relevant={python}", f"rust_relevant={rust}", f"checks={scope}"])
 
-    def test_manual_dispatch_uses_the_same_paths_as_pull_request_checks(self):
-        rename = {"status": "renamed", "filename": "docs/moved.md", "previous_filename": "tools/stage4a/café.py"}
-        cases = [
-            ([[{"status": "added", "filename": "tools/stage4a/café\nstep.py"}]], "tools", "full"),
-            ([[rename]], "tools", "full"),
-            ([[rename], [{"status": "modified", "filename": "python/tests/test café.py"}]], "all", "windows-complement"),
-            ([[{"status": "added", "filename": " tools/stage4a/café.py"}]], "all", "windows-complement"),
-            ([[{"status": "added", "filename": "README.md "}]], "all", "windows-complement"),
-        ]
+    def test_a_dispatch_complements_only_what_the_pull_request_run_scheduled(self):
+        # Point 3 with the real step: the complement needs the pull request run's own Linux Rust group jobs.
         with tempfile.TemporaryDirectory() as scratch:
             repo = Path(scratch)
-            for pages, expected_checks, expected_scope in cases:
-                with self.subTest(pages=pages):
-                    self.assertEqual(dispatch(repo, json.dumps(pages)), (f"scope={expected_scope}", True))
-                    paths = [f[key] for page in pages for f in page for key in ("filename", "previous_filename") if key in f]
-                    checks = subprocess.run([sys.executable, CI_TOOLS / "ci_scope.py", "choose"], cwd=repo, check=True,
-                                            capture_output=True, env=dict(os.environ, EVENT="pull_request", SCOPE="pr",
-                                                                         LABELS="[]", GITHUB_OUTPUT=""),
-                                            input=("\0".join(paths) + "\0").encode("utf-8"))
-                    self.assertTrue(checks.stdout.startswith(f"checks: {expected_checks}".encode("utf-8")))
+            for no_gh in (False, True):
+                with self.subTest(no_gh=no_gh):
+                    self.assertEqual(dispatch(repo, pr_runs(), WHOLE_SET_JOBS, no_gh=no_gh), ("scope=windows-complement", True))
+                    self.assertEqual(dispatch(repo, pr_runs(), DRAFT_JOBS, no_gh=no_gh), ("scope=full", True))
+                    self.assertEqual(dispatch(repo, pr_runs(), PYTHON_MISSING_JOBS, no_gh=no_gh), ("scope=full", True))
+                    self.assertEqual(dispatch(repo, pr_runs(number=842), WHOLE_SET_JOBS, no_gh=no_gh),
+                                     ("scope=full", False))
+                    self.assertEqual(dispatch(repo, pr_runs(), [], no_gh=no_gh), ("scope=full", True))
+                    for runs in ([], pr_runs(event="push"), pr_runs(repo="someone/fork"), pr_runs(head="b" * 40)):
+                        self.assertEqual(dispatch(repo, runs, WHOLE_SET_JOBS, no_gh=no_gh), ("scope=full", False))
+                    self.assertEqual(dispatch(repo, pr_runs(), WHOLE_SET_JOBS, api_status=1, no_gh=no_gh),
+                                     ("scope=full", False))
+                    self.assertEqual(dispatch(repo, pr_runs(), WHOLE_SET_JOBS, malformed=True, no_gh=no_gh),
+                                     ("scope=full", False))
 
-            for payload in ("{", '[[{"status":"renamed","filename":"docs/moved.md"}]]',
-                            '[[{"status":"added","filename":"Cargo.lock"}],null]'):
-                with self.subTest(malformed=payload):
-                    self.assertEqual(dispatch(repo, payload), ("scope=full", True))
-            self.assertEqual(dispatch(repo, '[[{"status":"added","filename":"Cargo.lock"}]]', api_status=1),
-                             ("scope=full", True))
-
-    def test_manual_dispatch_rechecks_ready_identity_after_files_with_both_backends(self):
-        full_scope_files = '[[{"status":"modified","filename":"Cargo.lock"}]]'
+    def test_manual_dispatch_rechecks_ready_identity_after_the_evidence_with_both_backends(self):
         cases = {
             "same tuple": (READY, "windows-complement"),
             "different PR": ({**READY, "number": 842}, "full"),
@@ -194,18 +233,8 @@ class DraftLightTests(unittest.TestCase):
             for no_gh in (False, True):
                 for case, (after, expected) in cases.items():
                     with self.subTest(case=case, no_gh=no_gh):
-                        self.assertEqual(dispatch(Path(scratch), full_scope_files, after=after, no_gh=no_gh),
+                        self.assertEqual(dispatch(Path(scratch), pr_runs(), WHOLE_SET_JOBS, after=after, no_gh=no_gh),
                                          (f"scope={expected}", True))
-
-    def test_manual_dispatch_with_no_gh_keeps_full_scope_on_inventory_errors(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = Path(scratch)
-            self.assertEqual(dispatch(repo, '[[{"status":"modified","filename":"Cargo.lock"}]]', api_status=1, no_gh=True),
-                             ("scope=full", True))
-            for status in ("", "unexpected", None):
-                with self.subTest(status=status):
-                    pages = json.dumps([[{"status": status, "filename": "Cargo.lock"}]])
-                    self.assertEqual(dispatch(repo, pages, no_gh=True), ("scope=full", True))
 
     def test_marking_a_draft_ready_starts_a_run(self):
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -223,7 +252,8 @@ class DraftLightTests(unittest.TestCase):
         for name, body in jobs().items():
             cond = condition(body)
             with self.subTest(job=name):
-                if name == "detect-changes":
+                if name in ("detect-changes", "ci-plan"):
+                    # ci-plan runs in every run (a draft's too): one short hosted job that only names the plan.
                     self.assertEqual(cond, "")
                 elif name == "rust-quality":
                     self.assertIn("""contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope)""", cond)

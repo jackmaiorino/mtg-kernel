@@ -87,6 +87,63 @@ class Capture(unittest.TestCase):
                 capture.convert(Path(d, 'arms'), panel)
 
 
+def labelled(head_compare=False):
+    """A mutate that labels reached states `features.decision_kind` and adds a head comparison."""
+    def change(u, slot, c):
+        if c['reached']:
+            c['features']['decision_kind'] = 'game'
+            if head_compare:
+                c['head_compare'] = {'schema': 'ss1-head-compare-v1', 'status': 'ok', 'worlds': 16,
+                                     'seed': 20261125, 'actions': [0, 1]}
+        return c
+    return change
+
+
+class Screen(unittest.TestCase):
+    """The search screen's options (collab LANES/lead/reviews/search-screen-20261125): the decision kind and the
+    head comparison reach the jobs and the records."""
+
+    def test_sd1_options_keep_existing_bytes_and_add_only_what_is_asked(self):
+        arms = {'version': capture.VERSION, 'half_rollouts': 64, 'coverage_max': 16, 'root_value': True,
+                'arms': [{'label': 'F16', 'world': 'fresh', 'budget': 16000, 'search_seeds': [0, 1]}]}
+        self.assertEqual(capture.sd1_options(arms, False),
+                         {'version': capture.VERSION, 'arms': arms['arms'], 'half_rollouts': 64,
+                          'coverage_max': 16, 'root_value': True})
+        self.assertEqual(capture.sd1_options(arms, True),
+                         {'version': capture.VERSION, 'arms': [], 'half_rollouts': 0, 'coverage_max': 16})
+        source = {'play_import': {'path': 'x', 'sha256': 'a' * 64}}
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d, 'b512-v7-source.json')
+            src.write_text(json.dumps(source))
+            dose = Path(d, 'b512-dose.json')
+            dose.write_text(json.dumps({'source': source, 'sha256': 'b' * 64}))
+            screen = dict(arms, arms=[], half_rollouts=0, decision_kind=True,
+                          head_compare={'second_source': src.as_posix(), 'worlds': 16, 'seed': 20261125})
+            full = capture.sd1_options(screen, False)
+            self.assertEqual(full['head_compare'], {'second_source': source, 'worlds': 16, 'seed': 20261125})
+            self.assertTrue(full['decision_kind'])
+            from_dose = dict(screen, head_compare=dict(screen['head_compare'], second_source=dose.as_posix()))
+            self.assertEqual(capture.sd1_options(from_dose, False)['head_compare']['second_source'], source)
+            inline = dict(screen, head_compare=dict(screen['head_compare'], second_source=source))
+            self.assertEqual(capture.sd1_options(inline, False)['head_compare']['second_source'], source)
+            panel_pass = capture.sd1_options(screen, True)
+            self.assertNotIn('head_compare', panel_pass)
+            self.assertTrue(panel_pass['decision_kind'])
+            for bad in (dict(screen, head_compare=dict(screen['head_compare'], extra=1)),
+                        dict(screen, head_compare=dict(screen['head_compare'], second_source={'x': 1}))):
+                with self.assertRaises(SystemExit):
+                    capture.sd1_options(bad, False)
+
+    def test_records_keep_the_decision_kind_and_the_head_comparison(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake_run(Path(d, 'panel'), EPISODES, mutate=labelled())
+            fake_run(Path(d, 'arms'), EPISODES, arms=True, mutate=labelled(head_compare=True))
+            panel = capture.panel(Path(d, 'panel'), 3, 2)
+            recs = capture.convert(Path(d, 'arms'), panel)
+            self.assertEqual([r['features']['decision_kind'] for r in recs], ['game'] * 3)
+            self.assertEqual(recs[0]['head_compare']['worlds'], 16)
+
+
 class Stamps(unittest.TestCase):
     def test_an_output_of_another_command_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
