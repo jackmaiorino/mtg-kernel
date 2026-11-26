@@ -10,7 +10,7 @@ use crate::cube_seat_v1::{
     run_seat_draft, AttemptOutcome, AttemptSpec, GamePilot, SeatPicker, UniformSeatPicker,
 };
 use crate::cube_training_driver_v1::{
-    load_checkpoint_read_only_v1, Checkpoint as D6Checkpoint, PilotPin, PilotProvider,
+    load_checkpoint_read_only_v1, write_marked_test_checkpoint_v1, PilotPin, PilotProvider,
     PilotSelection, RunConfig, RunOutcome, TrainingDriver, TrainingDriverError,
 };
 use crate::m4_sampler_v1::GRID_SIZE;
@@ -64,24 +64,6 @@ fn test_ordered_pool() -> (CubePool, String) {
 
 fn carddb_hex() -> String {
     format!("{KERNEL_CARDDB_HASH:016x}")
-}
-
-fn sha256_hex_bytes(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        use std::fmt::Write;
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
-}
-
-/// Recomputes D6's canonical checkpoint state digest (`mtg-kernel-cube-checkpoint-state/v1`).
-fn recompute_d6_state_sha256(ckpt: &mut D6Checkpoint) {
-    ckpt.state_sha256.clear();
-    let mut bytes = b"mtg-kernel-cube-checkpoint-state/v1\0".to_vec();
-    serde_json::to_writer(&mut bytes, ckpt).expect("serialize D6 checkpoint for pin");
-    ckpt.state_sha256 = sha256_hex_bytes(&bytes);
 }
 
 /// Independent seed oracle: computes `seed(["owner-view", "draft", run, idx])`
@@ -314,17 +296,21 @@ fn cli_refuses_real_checkpoint_and_requires_explicit_fixture_flag() {
     );
     assert!(!out_refused_real_with_flag.exists());
 
-    // 5. Fixture checkpoint WITHOUT --fixture MUST be refused (even if real table flags are passed).
+    // 5. Fixture checkpoint WITHOUT --fixture MUST be refused (even if all real pins are passed).
     let fixture_b1_32 = fixtures_dir.join("b1-u0032.checkpoint.json");
     let out_no_flag = dir.join("refused_fixture_no_flag.html");
     let root = workspace_root();
-    assert!(cli::run_cli_args(&[
+    let err_fixture_real = cli::run_cli_args(&[
         "--run".to_owned(),
         "b1-u0032".to_owned(),
         "--checkpoint".to_owned(),
         fixture_b1_32.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        "0".repeat(64),
         "--ordered-pool".to_owned(),
         pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
         "--cube-table".to_owned(),
         root.join("data/card_semantics_v1/cube_table_v1.json")
             .to_string_lossy()
@@ -338,7 +324,11 @@ fn cli_refuses_real_checkpoint_and_requires_explicit_fixture_flag() {
         "--out".to_owned(),
         out_no_flag.to_string_lossy().into_owned(),
     ])
-    .is_err());
+    .expect_err("fixture checkpoint must be refused on real path");
+    assert!(
+        err_fixture_real.contains("failed to load checkpoint"),
+        "unexpected error: {err_fixture_real}"
+    );
     assert!(!out_no_flag.exists());
 
     // 6. Removed unpinned --cube / --gaps flags MUST be rejected.
@@ -1289,8 +1279,24 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
         .expect("build model card rows"),
     );
 
-    // 2. Write a canonical ascending ordered pool JSON file covered by the 545-row index.
-    let (pool, pool_sha) = test_ordered_pool();
+    // 2. Write a canonical ascending declared pool JSON file excluding Brain Freeze
+    //    (fenced by D0.4 while retaining its table and index row), plus an altered pool
+    //    that adds Brain Freeze back in.
+    let (full_pool, _) = test_ordered_pool();
+    let brain_freeze_id = card_id_by_name("Brain Freeze").expect("Brain Freeze in registry");
+    assert!(
+        card_index.contains(brain_freeze_id),
+        "Brain Freeze keeps its 545-row index entry"
+    );
+    let declared_ids: Vec<u16> = full_pool
+        .ids()
+        .iter()
+        .copied()
+        .filter(|&id| id != brain_freeze_id)
+        .collect();
+    assert_eq!(declared_ids.len() + 1, full_pool.ids().len());
+    let (pool, pool_sha) =
+        cube_pool_from_ordered_ids(&declared_ids).expect("build declared fenced pool");
     for &id in pool.ids() {
         assert!(card_index.contains(id));
     }
@@ -1298,6 +1304,12 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
     let mut pool_json = serde_json::to_string(pool.ids()).expect("serialize pool ids");
     pool_json.push('\n');
     fs::write(&pool_path, pool_json.as_bytes()).expect("write ordered pool");
+
+    let altered_pool_path = dir.join("altered_pool_with_brain_freeze.json");
+    let mut altered_pool_json =
+        serde_json::to_string(full_pool.ids()).expect("serialize altered pool ids");
+    altered_pool_json.push('\n');
+    fs::write(&altered_pool_path, altered_pool_json.as_bytes()).expect("write altered pool");
 
     // 3. Write a real k1 checkpoint with D6's TrainingDriver via the real b1 -> k1
     //    segment boundary (1 real b1 update, then start_pick_phase + 1 real k1 update).
@@ -1369,11 +1381,14 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
     assert_eq!(u1_ckpt.head_updates.count, 2);
 
     // 4. Passing the update-1 checkpoint to --run k1-u0064 MUST be refused (update mismatch).
+    let out_refused_u1 = dir.join("refused_u1.html");
     let err_u1 = cli::run_cli_args(&[
         "--run".to_owned(),
         "k1-u0064".to_owned(),
         "--checkpoint".to_owned(),
         update0_ckpt_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        u1_ckpt.state_sha256.clone(),
         "--ordered-pool".to_owned(),
         pool_path.to_string_lossy().into_owned(),
         "--ordered-pool-sha256".to_owned(),
@@ -1387,30 +1402,31 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
         "--card-index-sha256".to_owned(),
         table.index_pin().to_owned(),
         "--out".to_owned(),
-        dir.join("refused_u1.html").to_string_lossy().into_owned(),
+        out_refused_u1.to_string_lossy().into_owned(),
     ])
     .expect_err("update 1 checkpoint must be refused for k1-u0064");
     assert!(err_u1.contains("checkpoint mismatch"), "got: {err_u1}");
+    assert!(!out_refused_u1.exists());
 
-    // 5. Promote the real D6 trained checkpoint to mark k1 update 64 with distinct head_updates
-    //    (keeping real D6 trained weights and recomputing D6's canonical state_sha256).
-    let mut k1_64_ckpt = u1_ckpt;
-    k1_64_ckpt.update = 64;
-    k1_64_ckpt.head_updates = HeadUpdates {
-        pick: 64,
-        value: 64,
-        count: 192,
-        pointer: 192,
-        type_set: 192,
-        split: 192,
-    };
-    recompute_d6_state_sha256(&mut k1_64_ckpt);
+    // 5. Use D6's own test-support helper to write a marked k1-u0064 checkpoint
+    //    carrying the real D6 trained weights and D6's own canonical state_sha256.
     let k1_64_path = dir.join("k1_u0064.checkpoint.json");
-    fs::write(
+    let k1_64_ckpt = write_marked_test_checkpoint_v1(
         &k1_64_path,
-        serde_json::to_vec(&k1_64_ckpt).expect("serialize k1-u0064 checkpoint"),
+        &u1_ckpt,
+        Segment::PickPhase,
+        "k1",
+        64,
+        HeadUpdates {
+            pick: 64,
+            value: 64,
+            count: 192,
+            pointer: 192,
+            type_set: 192,
+            split: 192,
+        },
     )
-    .expect("write k1-u0064 checkpoint");
+    .expect("D6 writes marked k1-u0064 test checkpoint");
     // Verify D6's read-only loader accepts it verbatim.
     let (verified_ckpt, _, _) =
         load_checkpoint_read_only_v1(&k1_64_path, &table).expect("D6 loader verifies k1-u0064");
@@ -1489,17 +1505,18 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
     assert_eq!(data.sample_pools.len(), 20);
     assert_eq!(data.distributions.total_builds, 3_200);
 
-    // 7. Real-path refusals: wrong run id, wrong segment, wrong table sha256, wrong index sha256.
-    let mut wrong_run = k1_64_ckpt.clone();
-    wrong_run.run = "k2".to_owned();
-    recompute_d6_state_sha256(&mut wrong_run);
-    let wrong_run_path = dir.join("wrong_run.checkpoint.json");
-    fs::write(&wrong_run_path, serde_json::to_vec(&wrong_run).unwrap()).unwrap();
-    let err_run = cli::run_cli_args(&[
+    // 7. Real-path CLI refusals (Findings 1, 2, 3, 4): every refusal checks both
+    //    the error message and that no HTML output file was written.
+
+    // 7a. Omitted --ordered-pool-sha256 in real mode MUST be refused before output.
+    let out_missing_pool_pin = dir.join("refused_missing_pool_pin.html");
+    let err_missing_pool_pin = cli::run_cli_args(&[
         "--run".to_owned(),
         "k1-u0064".to_owned(),
         "--checkpoint".to_owned(),
-        wrong_run_path.to_string_lossy().into_owned(),
+        k1_64_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        k1_64_ckpt.state_sha256.clone(),
         "--ordered-pool".to_owned(),
         pool_path.to_string_lossy().into_owned(),
         "--cube-table".to_owned(),
@@ -1509,23 +1526,29 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
         "--cube-list".to_owned(),
         cube_list_path.to_string_lossy().into_owned(),
         "--out".to_owned(),
-        dir.join("refused_run.html").to_string_lossy().into_owned(),
+        out_missing_pool_pin.to_string_lossy().into_owned(),
     ])
-    .expect_err("wrong checkpoint run id must be refused");
-    assert!(err_run.contains("checkpoint mismatch"));
+    .expect_err("omitted --ordered-pool-sha256 must be refused in real mode");
+    assert!(
+        err_missing_pool_pin.contains("--ordered-pool-sha256"),
+        "got: {err_missing_pool_pin}"
+    );
+    assert!(!out_missing_pool_pin.exists());
 
-    let mut wrong_seg = k1_64_ckpt.clone();
-    wrong_seg.segment = Segment::BuilderOnly;
-    recompute_d6_state_sha256(&mut wrong_seg);
-    let wrong_seg_path = dir.join("wrong_seg.checkpoint.json");
-    fs::write(&wrong_seg_path, serde_json::to_vec(&wrong_seg).unwrap()).unwrap();
-    let err_seg = cli::run_cli_args(&[
+    // 7b. Altered pool with fenced card Brain Freeze added MUST be refused against
+    //     the declared pool pin before output (even though Brain Freeze is in the index).
+    let out_altered_pool = dir.join("refused_altered_pool.html");
+    let err_altered_pool = cli::run_cli_args(&[
         "--run".to_owned(),
         "k1-u0064".to_owned(),
         "--checkpoint".to_owned(),
-        wrong_seg_path.to_string_lossy().into_owned(),
+        k1_64_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        k1_64_ckpt.state_sha256.clone(),
         "--ordered-pool".to_owned(),
-        pool_path.to_string_lossy().into_owned(),
+        altered_pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
         "--cube-table".to_owned(),
         cube_table_path.to_string_lossy().into_owned(),
         "--cube-table-sha256".to_owned(),
@@ -1533,18 +1556,233 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
         "--cube-list".to_owned(),
         cube_list_path.to_string_lossy().into_owned(),
         "--out".to_owned(),
-        dir.join("refused_seg.html").to_string_lossy().into_owned(),
+        out_altered_pool.to_string_lossy().into_owned(),
     ])
-    .expect_err("wrong checkpoint segment must be refused");
-    assert!(err_seg.contains("checkpoint mismatch"));
+    .expect_err("altered pool with fenced card added must be refused");
+    assert!(
+        err_altered_pool.contains("ordered pool sha256 mismatch"),
+        "got: {err_altered_pool}"
+    );
+    assert!(!out_altered_pool.exists());
 
-    let err_table_pin = cli::run_cli_args(&[
+    // 7c. Omitted --checkpoint-state-sha256 in real mode MUST be refused before output.
+    let out_missing_state_pin = dir.join("refused_missing_state_pin.html");
+    let err_missing_state_pin = cli::run_cli_args(&[
         "--run".to_owned(),
         "k1-u0064".to_owned(),
         "--checkpoint".to_owned(),
         k1_64_path.to_string_lossy().into_owned(),
         "--ordered-pool".to_owned(),
         pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
+        "--cube-table".to_owned(),
+        cube_table_path.to_string_lossy().into_owned(),
+        "--cube-table-sha256".to_owned(),
+        FINAL_CUBE_TABLE_SHA256.to_owned(),
+        "--cube-list".to_owned(),
+        cube_list_path.to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        out_missing_state_pin.to_string_lossy().into_owned(),
+    ])
+    .expect_err("omitted --checkpoint-state-sha256 must be refused in real mode");
+    assert!(
+        err_missing_state_pin.contains("--checkpoint-state-sha256"),
+        "got: {err_missing_state_pin}"
+    );
+    assert!(!out_missing_state_pin.exists());
+
+    // 7d. Wrong --checkpoint-state-sha256 in real mode MUST be refused before output.
+    let out_wrong_state_pin = dir.join("refused_wrong_state_pin.html");
+    let err_wrong_state_pin = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "k1-u0064".to_owned(),
+        "--checkpoint".to_owned(),
+        k1_64_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        u1_ckpt.state_sha256.clone(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
+        "--cube-table".to_owned(),
+        cube_table_path.to_string_lossy().into_owned(),
+        "--cube-table-sha256".to_owned(),
+        FINAL_CUBE_TABLE_SHA256.to_owned(),
+        "--cube-list".to_owned(),
+        cube_list_path.to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        out_wrong_state_pin.to_string_lossy().into_owned(),
+    ])
+    .expect_err("wrong --checkpoint-state-sha256 must be refused");
+    assert!(
+        err_wrong_state_pin.contains("checkpoint state_sha256 mismatch"),
+        "got: {err_wrong_state_pin}"
+    );
+    assert!(!out_wrong_state_pin.exists());
+
+    // 7e. Tampered checkpoint field keeping the published state_sha256 MUST fail
+    //     with D6's state digest error and write no HTML.
+    let mut tampered_ckpt = k1_64_ckpt.clone();
+    tampered_ckpt.head_updates.pick = 65;
+    assert_eq!(tampered_ckpt.state_sha256, k1_64_ckpt.state_sha256);
+    let tampered_path = dir.join("tampered_k1_u0064.checkpoint.json");
+    fs::write(
+        &tampered_path,
+        serde_json::to_vec(&tampered_ckpt).expect("serialize tampered checkpoint"),
+    )
+    .expect("write tampered checkpoint");
+    let out_tampered = dir.join("refused_tampered.html");
+    let err_tampered = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "k1-u0064".to_owned(),
+        "--checkpoint".to_owned(),
+        tampered_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        k1_64_ckpt.state_sha256.clone(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
+        "--cube-table".to_owned(),
+        cube_table_path.to_string_lossy().into_owned(),
+        "--cube-table-sha256".to_owned(),
+        FINAL_CUBE_TABLE_SHA256.to_owned(),
+        "--cube-list".to_owned(),
+        cube_list_path.to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        out_tampered.to_string_lossy().into_owned(),
+    ])
+    .expect_err("tampered checkpoint retaining published digest must be refused");
+    assert!(
+        err_tampered.contains("checkpoint schema or state digest differs"),
+        "got: {err_tampered}"
+    );
+    assert!(!out_tampered.exists());
+
+    // 7f. Reordering top-level JSON keys to place state_sha256 after head_updates
+    //     MUST be refused on the same bytes before output.
+    let k1_64_compact =
+        serde_json::to_string(&k1_64_ckpt).expect("serialize compact k1-u0064 JSON");
+    let state_kv = format!(",\"state_sha256\":\"{}\"", k1_64_ckpt.state_sha256);
+    assert!(k1_64_compact.contains(&state_kv));
+    let mut reordered_raw = k1_64_compact.replacen(&state_kv, "", 1);
+    assert!(reordered_raw.ends_with('}'));
+    let insert_at = reordered_raw.len() - 1;
+    reordered_raw.insert_str(insert_at, &state_kv);
+    let reordered_path = dir.join("reordered_k1_u0064.checkpoint.json");
+    fs::write(&reordered_path, reordered_raw.as_bytes()).expect("write reordered checkpoint");
+    let out_reordered = dir.join("refused_reordered.html");
+    let err_reordered = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "k1-u0064".to_owned(),
+        "--checkpoint".to_owned(),
+        reordered_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        k1_64_ckpt.state_sha256.clone(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
+        "--cube-table".to_owned(),
+        cube_table_path.to_string_lossy().into_owned(),
+        "--cube-table-sha256".to_owned(),
+        FINAL_CUBE_TABLE_SHA256.to_owned(),
+        "--cube-list".to_owned(),
+        cube_list_path.to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        out_reordered.to_string_lossy().into_owned(),
+    ])
+    .expect_err("reordered JSON placing state_sha256 after head_updates must be refused");
+    assert!(
+        err_reordered.contains("head_updates must be the final top-level key"),
+        "got: {err_reordered}"
+    );
+    assert!(!out_reordered.exists());
+
+    // 7g. Wrong run id, wrong segment, wrong table sha256, wrong index sha256.
+    let wrong_run_path = dir.join("wrong_run.checkpoint.json");
+    let wrong_run = write_marked_test_checkpoint_v1(
+        &wrong_run_path,
+        &k1_64_ckpt,
+        Segment::PickPhase,
+        "k2",
+        64,
+        k1_64_ckpt.head_updates,
+    )
+    .expect("write wrong-run test checkpoint");
+    let out_wrong_run = dir.join("refused_run.html");
+    let err_run = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "k1-u0064".to_owned(),
+        "--checkpoint".to_owned(),
+        wrong_run_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        wrong_run.state_sha256.clone(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
+        "--cube-table".to_owned(),
+        cube_table_path.to_string_lossy().into_owned(),
+        "--cube-table-sha256".to_owned(),
+        FINAL_CUBE_TABLE_SHA256.to_owned(),
+        "--cube-list".to_owned(),
+        cube_list_path.to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        out_wrong_run.to_string_lossy().into_owned(),
+    ])
+    .expect_err("wrong checkpoint run id must be refused");
+    assert!(err_run.contains("checkpoint mismatch"), "got: {err_run}");
+    assert!(!out_wrong_run.exists());
+
+    let wrong_seg_path = dir.join("wrong_seg.checkpoint.json");
+    let wrong_seg = write_marked_test_checkpoint_v1(
+        &wrong_seg_path,
+        &k1_64_ckpt,
+        Segment::BuilderOnly,
+        "k1",
+        64,
+        k1_64_ckpt.head_updates,
+    )
+    .expect("write wrong-segment test checkpoint");
+    let out_wrong_seg = dir.join("refused_seg.html");
+    let err_seg = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "k1-u0064".to_owned(),
+        "--checkpoint".to_owned(),
+        wrong_seg_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        wrong_seg.state_sha256.clone(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
+        "--cube-table".to_owned(),
+        cube_table_path.to_string_lossy().into_owned(),
+        "--cube-table-sha256".to_owned(),
+        FINAL_CUBE_TABLE_SHA256.to_owned(),
+        "--cube-list".to_owned(),
+        cube_list_path.to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        out_wrong_seg.to_string_lossy().into_owned(),
+    ])
+    .expect_err("wrong checkpoint segment must be refused");
+    assert!(err_seg.contains("checkpoint mismatch"), "got: {err_seg}");
+    assert!(!out_wrong_seg.exists());
+
+    let out_wrong_table = dir.join("refused_table.html");
+    let err_table_pin = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "k1-u0064".to_owned(),
+        "--checkpoint".to_owned(),
+        k1_64_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        k1_64_ckpt.state_sha256.clone(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha.clone(),
         "--cube-table".to_owned(),
         cube_table_path.to_string_lossy().into_owned(),
         "--cube-table-sha256".to_owned(),
@@ -1552,20 +1790,24 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
         "--cube-list".to_owned(),
         cube_list_path.to_string_lossy().into_owned(),
         "--out".to_owned(),
-        dir.join("refused_table.html")
-            .to_string_lossy()
-            .into_owned(),
+        out_wrong_table.to_string_lossy().into_owned(),
     ])
     .expect_err("wrong cube-table sha256 must be refused");
-    assert!(err_table_pin.contains("cube table"));
+    assert!(err_table_pin.contains("cube table"), "got: {err_table_pin}");
+    assert!(!out_wrong_table.exists());
 
+    let out_wrong_index = dir.join("refused_index.html");
     let err_index_pin = cli::run_cli_args(&[
         "--run".to_owned(),
         "k1-u0064".to_owned(),
         "--checkpoint".to_owned(),
         k1_64_path.to_string_lossy().into_owned(),
+        "--checkpoint-state-sha256".to_owned(),
+        k1_64_ckpt.state_sha256.clone(),
         "--ordered-pool".to_owned(),
         pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha,
         "--cube-table".to_owned(),
         cube_table_path.to_string_lossy().into_owned(),
         "--cube-table-sha256".to_owned(),
@@ -1575,12 +1817,14 @@ fn real_d6_checkpoint_renders_k1_page_end_to_end_via_cli() {
         "--card-index-sha256".to_owned(),
         "0".repeat(64),
         "--out".to_owned(),
-        dir.join("refused_index.html")
-            .to_string_lossy()
-            .into_owned(),
+        out_wrong_index.to_string_lossy().into_owned(),
     ])
     .expect_err("wrong card-index sha256 must be refused");
-    assert!(err_index_pin.contains("card index pin sha256 mismatch"));
+    assert!(
+        err_index_pin.contains("card index pin sha256 mismatch"),
+        "got: {err_index_pin}"
+    );
+    assert!(!out_wrong_index.exists());
 
     let _ = fs::remove_dir_all(&dir);
 }

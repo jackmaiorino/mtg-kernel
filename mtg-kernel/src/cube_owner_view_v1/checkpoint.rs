@@ -26,7 +26,7 @@ use crate::cube_seat_v1::{
     SeatError, SeatPickView, SeatPicker, LEARNED_SAMPLER_ID,
 };
 use crate::cube_training_driver_v1::{
-    load_checkpoint_read_only_v1, Checkpoint as D6Checkpoint, CHECKPOINT_SCHEMA,
+    load_checkpoint_read_only_bytes_v1, Checkpoint as D6Checkpoint, CHECKPOINT_SCHEMA,
 };
 use crate::m4_sampler_v1::{sample_v1, GRID_SIZE};
 use crate::state::SplitMix64;
@@ -490,19 +490,22 @@ impl OwnerViewSeatFactory for LearnedCheckpointSeats {
     }
 }
 
-/// Loads a real D6 checkpoint through D6's [`load_checkpoint_read_only_v1`]
-/// against a verified D1 [`CubeTableV1`], checks IF2 change 2's raw JSON
-/// `head_updates` final-key format, and builds D3's [`LearnedCheckpointSeats`].
+/// Loads a real D6 checkpoint by reading `path` once, checking IF2 change 2's
+/// raw JSON `head_updates` final-key format on those exact bytes, passing the
+/// same bytes to D6's [`load_checkpoint_read_only_bytes_v1`] against a verified
+/// D1 [`CubeTableV1`], and building D3's [`LearnedCheckpointSeats`].
 pub fn load_real_checkpoint_v1(
     path: &Path,
     table: &CubeTableV1,
     threads: usize,
 ) -> Result<(CheckpointHeader, LearnedCheckpointSeats), String> {
-    let raw_text = fs::read_to_string(path)
+    let raw_bytes = fs::read(path)
         .map_err(|err| format!("failed to read checkpoint {}: {err}", path.display()))?;
-    validate_head_updates_raw_json(&raw_text)
+    let raw_text = std::str::from_utf8(&raw_bytes)
+        .map_err(|err| format!("checkpoint {} is not valid UTF-8: {err}", path.display()))?;
+    validate_head_updates_raw_json(raw_text)
         .map_err(|err| format!("invalid checkpoint {}: {err}", path.display()))?;
-    let (checkpoint, model, rows) = load_checkpoint_read_only_v1(path, table)
+    let (checkpoint, model, rows) = load_checkpoint_read_only_bytes_v1(&raw_bytes, table)
         .map_err(|err| format!("failed to load checkpoint {}: {err}", path.display()))?;
     let header = CheckpointHeader::from_d6_checkpoint(&checkpoint)
         .map_err(|err| format!("invalid checkpoint header {}: {err}", path.display()))?;

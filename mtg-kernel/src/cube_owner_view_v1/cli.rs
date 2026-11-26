@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 pub type Fallible<T> = Result<T, String>;
 
-pub const USAGE: &str = "usage:\n  cube_owner_view_v1 --run RUN_ID --checkpoint CKPT.json --ordered-pool POOL_IDS.json [--ordered-pool-sha256 SHA256] --cube-table TABLE.json --cube-table-sha256 SHA256 (--card-index INDEX_IDS.json | --cube-list CUBE.json) [--card-index-sha256 SHA256] [--checkpoint-state-sha256 SHA256] --out PAGE.html [--json-out DATA.json]\n  cube_owner_view_v1 --fixture --run RUN_ID --checkpoint FIXTURE_CKPT.json --ordered-pool POOL_IDS.json [--ordered-pool-sha256 SHA256] --out PAGE.html [--json-out DATA.json]\n  cube_owner_view_v1 --write-fixture-checkpoints OUT_DIR";
+pub const USAGE: &str = "usage:\n  cube_owner_view_v1 --run RUN_ID --checkpoint CKPT.json --checkpoint-state-sha256 SHA256 --ordered-pool POOL_IDS.json --ordered-pool-sha256 SHA256 --cube-table TABLE.json --cube-table-sha256 SHA256 (--card-index INDEX_IDS.json | --cube-list CUBE.json) [--card-index-sha256 SHA256] --out PAGE.html [--json-out DATA.json]\n  cube_owner_view_v1 --fixture --run RUN_ID --checkpoint FIXTURE_CKPT.json --ordered-pool POOL_IDS.json [--ordered-pool-sha256 SHA256] --out PAGE.html [--json-out DATA.json]\n  cube_owner_view_v1 --write-fixture-checkpoints OUT_DIR";
 
 enum CardIndexSource {
     IdsJson(PathBuf),
@@ -34,12 +34,12 @@ enum Command {
         run_id: String,
         checkpoint_path: PathBuf,
         ordered_pool_path: PathBuf,
-        expected_pool_sha256: Option<String>,
+        expected_pool_sha256: String,
         cube_table_path: PathBuf,
         cube_table_sha256: String,
         card_index_source: CardIndexSource,
         expected_card_index_sha256: Option<String>,
-        expected_checkpoint_state_sha256: Option<String>,
+        expected_checkpoint_state_sha256: String,
         out_html: PathBuf,
         out_json: Option<PathBuf>,
     },
@@ -181,6 +181,12 @@ fn parse_args(args: &[String]) -> Fallible<Command> {
     })?;
     let cube_table_sha256 = cube_table_sha256.ok_or_else(|| {
         format!("missing --cube-table-sha256 for real checkpoint rendering\n{USAGE}")
+    })?;
+    let expected_pool_sha256 = expected_pool_sha256.ok_or_else(|| {
+        format!("missing --ordered-pool-sha256 for real checkpoint rendering\n{USAGE}")
+    })?;
+    let expected_checkpoint_state_sha256 = expected_checkpoint_state_sha256.ok_or_else(|| {
+        format!("missing --checkpoint-state-sha256 for real checkpoint rendering\n{USAGE}")
     })?;
     let card_index_source = match (card_index_path, cube_list_path) {
         (Some(p), None) => CardIndexSource::IdsJson(p),
@@ -360,7 +366,7 @@ pub fn run_cli_args(args: &[String]) -> Fallible<()> {
         } => {
             let _page_spec = resolve_page_spec(&run_id).map_err(|err| err.to_string())?;
             let (pool, pool_sha) =
-                load_ordered_pool(&ordered_pool_path, expected_pool_sha256.as_deref())?;
+                load_ordered_pool(&ordered_pool_path, Some(expected_pool_sha256.as_str()))?;
             let card_index =
                 load_card_index(&card_index_source, expected_card_index_sha256.as_deref())?;
             for &id in pool.ids() {
@@ -378,13 +384,11 @@ pub fn run_cli_args(args: &[String]) -> Fallible<()> {
                     )
                 })?;
             let (header, seats) = load_real_checkpoint_v1(&checkpoint_path, &table, 1)?;
-            if let Some(expected_state) = expected_checkpoint_state_sha256.as_deref() {
-                if header.state_sha256 != expected_state {
-                    return Err(format!(
-                        "checkpoint state_sha256 mismatch: expected {expected_state:?}, got {:?}",
-                        header.state_sha256
-                    ));
-                }
+            if header.state_sha256 != expected_checkpoint_state_sha256 {
+                return Err(format!(
+                    "checkpoint state_sha256 mismatch: expected {:?}, got {:?}",
+                    expected_checkpoint_state_sha256, header.state_sha256
+                ));
             }
             let (data, html) = render_owner_view_page(&run_id, &pool, &pool_sha, &header, &seats)
                 .map_err(|err| err.to_string())?;

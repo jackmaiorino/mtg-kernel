@@ -603,12 +603,12 @@ impl Checkpoint {
 
 pub type LoadedCheckpointV1 = (Checkpoint, Arc<ModelV1>, Arc<ModelCardRowsV1>);
 
-/// Loads an owner-view checkpoint against external rows from a verified D1 table.
-pub fn load_checkpoint_read_only_v1(
-    path: &Path,
+/// Loads an owner-view checkpoint from raw JSON bytes against external rows from a verified D1 table.
+pub fn load_checkpoint_read_only_bytes_v1(
+    bytes: &[u8],
     table: &CubeTableV1,
 ) -> Result<LoadedCheckpointV1, TrainingDriverError> {
-    let checkpoint: Checkpoint = read_json(path)?;
+    let checkpoint: Checkpoint = serde_json::from_slice(bytes)?;
     checkpoint.validate()?;
     if checkpoint.card_index_sha256.as_deref() != Some(table.index_pin()) {
         return Err(invalid(
@@ -646,6 +646,36 @@ pub fn load_checkpoint_read_only_v1(
         .restore(model, checkpoint.head_updates)
         .map_err(TrainingDriverError::Update)?;
     Ok((checkpoint, Arc::new(model), Arc::new(rows)))
+}
+
+/// Loads an owner-view checkpoint against external rows from a verified D1 table.
+pub fn load_checkpoint_read_only_v1(
+    path: &Path,
+    table: &CubeTableV1,
+) -> Result<LoadedCheckpointV1, TrainingDriverError> {
+    let bytes = fs::read(path)?;
+    load_checkpoint_read_only_bytes_v1(&bytes, table)
+}
+
+#[cfg(feature = "eternal-fixtures")]
+/// Writes a copy of `checkpoint` with updated `segment`, `run`, `update`, and
+/// `head_updates`, re-sealed with D6's own state digest, for test fixtures.
+pub fn write_marked_test_checkpoint_v1(
+    path: &Path,
+    checkpoint: &Checkpoint,
+    segment: Segment,
+    run: &str,
+    update: u64,
+    head_updates: HeadUpdates,
+) -> Result<Checkpoint, TrainingDriverError> {
+    let mut marked = checkpoint.clone();
+    marked.segment = segment;
+    marked.run = run.to_owned();
+    marked.update = update;
+    marked.head_updates = head_updates;
+    marked.refresh_pin()?;
+    fs::write(path, json_bytes(&marked)?)?;
+    Ok(marked)
 }
 
 fn model_layout_pin(model: &ModelV1) -> String {
