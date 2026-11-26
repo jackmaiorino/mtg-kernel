@@ -1,0 +1,2373 @@
+{
+  "schema": "mtg-kernel-cube-a15-golden/v1",
+  "kernel_carddb_hash": "7fd442a712f0cc4b",
+  "namespace": "read-gate-b",
+  "run": "v1",
+  "unit": 0,
+  "chair": 0,
+  "dealer_index": 0,
+  "pool": {
+    "kernel_carddb_hash": "7fd442a712f0cc4b",
+    "spells": [
+      {
+        "card_id": 8,
+        "name": "Brainstorm",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 13,
+        "name": "Chain Lightning",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 17,
+        "name": "Counterspell",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 18,
+        "name": "Cryogen Relic",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 24,
+        "name": "Duress",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 26,
+        "name": "Elvish Mystic",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 34,
+        "name": "Faithless Looting",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 37,
+        "name": "Fireblast",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 42,
+        "name": "Generous Ent",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 63,
+        "name": "Lava Dart",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 66,
+        "name": "Lightning Bolt",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 67,
+        "name": "Llanowar Elves",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 68,
+        "name": "Lorien Revealed",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 85,
+        "name": "Ponder",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 86,
+        "name": "Preordain",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 91,
+        "name": "Quirion Ranger",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 109,
+        "name": "Spell Pierce",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 116,
+        "name": "Thought Scour",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 127,
+        "name": "Voldaren Epicure",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 137,
+        "name": "Lotus Petal",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 143,
+        "name": "Troll of Khazad-dum",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 172,
+        "name": "Snuff Out",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 189,
+        "name": "Expedition Map",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 193,
+        "name": "Burst Lightning",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 198,
+        "name": "Consider",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 208,
+        "name": "Get Lost",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 210,
+        "name": "Sentinel of the Nameless City",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 213,
+        "name": "Deep-Cavern Bat",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 222,
+        "name": "Adeline, Resplendent Cathar",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 245,
+        "name": "Monastery Swiftspear",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 247,
+        "name": "Slickshot Show-Off",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 248,
+        "name": "Sanguine Evangelist",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 258,
+        "name": "Cori-Steel Cutter",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 261,
+        "name": "Overlord of the Mistmoors",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 264,
+        "name": "Enduring Innocence",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 334,
+        "name": "Stormchaser's Talent",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 337,
+        "name": "Liliana of the Veil",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 339,
+        "name": "Fable of the Mirror-Breaker",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 348,
+        "name": "Agatha's Soul Cauldron",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 356,
+        "name": "Sheoldred, the Apocalypse",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 357,
+        "name": "Dark Confidant",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 359,
+        "name": "Abrade",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 364,
+        "name": "Stock Up",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 367,
+        "name": "Cut Down",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 381,
+        "name": "Sheoldred's Edict",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 407,
+        "name": "Tear Asunder",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 437,
+        "name": "Etali, Primal Conqueror",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 439,
+        "name": "Tishana's Tidebinder",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 458,
+        "name": "Lose Focus",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 472,
+        "name": "Thoughtseize",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 473,
+        "name": "Fatal Push",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 474,
+        "name": "Unholy Heat",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 475,
+        "name": "Daze",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 476,
+        "name": "Force of Will",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 478,
+        "name": "Brazen Borrower",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 479,
+        "name": "Mishra's Bauble",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 480,
+        "name": "Urza's Bauble",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 481,
+        "name": "Dragon's Rage Channeler",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 483,
+        "name": "Moonshadow",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 484,
+        "name": "Nethergoyf",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 485,
+        "name": "Orcish Bowmasters",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 487,
+        "name": "Tamiyo, Inquisitive Student",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 488,
+        "name": "Bilbo, Thief in the Night",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 490,
+        "name": "The One Ring",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 491,
+        "name": "Chrome Mox",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 493,
+        "name": "Sink into Stupor",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 497,
+        "name": "Dark Ritual",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 504,
+        "name": "Doomsday",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 505,
+        "name": "Thassa's Oracle",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 506,
+        "name": "Jace, Wielder of Mysteries",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 507,
+        "name": "Lion's Eye Diamond",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 508,
+        "name": "Show and Tell",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 509,
+        "name": "Sneak Attack",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 512,
+        "name": "Emrakul, the Aeons Torn",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 520,
+        "name": "Mox Emerald",
+        "colors": [],
+        "is_land": false
+      },
+      {
+        "card_id": 532,
+        "name": "Ancestral Recall",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 533,
+        "name": "Time Walk",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 535,
+        "name": "Tinker",
+        "colors": [
+          "U"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 553,
+        "name": "Witch Enchanter",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 557,
+        "name": "Demonic Tutor",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 562,
+        "name": "Prismatic Ending",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 564,
+        "name": "Swords to Plowshares",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 569,
+        "name": "Dismember",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 576,
+        "name": "Portable Hole",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 582,
+        "name": "Underworld Breach",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 593,
+        "name": "Goblin Bombardment",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 597,
+        "name": "Galvanic Discharge",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 600,
+        "name": "Leyline Binding",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 602,
+        "name": "Phelia, Exuberant Shepherd",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 604,
+        "name": "Guide of Souls",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 605,
+        "name": "Ocelot Pride",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 606,
+        "name": "Ajani, Nacatl Pariah",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 610,
+        "name": "Voice of Victory",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 635,
+        "name": "Crop Rotation",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 665,
+        "name": "Bolas's Citadel",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 676,
+        "name": "Oath of Druids",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 682,
+        "name": "Suplex",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 684,
+        "name": "Tendrils of Agony",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 690,
+        "name": "Vampiric Tutor",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 692,
+        "name": "Yawgmoth's Will",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 708,
+        "name": "Eagles of the North",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 720,
+        "name": "Malevolent Rumble",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 721,
+        "name": "Mana Tithe",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 737,
+        "name": "Thraben Inspector",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 745,
+        "name": "Animate Dead",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 747,
+        "name": "Archon of Cruelty",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 763,
+        "name": "Goblin Engineer",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 764,
+        "name": "Goblin Welder",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 766,
+        "name": "Griselbrand",
+        "colors": [
+          "B"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 767,
+        "name": "Icetill Explorer",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 769,
+        "name": "Legion Extruder",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 803,
+        "name": "Carnivorous Cultivator",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 828,
+        "name": "Ragavan, Nimble Pilferer",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 903,
+        "name": "Erode",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 905,
+        "name": "Flickerwisp",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 910,
+        "name": "Lion Sash",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 911,
+        "name": "Loran of the Third Path",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 914,
+        "name": "Once Upon a Time",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 920,
+        "name": "Skyclave Apparition",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 922,
+        "name": "Solitude",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 924,
+        "name": "Stoneforge Mystic",
+        "colors": [
+          "W"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 926,
+        "name": "Sylvan Safekeeper",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 985,
+        "name": "Broadside Bombardiers",
+        "colors": [
+          "R"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 991,
+        "name": "Elvish Reclaimer",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 992,
+        "name": "Endurance",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 997,
+        "name": "Green Sun's Zenith",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1159,
+        "name": "Birds of Paradise",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1269,
+        "name": "Force of Vigor",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1396,
+        "name": "Mutagenic Growth",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1397,
+        "name": "Natural Order",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1399,
+        "name": "Pest Infestation",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1400,
+        "name": "Tamiyo's Safekeeping",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1461,
+        "name": "Fastbond",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1468,
+        "name": "Formidable Speaker",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      },
+      {
+        "card_id": 1473,
+        "name": "Devoted Druid",
+        "colors": [
+          "G"
+        ],
+        "is_land": false
+      }
+    ],
+    "nonbasic_lands": [
+      {
+        "card_id": 284,
+        "name": "Blackcleave Cliffs",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 285,
+        "name": "Blooming Marsh",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 286,
+        "name": "Concealed Courtyard",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 287,
+        "name": "Copperline Gorge",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 288,
+        "name": "Darkslick Shores",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 289,
+        "name": "Inspiring Vantage",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 290,
+        "name": "Razorverge Thicket",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 291,
+        "name": "Seachrome Coast",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 292,
+        "name": "Spirebluff Canal",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 301,
+        "name": "Riverpyre Verge",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 302,
+        "name": "Thornspire Verge",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 303,
+        "name": "Wastewood Verge",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 304,
+        "name": "Elegant Parlor",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 305,
+        "name": "Lush Portico",
+        "colors": [],
+        "is_land": true
+      },
+      {
+        "card_id": 306,
+        "name": "Underground Mortuary",
+        "colors": [],
+        "is_land": true
+      }
+    ],
+    "basics": [
+      {
+        "card_id": 39,
+        "name": "Forest",
+        "colors": [
+          "G"
+        ],
+        "is_land": true,
+        "color": "G"
+      },
+      {
+        "card_id": 60,
+        "name": "Island",
+        "colors": [
+          "U"
+        ],
+        "is_land": true,
+        "color": "U"
+      },
+      {
+        "card_id": 76,
+        "name": "Mountain",
+        "colors": [
+          "R"
+        ],
+        "is_land": true,
+        "color": "R"
+      },
+      {
+        "card_id": 114,
+        "name": "Swamp",
+        "colors": [
+          "B"
+        ],
+        "is_land": true,
+        "color": "B"
+      },
+      {
+        "card_id": 192,
+        "name": "Plains",
+        "colors": [
+          "W"
+        ],
+        "is_land": true,
+        "color": "W"
+      }
+    ]
+  },
+  "constants": {
+    "deck_size": 40,
+    "colours_per_seat": 2,
+    "nonland_spells": 23,
+    "nonbasic_lands": 3,
+    "basic_split": "even_first_colour_extra",
+    "pairs_per_update": 2
+  },
+  "drafted_deck": [
+    8,
+    17,
+    18,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    68,
+    85,
+    86,
+    109,
+    116,
+    137,
+    189,
+    192,
+    192,
+    192,
+    192,
+    192,
+    192,
+    192,
+    192,
+    192,
+    198,
+    208,
+    222,
+    248,
+    261,
+    264,
+    284,
+    285,
+    286,
+    334,
+    348,
+    364,
+    439
+  ],
+  "expected": {
+    "dealt": {
+      "function": "cube_deal_b_v1",
+      "key": [
+        "read-gate-b",
+        "v1",
+        0
+      ]
+    },
+    "opponent_mainboard": [
+      13,
+      34,
+      66,
+      76,
+      76,
+      76,
+      76,
+      76,
+      76,
+      76,
+      114,
+      114,
+      114,
+      114,
+      114,
+      114,
+      114,
+      288,
+      301,
+      302,
+      337,
+      339,
+      357,
+      367,
+      437,
+      473,
+      474,
+      479,
+      481,
+      483,
+      484,
+      490,
+      504,
+      507,
+      520,
+      582,
+      684,
+      692,
+      764,
+      769
+    ],
+    "games": [
+      {
+        "slot": 0,
+        "episode": 0,
+        "focal_seat": 0,
+        "game_seed": 8481385000662376452,
+        "env_seed": 8678174666284383765,
+        "action_seed": 11918660577939773663,
+        "p0_deck_ids": [
+          8,
+          17,
+          18,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          68,
+          85,
+          86,
+          109,
+          116,
+          137,
+          189,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          198,
+          208,
+          222,
+          248,
+          261,
+          264,
+          284,
+          285,
+          286,
+          334,
+          348,
+          364,
+          439
+        ],
+        "p1_deck_ids": [
+          13,
+          34,
+          66,
+          76,
+          76,
+          76,
+          76,
+          76,
+          76,
+          76,
+          114,
+          114,
+          114,
+          114,
+          114,
+          114,
+          114,
+          288,
+          301,
+          302,
+          337,
+          339,
+          357,
+          367,
+          437,
+          473,
+          474,
+          479,
+          481,
+          483,
+          484,
+          490,
+          504,
+          507,
+          520,
+          582,
+          684,
+          692,
+          764,
+          769
+        ],
+        "p0_expanded_library": [
+          60,
+          208,
+          248,
+          60,
+          109,
+          85,
+          60,
+          439,
+          116,
+          192,
+          192,
+          192,
+          222,
+          60,
+          348,
+          264,
+          192,
+          86,
+          198,
+          284,
+          60,
+          192,
+          189,
+          68,
+          192,
+          18,
+          261,
+          17,
+          60,
+          60,
+          60,
+          192,
+          364,
+          137,
+          286,
+          8,
+          285,
+          192,
+          334,
+          192
+        ],
+        "p1_expanded_library": [
+          114,
+          479,
+          582,
+          437,
+          483,
+          769,
+          34,
+          692,
+          507,
+          520,
+          76,
+          481,
+          357,
+          76,
+          490,
+          114,
+          367,
+          66,
+          114,
+          474,
+          114,
+          76,
+          337,
+          339,
+          76,
+          301,
+          76,
+          473,
+          288,
+          76,
+          504,
+          764,
+          684,
+          13,
+          484,
+          114,
+          76,
+          302,
+          114,
+          114
+        ],
+        "p0_opening_hand": [
+          60,
+          208,
+          248,
+          60,
+          109,
+          85,
+          60
+        ],
+        "p1_opening_hand": [
+          114,
+          479,
+          582,
+          437,
+          483,
+          769,
+          34
+        ],
+        "p0_remaining_library": [
+          439,
+          116,
+          192,
+          192,
+          192,
+          222,
+          60,
+          348,
+          264,
+          192,
+          86,
+          198,
+          284,
+          60,
+          192,
+          189,
+          68,
+          192,
+          18,
+          261,
+          17,
+          60,
+          60,
+          60,
+          192,
+          364,
+          137,
+          286,
+          8,
+          285,
+          192,
+          334,
+          192
+        ],
+        "p1_remaining_library": [
+          692,
+          507,
+          520,
+          76,
+          481,
+          357,
+          76,
+          490,
+          114,
+          367,
+          66,
+          114,
+          474,
+          114,
+          76,
+          337,
+          339,
+          76,
+          301,
+          76,
+          473,
+          288,
+          76,
+          504,
+          764,
+          684,
+          13,
+          484,
+          114,
+          76,
+          302,
+          114,
+          114
+        ]
+      },
+      {
+        "slot": 1,
+        "episode": 1,
+        "focal_seat": 1,
+        "game_seed": 7892586756982791983,
+        "env_seed": 2338604739057687919,
+        "action_seed": 13798080321946843156,
+        "p0_deck_ids": [
+          13,
+          34,
+          66,
+          76,
+          76,
+          76,
+          76,
+          76,
+          76,
+          76,
+          114,
+          114,
+          114,
+          114,
+          114,
+          114,
+          114,
+          288,
+          301,
+          302,
+          337,
+          339,
+          357,
+          367,
+          437,
+          473,
+          474,
+          479,
+          481,
+          483,
+          484,
+          490,
+          504,
+          507,
+          520,
+          582,
+          684,
+          692,
+          764,
+          769
+        ],
+        "p1_deck_ids": [
+          8,
+          17,
+          18,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          68,
+          85,
+          86,
+          109,
+          116,
+          137,
+          189,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          198,
+          208,
+          222,
+          248,
+          261,
+          264,
+          284,
+          285,
+          286,
+          334,
+          348,
+          364,
+          439
+        ],
+        "p0_expanded_library": [
+          337,
+          114,
+          479,
+          114,
+          76,
+          582,
+          76,
+          301,
+          34,
+          481,
+          114,
+          474,
+          13,
+          764,
+          114,
+          66,
+          114,
+          76,
+          76,
+          483,
+          692,
+          76,
+          473,
+          490,
+          288,
+          114,
+          357,
+          484,
+          367,
+          437,
+          76,
+          507,
+          684,
+          114,
+          504,
+          302,
+          339,
+          520,
+          76,
+          769
+        ],
+        "p1_expanded_library": [
+          192,
+          60,
+          364,
+          284,
+          60,
+          248,
+          439,
+          189,
+          192,
+          192,
+          60,
+          285,
+          60,
+          222,
+          198,
+          264,
+          116,
+          68,
+          192,
+          192,
+          208,
+          85,
+          286,
+          348,
+          109,
+          17,
+          261,
+          60,
+          192,
+          137,
+          192,
+          18,
+          334,
+          60,
+          60,
+          192,
+          60,
+          86,
+          192,
+          8
+        ],
+        "p0_opening_hand": [
+          337,
+          114,
+          479,
+          114,
+          76,
+          582,
+          76
+        ],
+        "p1_opening_hand": [
+          192,
+          60,
+          364,
+          284,
+          60,
+          248,
+          439
+        ],
+        "p0_remaining_library": [
+          301,
+          34,
+          481,
+          114,
+          474,
+          13,
+          764,
+          114,
+          66,
+          114,
+          76,
+          76,
+          483,
+          692,
+          76,
+          473,
+          490,
+          288,
+          114,
+          357,
+          484,
+          367,
+          437,
+          76,
+          507,
+          684,
+          114,
+          504,
+          302,
+          339,
+          520,
+          76,
+          769
+        ],
+        "p1_remaining_library": [
+          189,
+          192,
+          192,
+          60,
+          285,
+          60,
+          222,
+          198,
+          264,
+          116,
+          68,
+          192,
+          192,
+          208,
+          85,
+          286,
+          348,
+          109,
+          17,
+          261,
+          60,
+          192,
+          137,
+          192,
+          18,
+          334,
+          60,
+          60,
+          192,
+          60,
+          86,
+          192,
+          8
+        ]
+      },
+      {
+        "slot": 2,
+        "episode": 2,
+        "focal_seat": 0,
+        "game_seed": 4640083385131758369,
+        "env_seed": 7372297979849057893,
+        "action_seed": 17373600096275139650,
+        "p0_deck_ids": [
+          8,
+          17,
+          18,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          68,
+          85,
+          86,
+          109,
+          116,
+          137,
+          189,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          198,
+          208,
+          222,
+          248,
+          261,
+          264,
+          284,
+          285,
+          286,
+          334,
+          348,
+          364,
+          439
+        ],
+        "p1_deck_ids": [
+          13,
+          34,
+          66,
+          76,
+          76,
+          76,
+          76,
+          76,
+          76,
+          76,
+          114,
+          114,
+          114,
+          114,
+          114,
+          114,
+          114,
+          288,
+          301,
+          302,
+          337,
+          339,
+          357,
+          367,
+          437,
+          473,
+          474,
+          479,
+          481,
+          483,
+          484,
+          490,
+          504,
+          507,
+          520,
+          582,
+          684,
+          692,
+          764,
+          769
+        ],
+        "p0_expanded_library": [
+          222,
+          18,
+          192,
+          60,
+          60,
+          60,
+          189,
+          284,
+          109,
+          60,
+          285,
+          192,
+          348,
+          192,
+          364,
+          85,
+          334,
+          60,
+          198,
+          192,
+          286,
+          137,
+          17,
+          116,
+          8,
+          192,
+          68,
+          60,
+          192,
+          60,
+          264,
+          86,
+          192,
+          439,
+          261,
+          248,
+          60,
+          192,
+          192,
+          208
+        ],
+        "p1_expanded_library": [
+          692,
+          76,
+          357,
+          114,
+          769,
+          483,
+          76,
+          479,
+          76,
+          484,
+          114,
+          114,
+          114,
+          337,
+          367,
+          520,
+          582,
+          490,
+          13,
+          76,
+          302,
+          504,
+          301,
+          76,
+          474,
+          76,
+          66,
+          473,
+          507,
+          684,
+          76,
+          114,
+          288,
+          34,
+          437,
+          114,
+          481,
+          114,
+          339,
+          764
+        ],
+        "p0_opening_hand": [
+          222,
+          18,
+          192,
+          60,
+          60,
+          60,
+          189
+        ],
+        "p1_opening_hand": [
+          692,
+          76,
+          357,
+          114,
+          769,
+          483,
+          76
+        ],
+        "p0_remaining_library": [
+          284,
+          109,
+          60,
+          285,
+          192,
+          348,
+          192,
+          364,
+          85,
+          334,
+          60,
+          198,
+          192,
+          286,
+          137,
+          17,
+          116,
+          8,
+          192,
+          68,
+          60,
+          192,
+          60,
+          264,
+          86,
+          192,
+          439,
+          261,
+          248,
+          60,
+          192,
+          192,
+          208
+        ],
+        "p1_remaining_library": [
+          479,
+          76,
+          484,
+          114,
+          114,
+          114,
+          337,
+          367,
+          520,
+          582,
+          490,
+          13,
+          76,
+          302,
+          504,
+          301,
+          76,
+          474,
+          76,
+          66,
+          473,
+          507,
+          684,
+          76,
+          114,
+          288,
+          34,
+          437,
+          114,
+          481,
+          114,
+          339,
+          764
+        ]
+      },
+      {
+        "slot": 3,
+        "episode": 3,
+        "focal_seat": 1,
+        "game_seed": 8718213349237730380,
+        "env_seed": 15810899131153318747,
+        "action_seed": 9258471796834980346,
+        "p0_deck_ids": [
+          13,
+          34,
+          66,
+          76,
+          76,
+          76,
+          76,
+          76,
+          76,
+          76,
+          114,
+          114,
+          114,
+          114,
+          114,
+          114,
+          114,
+          288,
+          301,
+          302,
+          337,
+          339,
+          357,
+          367,
+          437,
+          473,
+          474,
+          479,
+          481,
+          483,
+          484,
+          490,
+          504,
+          507,
+          520,
+          582,
+          684,
+          692,
+          764,
+          769
+        ],
+        "p1_deck_ids": [
+          8,
+          17,
+          18,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          60,
+          68,
+          85,
+          86,
+          109,
+          116,
+          137,
+          189,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          192,
+          198,
+          208,
+          222,
+          248,
+          261,
+          264,
+          284,
+          285,
+          286,
+          334,
+          348,
+          364,
+          439
+        ],
+        "p0_expanded_library": [
+          483,
+          474,
+          582,
+          114,
+          367,
+          114,
+          114,
+          114,
+          66,
+          769,
+          114,
+          13,
+          34,
+          507,
+          479,
+          337,
+          481,
+          473,
+          684,
+          520,
+          76,
+          504,
+          357,
+          764,
+          490,
+          437,
+          76,
+          301,
+          114,
+          288,
+          484,
+          692,
+          76,
+          302,
+          76,
+          76,
+          76,
+          76,
+          114,
+          339
+        ],
+        "p1_expanded_library": [
+          198,
+          284,
+          264,
+          60,
+          18,
+          60,
+          192,
+          60,
+          116,
+          285,
+          334,
+          192,
+          85,
+          192,
+          192,
+          137,
+          192,
+          68,
+          189,
+          286,
+          86,
+          60,
+          17,
+          60,
+          60,
+          109,
+          208,
+          60,
+          192,
+          192,
+          60,
+          192,
+          192,
+          248,
+          348,
+          439,
+          8,
+          364,
+          261,
+          222
+        ],
+        "p0_opening_hand": [
+          483,
+          474,
+          582,
+          114,
+          367,
+          114,
+          114
+        ],
+        "p1_opening_hand": [
+          198,
+          284,
+          264,
+          60,
+          18,
+          60,
+          192
+        ],
+        "p0_remaining_library": [
+          114,
+          66,
+          769,
+          114,
+          13,
+          34,
+          507,
+          479,
+          337,
+          481,
+          473,
+          684,
+          520,
+          76,
+          504,
+          357,
+          764,
+          490,
+          437,
+          76,
+          301,
+          114,
+          288,
+          484,
+          692,
+          76,
+          302,
+          76,
+          76,
+          76,
+          76,
+          114,
+          339
+        ],
+        "p1_remaining_library": [
+          60,
+          116,
+          285,
+          334,
+          192,
+          85,
+          192,
+          192,
+          137,
+          192,
+          68,
+          189,
+          286,
+          86,
+          60,
+          17,
+          60,
+          60,
+          109,
+          208,
+          60,
+          192,
+          192,
+          60,
+          192,
+          192,
+          248,
+          348,
+          439,
+          8,
+          364,
+          261,
+          222
+        ]
+      }
+    ]
+  }
+}

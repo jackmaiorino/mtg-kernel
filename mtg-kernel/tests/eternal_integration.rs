@@ -4,10 +4,14 @@
 mod cube_b_census_v1;
 #[path = "eternal/cube_deck_signal_v1.rs"]
 mod cube_deck_signal_v1;
+#[path = "eternal/cube_draft_build_v1.rs"]
+mod cube_draft_build_v1;
 #[path = "eternal/cube_draft_v1.rs"]
 mod cube_draft_v1;
 #[path = "eternal/cube_foreign_adventure_v1.rs"]
 mod cube_foreign_adventure_v1;
+#[path = "eternal/cube_pod_runner_v1.rs"]
+mod cube_pod_runner_v1;
 #[path = "eternal/eternal_bo3_v1.rs"]
 mod eternal_bo3_v1;
 #[path = "eternal/eternal_catalog_v1.rs"]

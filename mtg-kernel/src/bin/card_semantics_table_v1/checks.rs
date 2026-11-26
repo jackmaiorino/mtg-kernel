@@ -769,8 +769,8 @@ pub fn cube_report(
     report
 }
 
-/// The no-reader guarantee: no source outside this generator names the
-/// table, its directory or its generator.
+/// Find references to the table, its directory, or its generator outside
+/// the generator and the declared consumers.
 pub fn unreferenced(repo: &Path) -> Vec<String> {
     let needles = [
         "card_semantics_table_v1",
@@ -789,11 +789,18 @@ pub fn unreferenced(repo: &Path) -> Vec<String> {
         "scripts",
         "viewer",
     ];
-    let own = [repo.join("mtg-kernel/src/bin/card_semantics_table_v1")];
+    let generator = repo.join("mtg-kernel/src/bin/card_semantics_table_v1");
+    // M4 D1 card index and loader under D0.3 to D0.5.
+    let declared_consumer_dir = repo.join("mtg-kernel/src/cube_draft_build_v1");
+    // M4 D1 card index and loader integration tests under D0.3 to D0.5.
+    let declared_consumer_test = repo.join("mtg-kernel/tests/eternal/cube_draft_build_v1.rs");
     let mut hits = Vec::new();
     let mut stack: Vec<std::path::PathBuf> = roots.iter().map(|r| repo.join(r)).collect();
     while let Some(path) = stack.pop() {
-        if own.iter().any(|o| path.starts_with(o)) {
+        if path.starts_with(&generator)
+            || path.starts_with(&declared_consumer_dir)
+            || (path.components().eq(declared_consumer_test.components()) && path.is_file())
+        {
             continue;
         }
         if path.is_dir() {
