@@ -41,6 +41,9 @@ pub const POD_RECORD_SCHEMA: &str = "mtg-kernel-cube-pod-record/v2";
 pub const CLIENT_NAMESPACE: &str = "client-pods";
 /// `GameEnd::Terminal` fields for a watchdog expiry (`READ-PLAN-v1` section 5).
 pub const WATCHDOG_CODE: &str = "watchdog";
+/// Supervisor failures are intercepted before D5 constructs a game record or retries.
+pub const ATTEMPT_PROCESS_DEATH: &str = "attempt_worker_process_death";
+pub const ATTEMPT_WORKER_IO: &str = "attempt_worker_io";
 pub const WATCHDOG_CLASSIFICATION: &str = "watchdog";
 pub const WATCHDOG_REASON: &str = "watchdog_seconds";
 /// `stop_kind` recorded for a watchdog expiry.
@@ -105,6 +108,13 @@ pub enum PodRunnerError {
     Io(String),
     /// Worker thread spawn or join failure.
     Thread(String),
+    /// The supervised game process terminated during this attempt.
+    ProcessDeath {
+        pod: u64,
+        game: u32,
+        attempt: u8,
+        exit: String,
+    },
 }
 
 impl fmt::Display for PodRunnerError {
@@ -146,6 +156,15 @@ impl fmt::Display for PodRunnerError {
             },
             PodRunnerError::Io(message) => write!(f, "I/O error: {message}"),
             PodRunnerError::Thread(message) => write!(f, "worker thread error: {message}"),
+            PodRunnerError::ProcessDeath {
+                pod,
+                game,
+                attempt,
+                exit,
+            } => write!(
+                f,
+                "attempt worker died in pod {pod}, game {game}, attempt {attempt}: {exit}"
+            ),
         }
     }
 }
@@ -1020,6 +1039,7 @@ pub(crate) type GameCompleteHook<'a> =
     dyn Fn(&PodGameRecord, &[AttemptTiming]) -> Result<(), String> + Sync + 'a;
 
 pub(crate) struct ExecOptions<'a, 'b> {
+    pub(crate) pod_index: u64,
     pub(crate) caps: PodCaps,
     pub(crate) watchdog_override: Option<Duration>,
     pub(crate) workers: usize,
@@ -1037,6 +1057,7 @@ pub(crate) struct ExecOutput {
 }
 
 struct ExecContext<'a, 'b> {
+    pod_index: u64,
     tasks: &'a [GameTask],
     built_decks: &'a [Deck],
     pilot: &'a (dyn GamePilot + Sync),
@@ -1073,6 +1094,19 @@ fn play_game_task(
         let started = Instant::now();
         let (outcome, stalled) =
             observe_decisions(ctx.watchdog, || ctx.pilot.play(&spec, &ctx.game_caps));
+        if let GameEnd::SessionError { code, message } = &outcome.end {
+            if code == ATTEMPT_PROCESS_DEATH {
+                return Err(PodRunnerError::ProcessDeath {
+                    pod: ctx.pod_index,
+                    game: task.game,
+                    attempt,
+                    exit: message.clone(),
+                });
+            }
+            if code == ATTEMPT_WORKER_IO {
+                return Err(PodRunnerError::Io(message.clone()));
+            }
+        }
         let elapsed = started.elapsed();
         let elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
         timings.push(AttemptTiming {
@@ -1176,6 +1210,7 @@ pub(crate) fn execute_game_tasks_with_options(
         .unwrap_or_else(|| Duration::from_secs(options.caps.watchdog_seconds));
     let watchdog_tripped = AtomicBool::new(false);
     let ctx = ExecContext {
+        pod_index: options.pod_index,
         tasks,
         built_decks,
         pilot,
@@ -1190,6 +1225,7 @@ pub(crate) fn execute_game_tasks_with_options(
 
     let worker_count = options.workers.max(1).min(tasks.len());
     let next_index = AtomicUsize::new(0);
+    let worker_failed = AtomicBool::new(false);
     type GameResult = Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>;
     type GameSlot = Mutex<Option<GameResult>>;
     let slots: Vec<GameSlot> = (0..tasks.len()).map(|_| Mutex::new(None)).collect();
@@ -1200,18 +1236,25 @@ pub(crate) fn execute_game_tasks_with_options(
             let next_index = &next_index;
             let slots = &slots;
             let ctx = &ctx;
+            let worker_failed = &worker_failed;
             let handle = std::thread::Builder::new()
                 .name(format!("cube-pod-w{worker_id}"))
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || loop {
-                    if ctx.stop_on_watchdog && ctx.watchdog_tripped.load(Ordering::Acquire) {
-                        break;
+                    if worker_failed.load(Ordering::Acquire)
+                        || (ctx.stop_on_watchdog && ctx.watchdog_tripped.load(Ordering::Acquire))
+                    {
+                        return Ok(());
                     }
                     let index = next_index.fetch_add(1, Ordering::Relaxed);
                     if index >= ctx.tasks.len() {
-                        break;
+                        return Ok(());
                     }
                     let result = play_game_task(&ctx.tasks[index], ctx);
+                    if let Err(error @ PodRunnerError::ProcessDeath { .. }) = result {
+                        worker_failed.store(true, Ordering::Release);
+                        return Err(error);
+                    }
                     *slots[index].lock().expect("game result slot lock") = Some(result);
                 })
                 .map_err(|error| PodRunnerError::Thread(error.to_string()))?;
@@ -1220,7 +1263,7 @@ pub(crate) fn execute_game_tasks_with_options(
         for handle in handles {
             handle
                 .join()
-                .map_err(|_| PodRunnerError::Thread("worker thread panicked".to_owned()))?;
+                .map_err(|_| PodRunnerError::Thread("worker thread panicked".to_owned()))??;
         }
         Ok(())
     })?;
@@ -1631,6 +1674,7 @@ pub fn run_training_pod(
 
     // 4. Execute all 70 games across worker threads and assemble in logical order.
     let exec_opts = ExecOptions {
+        pod_index: config.pod_index,
         caps: config.caps,
         watchdog_override: None,
         workers: config.workers,
@@ -1880,6 +1924,7 @@ pub fn run_read_plan(
     }
 
     let exec_opts = ExecOptions {
+        pod_index: plan.pod_index,
         caps: plan.caps,
         watchdog_override: None,
         workers,

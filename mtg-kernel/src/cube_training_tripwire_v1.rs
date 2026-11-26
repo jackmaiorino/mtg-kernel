@@ -87,6 +87,11 @@ fn pinned_bytes(path: &Path, pin: &str, artifact: &str) -> Result<Vec<u8>, Train
 }
 
 impl CensusBaselinePin {
+    /// Validate the declared census inputs without opening or mutating a run.
+    pub fn verify_files(&self, files: &CensusBaselineFiles) -> Result<(), TrainingDriverError> {
+        self.load(files).map(drop)
+    }
+
     pub(super) fn matches(&self, pins: &PodPins) -> bool {
         pins.binary.as_deref() == Some(&self.build_sha256)
             && pins.fence_record.as_deref() == Some(&self.fence_sha256)

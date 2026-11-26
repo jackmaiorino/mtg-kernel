@@ -5,7 +5,8 @@
 //! cube_list, ordered_pool, card_database (cube_card_ids/v1 export), fence,
 //! read_plan and manifest is {"path":"...","sha256":"..."}.
 //! Also supply binary_sha256, card_index_sha256, initial_state_sha256 and
-//! manifest_prefix_sha256. Optional baseline contains pin (CensusBaselinePin)
+//! manifest_prefix_sha256, host and build_profile (the declared provenance labels).
+//! Optional baseline contains pin (CensusBaselinePin)
 //! and summary, manifest and authorization paths for full mode.
 //! Preparing k1 can also supply builder_baseline for b1's earlier full-mode evidence.
 //!
@@ -15,18 +16,20 @@
 //! manifest.sha256 to cover the appended bytes. Keep the original prefix pin.
 //! After b1 completes, prepare k1 under the same ROOT with its new prefix.
 
+mtg_kernel::fast_global_allocator!();
+
 use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
 use mtg_kernel::cube_draft_build_v1::card_index::{CardIndexV1, CubeTableSourceV1};
 use mtg_kernel::cube_draft_build_v1::model::ModelCardRowsV1;
-use mtg_kernel::cube_draft_v1::CubePool;
+use mtg_kernel::cube_draft_v1::{basic_land_ids, CubePool};
 use mtg_kernel::cube_owner_view_v1::cube_pool_from_ordered_ids;
 use mtg_kernel::cube_pod_runner_v1::{seed, PodPins, SeedPart};
 use mtg_kernel::cube_read_plan_v1::{sha256_hex, shakedown_entry_values};
 use mtg_kernel::cube_seat_v1::GamePilot;
 use mtg_kernel::cube_training_driver_v1::{
-    CensusBaselineFiles, CensusBaselinePin, PilotPin, PilotProvider, ResumeAuthorization,
-    RunConfig, RunOutcome, Segment, TrainingDriver, TrainingDriverError, TripwireMode,
-    UniformOnlyPilotProvider,
+    CensusBaselineFiles, CensusBaselinePin, OpenIntent, PilotPin, PilotProvider,
+    ResumeAuthorization, RunConfig, RunOutcome, Segment, TrainingDriver, TrainingDriverError,
+    TripwireMode, UniformOnlyPilotProvider,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -100,6 +103,8 @@ impl Baseline {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Inputs {
+    host: String,
+    build_profile: String,
     cube_table: Pinned,
     cube_list: Pinned,
     ordered_pool: Pinned,
@@ -132,14 +137,25 @@ impl Inputs {
         }
         let source = CubeTableSourceV1::read_v1(&self.cube_table.path, &self.cube_table.sha256)?;
         let list = self.cube_list.read()?;
-        let (index, _) = CardIndexV1::provisional_v1(std::str::from_utf8(&list)?, &source)?;
+        let list = std::str::from_utf8(&list)?;
+        let (index, _) = CardIndexV1::provisional_v1(list, &source)?;
         if index.pin_sha256() != self.card_index_sha256 {
             return Err("derived card index sha256 mismatch".into());
         }
         let ids: Vec<u16> = serde_json::from_slice(&self.ordered_pool.read()?)?;
         let (pool, canonical_pin) = cube_pool_from_ordered_ids(&ids)?;
-        if self.ordered_pool.sha256 != canonical_pin || ids.iter().any(|&id| !index.contains(id)) {
-            return Err("pool encoding or index coverage differs".into());
+        let fence = self.fence.read()?;
+        let eligible = CubePool::from_json_texts(list, "{}", Some(std::str::from_utf8(&fence)?))?;
+        let basics = basic_land_ids()?;
+        let mut expected: Vec<_> = eligible
+            .ids()
+            .iter()
+            .copied()
+            .filter(|id| index.contains(*id) && !basics.contains(id))
+            .collect();
+        expected.sort_unstable();
+        if self.ordered_pool.sha256 != canonical_pin || ids != expected {
+            return Err("ordered pool differs from the canonical D0.4 derivation".into());
         }
         let db: Value = serde_json::from_slice(&self.card_database.read()?)?;
         if db["schema"] != "cube_card_ids/v1"
@@ -147,9 +163,35 @@ impl Inputs {
         {
             return Err("card database export differs from the compiled registry".into());
         }
-        self.fence.read()?;
-        self.read_plan.read()?;
-        let entries = shakedown_entry_values(&self.manifest.read()?)?;
+        let mut exported = std::collections::BTreeSet::new();
+        for row in db["cards"]
+            .as_array()
+            .ok_or("missing card database export rows")?
+        {
+            let id = row["card_id"]
+                .as_u64()
+                .and_then(|id| u16::try_from(id).ok())
+                .ok_or("invalid exported card id")?;
+            if row["name"]
+                .as_str()
+                .and_then(mtg_kernel::card_def::card_id_by_name)
+                != Some(id)
+                || !exported.insert(id)
+            {
+                return Err("card database export differs from registry rows".into());
+            }
+        }
+        if index.ids().iter().any(|id| !exported.contains(id)) {
+            return Err("card database export omits indexed cards".into());
+        }
+        if !std::str::from_utf8(&self.read_plan.read()?)?.contains("mtg-kernel-cube-read-plan/v3") {
+            return Err("expected the v3 D8 read plan".into());
+        }
+        let manifest = self.manifest.read()?;
+        if !manifest.ends_with(b"\n") {
+            return Err("manifest must end with LF".into());
+        }
+        let entries = shakedown_entry_values(&manifest)?;
         let expected = ["d0_signed", "a6_part2_countersigned", "panel", "fixtures"];
         if !entries
             .iter()
@@ -159,7 +201,32 @@ impl Inputs {
         {
             return Err("manifest must begin with signed D0, A6, panel and fixtures".into());
         }
+        let branch = entries[0]["lead_branch"]
+            .as_str()
+            .ok_or("manifest lacks lead_branch")?;
+        if branch.is_empty()
+            || branch == "@"
+            || branch.ends_with('.')
+            || branch.contains("..")
+            || branch.contains("@{")
+            || branch.contains(['~', '^', ':', '?', '*', '[', '\\'])
+            || branch
+                .split('/')
+                .any(|part| part.is_empty() || part.starts_with('.') || part.ends_with(".lock"))
+            || branch.starts_with('-')
+            || branch.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
+            return Err("invalid manifest lead_branch".into());
+        }
         let table = source.bind_v1(&index)?;
+        for baseline in self.baseline.iter().chain(&self.builder_baseline) {
+            if baseline.pin.build_sha256 != self.binary_sha256
+                || baseline.pin.fence_sha256 != self.fence.sha256
+            {
+                return Err("baseline build or fence differs".into());
+            }
+            baseline.pin.verify_files(&baseline.files())?;
+        }
         let rows = Arc::new(ModelCardRowsV1::with_registry_basics_v1(
             index.ids().to_vec(),
             table.vector_width(),
@@ -183,6 +250,16 @@ impl Inputs {
         };
         let mut cfg = RunConfig::shakedown(args.root.join(&args.run), &args.run, segment);
         cfg.workers = args.threads;
+        if self.host.trim().is_empty() || self.build_profile.trim().is_empty() {
+            return Err("host and build_profile must be supplied".into());
+        }
+        cfg.host = Some(self.host.clone());
+        cfg.build_profile = Some(self.build_profile.clone());
+        cfg.open_intent = if args.prepare {
+            OpenIntent::PrepareFresh
+        } else {
+            OpenIntent::Run
+        };
         cfg.pins = PodPins {
             binary: Some(self.binary_sha256.clone()),
             cube_table: Some(self.cube_table.sha256.clone()),
@@ -210,9 +287,6 @@ impl Inputs {
             .map(|f| f.token.clone())
             .collect();
         if let Some(b) = &self.baseline {
-            if b.pin.build_sha256 != self.binary_sha256 || b.pin.fence_sha256 != self.fence.sha256 {
-                return Err("baseline build or fence differs".into());
-            }
             cfg.tripwire = TripwireMode::Full {
                 baseline: b.pin.clone(),
             };
@@ -285,8 +359,9 @@ fn training_entry<'a>(entries: &'a [Value], run: &str) -> ResultBox<Option<&'a V
     Ok(entry)
 }
 
-fn verify_run(config: &RunConfig, entry: &Value) -> ResultBox<()> {
-    let pin = sha256_hex(&fs::read(config.root.join("run.json"))?);
+fn verify_run(config: &RunConfig, entry: &Value) -> ResultBox<RunConfig> {
+    let bytes = fs::read(config.root.join("run.json"))?;
+    let pin = sha256_hex(&bytes);
     let recorded = entry["files"].as_object().is_some_and(|files| {
         files.iter().any(|(path, value)| {
             Path::new(path).file_name().is_some_and(|f| f == "run.json") && value == &pin
@@ -298,7 +373,29 @@ fn verify_run(config: &RunConfig, entry: &Value) -> ResultBox<()> {
     {
         return Err("training_run differs from run.json, prefix or tripwire".into());
     }
-    Ok(())
+    let saved: RunConfig = serde_json::from_slice(&bytes)?;
+    if saved.pins != config.pins
+        || saved.launch_pins != config.launch_pins
+        || saved.manifest_prefix_sha256 != config.manifest_prefix_sha256
+        || saved.platform != config.platform
+        || saved.build_profile != config.build_profile
+        || saved.tripwire != config.tripwire
+        || (config.open_intent != OpenIntent::ReadCompletedBuilder
+            && (saved.host != config.host || saved.workers != config.workers))
+    {
+        return Err("run pin, host, worker count or build profile differs from run.json".into());
+    }
+    Ok(saved)
+}
+
+#[derive(Deserialize)]
+struct CheckpointHeader {
+    state_sha256: String,
+}
+
+fn stored_state_sha256(path: &Path) -> ResultBox<String> {
+    let file = io::BufReader::new(fs::File::open(path)?);
+    Ok(serde_json::from_reader::<_, CheckpointHeader>(file)?.state_sha256)
 }
 
 fn emit(value: Value) -> ResultBox<()> {
@@ -377,17 +474,36 @@ fn execute(
         SeedPart::Int(0),
     ])?;
     let run_path = config.root.join("run.json");
-    let tripwire = serde_json::to_value(&config.tripwire)?;
-    let mut driver = if args.run == "k1" && args.prepare {
-        let builder_entry = training_entry(&data.entries, "b1")?.ok_or("missing b1 entry")?;
-        let mut previous = inputs.config(
+    config.preflight_open()?;
+    let mut builder_config = if config.segment == Segment::BuilderOnly {
+        config.clone()
+    } else {
+        inputs.config(
             &Args {
                 run: "b1".into(),
                 resume: None,
                 ..args.clone()
             },
             &data,
-        )?;
+        )?
+    };
+    builder_config.update_range = config.update_range;
+    if TrainingDriver::initial_state_sha256(&builder_config, &data.rows, init)?
+        != inputs.initial_state_sha256
+    {
+        return Err("initial checkpoint state sha256 mismatch".into());
+    }
+    if (!args.prepare && args.run == "b1") || (args.prepare && args.run == "k1") {
+        let path = builder_config.root.join("initial/checkpoint.json");
+        if stored_state_sha256(&path)? != inputs.initial_state_sha256 {
+            return Err("stored builder initial checkpoint state sha256 mismatch".into());
+        }
+    }
+    let tripwire = serde_json::to_value(&config.tripwire)?;
+    let mut driver = if args.run == "k1" && args.prepare {
+        let builder_entry = training_entry(&data.entries, "b1")?.ok_or("missing b1 entry")?;
+        let mut previous = builder_config;
+        previous.open_intent = OpenIntent::ReadCompletedBuilder;
         previous.manifest_prefix_sha256 = Some(
             builder_entry["prefix_sha256"]
                 .as_str()
@@ -404,18 +520,15 @@ fn execute(
                 .ok_or("missing evidence for b1's full-mode baseline")?;
             previous.tripwire_files = Some(evidence.files());
         }
-        verify_run(&previous, builder_entry)?;
+        let saved = verify_run(&previous, builder_entry)?;
+        previous.workers = saved.workers;
+        previous.host = saved.host;
+        previous.preflight_open()?;
         let builder = TrainingDriver::open(previous, data.rows.clone(), init)?;
         TrainingDriver::start_pick_phase(&builder, config)?
     } else {
         TrainingDriver::open(config, data.rows, init)?
     };
-    if args.run == "b1"
-        && driver.next_update() == 0
-        && driver.checkpoint_state_sha256() != inputs.initial_state_sha256
-    {
-        return Err("initial checkpoint state sha256 mismatch".into());
-    }
     if args.prepare {
         if driver.next_update() != 0 {
             return Err("prepare requires checkpoint 0".into());
@@ -513,15 +626,8 @@ fn failure_receipt(args: &Args, error: &dyn std::error::Error) -> Value {
                 .map(published)
                 .unwrap_or(root.join("initial/checkpoint.json"))
         };
-        #[derive(Deserialize)]
-        struct Header {
-            state_sha256: String,
-        }
-        if let Some(header) = fs::File::open(checkpoint)
-            .ok()
-            .and_then(|f| serde_json::from_reader::<_, Header>(io::BufReader::new(f)).ok())
-        {
-            receipt["checkpoint_state_sha256"] = json!(header.state_sha256);
+        if let Ok(pin) = stored_state_sha256(&checkpoint) {
+            receipt["checkpoint_state_sha256"] = json!(pin);
         }
     }
     receipt

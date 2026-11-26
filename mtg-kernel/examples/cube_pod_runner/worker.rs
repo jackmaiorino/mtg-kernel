@@ -178,7 +178,7 @@ impl AttemptWorker {
         spec: &AttemptSpec<'_>,
         caps: &GameCaps,
         limit: Duration,
-    ) -> Fallible<AttemptOutcome> {
+    ) -> io::Result<AttemptOutcome> {
         let id = self.next_id;
         self.next_id += 1;
         let request = Request {
@@ -190,9 +190,9 @@ impl AttemptWorker {
             action_seed: spec.action_seed,
             caps: *caps,
         };
-        serde_json::to_writer(&mut self.input, &request).map_err(|error| error.to_string())?;
-        writeln!(self.input).map_err(|error| error.to_string())?;
-        self.input.flush().map_err(|error| error.to_string())?;
+        serde_json::to_writer(&mut self.input, &request)?;
+        writeln!(self.input)?;
+        self.input.flush()?;
         let counter = game_decision_counter();
         let mut last_count = 0;
         let mut seen_at = Instant::now();
@@ -200,15 +200,21 @@ impl AttemptWorker {
         loop {
             match self.replies.recv_timeout(POLL.min(limit / 4)) {
                 Ok(reply) => {
-                    let reply = reply?;
+                    let reply = reply.map_err(io::Error::other)?;
                     if reply.id != id {
-                        return Err(format!("unexpected attempt worker reply id {}", reply.id));
+                        return Err(io::Error::other(format!(
+                            "unexpected attempt worker reply id {}",
+                            reply.id
+                        )));
                     }
                     counter.store(reply.decisions, Ordering::Relaxed);
                     return Ok(reply.into_outcome());
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err("attempt process died".to_owned())
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "attempt process closed its output",
+                    ))
                 }
                 Err(RecvTimeoutError::Timeout) => {}
             }
@@ -252,7 +258,7 @@ thread_local! {
 pub(super) struct SupervisedUniformPilot {
     limit: Duration,
     #[cfg(test)]
-    worker_command: Option<fn() -> Command>,
+    pub(super) worker_command: Option<fn() -> Command>,
 }
 
 impl SupervisedUniformPilot {
@@ -277,7 +283,15 @@ impl GamePilot for SupervisedUniformPilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
         WORKER.with_borrow_mut(|slot| {
             if slot.is_none() {
-                *slot = Some(self.launch().expect("launch cube attempt worker"));
+                match self.launch() {
+                    Ok(worker) => *slot = Some(worker),
+                    Err(error) => {
+                        return worker_failure(
+                            mtg_kernel::cube_pod_runner_v1::ATTEMPT_WORKER_IO,
+                            error.to_string(),
+                        )
+                    }
+                }
             }
             let result = slot
                 .as_mut()
@@ -291,11 +305,53 @@ impl GamePilot for SupervisedUniformPilot {
                     outcome
                 }
                 Err(error) => {
-                    *slot = None;
-                    panic!("cube attempt worker failed: {error}");
+                    let mut worker = slot.take().expect("started attempt worker");
+                    // EOF and broken pipes can arrive just before the child becomes
+                    // waitable. Reap it and retain its OS exit code or signal.
+                    let pid = worker.child.id();
+                    // The attempt worker holds its pipes for its lifetime. A protocol
+                    // error from a live worker is an I/O failure, not evidence of death.
+                    let status = match worker.child.try_wait() {
+                        Ok(None)
+                            if matches!(
+                                error.kind(),
+                                io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
+                            ) =>
+                        {
+                            worker.child.wait().map(Some)
+                        }
+                        status => status,
+                    };
+                    match status {
+                        Ok(Some(status)) => worker_failure(
+                            mtg_kernel::cube_pod_runner_v1::ATTEMPT_PROCESS_DEATH,
+                            format!("pid {pid}, {status}, {error}"),
+                        ),
+                        Ok(None) => worker_failure(
+                            mtg_kernel::cube_pod_runner_v1::ATTEMPT_WORKER_IO,
+                            format!("pid {pid}: {error}"),
+                        ),
+                        Err(wait) => worker_failure(
+                            mtg_kernel::cube_pod_runner_v1::ATTEMPT_WORKER_IO,
+                            format!("pid {pid}: {error}, wait failed: {wait}"),
+                        ),
+                    }
                 }
             }
         })
+    }
+}
+
+fn worker_failure(code: &str, message: String) -> AttemptOutcome {
+    AttemptOutcome {
+        decisions: 0,
+        physical_decisions: None,
+        policy_steps: None,
+        end: GameEnd::SessionError {
+            code: code.to_owned(),
+            message,
+        },
+        last_action_source: None,
     }
 }
 

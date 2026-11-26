@@ -5311,6 +5311,7 @@ pub fn execute_read_plan_v1(
 
     let stop_on_watchdog = options.execution == 1;
     let exec_opts = ExecOptions {
+        pod_index: plan.pod_index,
         caps: plan.caps,
         watchdog_override: options.watchdog_override,
         workers: options.workers,
