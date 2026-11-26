@@ -42,11 +42,17 @@ pub struct ChoiceV1 {
     pub(crate) metamorph_copy: Option<MetamorphCopyV1>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetamorphCopyV1 {
     pub(crate) physical: AbilitySourceContractV4,
     pub(crate) copied: AbilitySourceContractV4,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) values: Option<crate::copy_entry_v1::CopiableValuesV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) entry_answer: Option<crate::copy_entry_v1::EntryAnswer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) prepared_at: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cast_at: Option<usize>,
     stack_item: StackItemId,
@@ -62,6 +68,18 @@ impl Hash for MetamorphCopyV1 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.physical.hash(state);
         self.copied.hash(state);
+        if let Some(at) = self.prepared_at {
+            b"noncast-copy-prepared/v1".hash(state);
+            at.hash(state);
+        }
+        if let Some(answer) = self.entry_answer {
+            b"metamorph-entry-answer/v1".hash(state);
+            answer.hash(state);
+        }
+        if let Some(values) = &self.values {
+            b"metamorph-copy-values/v1".hash(state);
+            values.hash(state);
+        }
         if let Some(cast_at) = self.cast_at {
             cast_at.hash(state);
         }
@@ -87,6 +105,8 @@ pub struct NoncastCopyChoiceV1 {
     pub(crate) physical: AbilitySourceContractV4,
     pub(crate) producer: AbilitySourceContractV4,
     pub(crate) candidates: Vec<AbilitySourceContractV4>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) values: crate::copy_entry_v1::CandidateValues,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cast_at: Option<usize>,
     stack_item: StackItemId,
@@ -119,32 +139,6 @@ pub(crate) fn reanimate_metamorph_waiting(
             if physical_graveyard_metamorph(state, *object))
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum NoncastProducer {
-    Reanimate,
-    Vial,
-    ShowAndTell,
-}
-
-/// Some registered definitions require an as-enters choice or a copy overlay
-/// that this entry path cannot install. An Opalescence-animated Standstill
-/// needs neither. Only Vial puts Metamorph in without casting a spell, which
-/// would sacrifice Standstill first.
-fn noncast_copy_definition(card_def: u16, producer: NoncastProducer) -> bool {
-    owns_definition(card_def)
-        || CARD_DEFS
-            .get(usize::from(card_def))
-            .is_some_and(|definition| {
-                (definition.name == "Wall of Blossoms"
-                    || producer == NoncastProducer::Vial
-                        && (definition.name == crate::eternal_legacy_e8a_v1::AETHER_VIAL
-                            || definition.name == "Standstill")
-                    || producer == NoncastProducer::ShowAndTell
-                        && definition.name == "Containment Priest")
-                    && definition.has_full_support()
-            })
-}
-
 impl NoncastCopyChoiceV1 {
     pub(crate) fn capture(
         state: &GameState,
@@ -163,8 +157,8 @@ impl NoncastCopyChoiceV1 {
         {
             return Err("noncast Metamorph lost its actual paid Reanimate target".into());
         }
-        let candidates =
-            Self::candidates(state, object, ctx.controller, NoncastProducer::Reanimate)?;
+        let (candidates, values) =
+            crate::copy_entry_v1::capture_menu(state, object, ctx.controller)?;
         if candidates.is_empty() {
             return Ok(None);
         }
@@ -172,6 +166,7 @@ impl NoncastCopyChoiceV1 {
             physical: AbilitySourceContractV4::capture(state, object),
             producer: AbilitySourceContractV4::capture(state, ctx.source),
             candidates,
+            values,
             cast_at: Some(paid_cast_index(state, item.v4.stack_item_id)?),
             stack_item: item.v4.stack_item_id,
             vial: None,
@@ -180,35 +175,6 @@ impl NoncastCopyChoiceV1 {
             return Err("noncast Metamorph lost its actual paid Reanimate publication".into());
         }
         Ok(Some(choice))
-    }
-
-    fn candidates(
-        state: &GameState,
-        object: ObjectId,
-        controller: PlayerId,
-        producer: NoncastProducer,
-    ) -> Result<Vec<AbilitySourceContractV4>, String> {
-        if crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(object)).is_some()
-        {
-            return Ok(Vec::new());
-        }
-        let mut candidates = Vec::new();
-        for binding in crate::effect::metamorph_copy_candidates(state, controller)? {
-            let live = state.objects.get(binding.object);
-            if live.zone != Zone::Battlefield
-                || live.v4.face_down_v1.is_some()
-                || live.v4.face_index != 0
-                || live.v4.is_token
-                || crate::eternal_vintage_v1::active_copy(state, binding.object)
-                || !noncast_copy_definition(live.card_def, producer)
-            {
-                return Err(
-                    "noncast Metamorph copy menu contains an unsupported entry form".into(),
-                );
-            }
-            candidates.push(AbilitySourceContractV4::capture(state, binding.object));
-        }
-        Ok(candidates)
     }
 
     pub(crate) fn decision_source(&self) -> ObjectId {
@@ -223,6 +189,9 @@ impl NoncastCopyChoiceV1 {
         MetamorphCopyV1 {
             physical: self.physical,
             copied,
+            prepared_at: None,
+            entry_answer: None,
+            values: self.values.get(&copied.source).cloned(),
             cast_at: self.cast_at,
             stack_item: self.stack_item,
             reanimated_by: self.cast_at.map(|_| self.producer),
@@ -281,6 +250,12 @@ fn cast_receipt_matches(
 }
 
 impl MetamorphCopyV1 {
+    pub(crate) fn refresh_show_origin(&mut self, state: &GameState) {
+        if let Some(origin) = &mut self.show_and_tell {
+            origin.chosen_at = state.engine.event_history.len();
+        }
+    }
+
     pub(crate) fn capture(
         state: &GameState,
         ctx: &crate::effect::ExecCtx,
@@ -313,6 +288,9 @@ impl MetamorphCopyV1 {
         let copy = Self {
             physical: AbilitySourceContractV4::capture(state, ctx.source),
             copied: AbilitySourceContractV4::capture(state, selected.object),
+            prepared_at: None,
+            entry_answer: None,
+            values: None,
             cast_at: Some(cast_at),
             stack_item,
             reanimated_by: None,
@@ -325,7 +303,30 @@ impl MetamorphCopyV1 {
         Ok(Some(copy))
     }
 
-    fn cast_matches(self, state: &GameState) -> bool {
+    /// Earlier Reanimate and Vial menus had no separate choice receipt for these
+    /// ordinary forms. Keep their byte streams: substituting an equally legal
+    /// indistinguishable donor can describe another valid legacy history.
+    fn needs_prepared_receipt(&self) -> bool {
+        if self.physical.zone == Zone::Stack || self.show_and_tell.is_some() {
+            return false;
+        }
+        let name = CARD_DEFS
+            .get(usize::from(self.copied.card_def))
+            .map(|d| d.name);
+        self.values.is_some()
+            || self.entry_answer.is_some()
+            || !(matches!(name, Some("Meddling Mage" | "Wall of Blossoms"))
+                || self.vial.is_some() && matches!(name, Some("Standstill" | "Aether Vial")))
+    }
+
+    pub(crate) fn record_prepared(&mut self, state: &mut GameState) {
+        if self.needs_prepared_receipt() {
+            self.prepared_at = Some(state.engine.event_history.len());
+            record(state, JournalV1::NoncastCopyPrepared { copy: self.clone() });
+        }
+    }
+
+    fn cast_matches(&self, state: &GameState) -> bool {
         let Some(cast_at) = self.cast_at.filter(|_| self.vial.is_none()) else {
             return false;
         };
@@ -341,22 +342,51 @@ impl MetamorphCopyV1 {
             && cast_receipt_matches(state, cast_at, self.stack_item, source)
     }
 
-    fn entrant_matches(self, entrant: AbilitySourceContractV4) -> bool {
-        let (producer, controller) = if let Some(vial) = self.vial {
-            (Some(NoncastProducer::Vial), vial.source.controller)
-        } else if let Some(reanimate) = self.reanimated_by {
-            (Some(NoncastProducer::Reanimate), reanimate.controller)
+    fn copied_incarnation_at_entry(&self, state: &GameState, entry: usize) -> bool {
+        let Some(live) = state.objects.try_get(self.copied.source) else {
+            return false;
+        };
+        if live.owner != self.copied.owner || live.zone_change_count < self.copied.zone_change_count
+        {
+            return false;
+        }
+        let later =
+            state.engine.event_history[entry + 1..]
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::ZoneChange { object, from, .. }
+                        if *object == self.copied.source =>
+                    {
+                        Some(*from)
+                    }
+                    _ => None,
+                });
+        let expected_changes = live.zone_change_count - self.copied.zone_change_count;
+        let mut changes = later.peekable();
+        changes.peek().copied().unwrap_or(live.zone) == Zone::Battlefield
+            && changes.count() == expected_changes as usize
+            && (live.card_def == self.copied.card_def
+                || crate::standard_cards_v1::had_card_def(
+                    state,
+                    self.copied.source,
+                    self.copied.zone_change_count,
+                    self.copied.card_def,
+                ))
+    }
+
+    fn entrant_matches(&self, entrant: AbilitySourceContractV4) -> bool {
+        let controller = if let Some(vial) = self.vial {
+            vial.source.controller
+        } else if let Some(source) = self.reanimated_by {
+            source.controller
         } else if self.show_and_tell.is_some() {
-            (Some(NoncastProducer::ShowAndTell), self.physical.owner)
+            self.physical.owner
         } else {
-            (None, self.physical.controller)
+            self.physical.controller
         };
         self.copied.zone == Zone::Battlefield
             && self.copied.source != self.physical.source
-            && producer.map_or_else(
-                || owns_definition(self.copied.card_def),
-                |producer| noncast_copy_definition(self.copied.card_def, producer),
-            )
+            && (self.physical.zone != Zone::Stack || owns_definition(self.copied.card_def))
             && entrant.source == self.physical.source
             && entrant.card_def == self.copied.card_def
             && entrant.zone == Zone::Battlefield
@@ -386,7 +416,9 @@ pub(crate) fn choice(
             let object = state.objects.try_get(change.object)?;
             metamorph_copy =
                 crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object);
-            let card_def = metamorph_copy.map_or(object.card_def, |copy| copy.copied.card_def);
+            let card_def = metamorph_copy
+                .as_ref()
+                .map_or(object.card_def, |copy| copy.copied.card_def);
             if object.zone == Zone::Battlefield
                 || !owns_definition(card_def)
                 || change.battlefield_manifested_v1
@@ -495,6 +527,9 @@ pub enum JournalV1 {
         physical: AbilitySourceContractV4,
     },
     ShowAndTellMetamorphChosen {
+        copy: MetamorphCopyV1,
+    },
+    NoncastCopyPrepared {
         copy: MetamorphCopyV1,
     },
 }
@@ -651,7 +686,7 @@ pub(crate) fn record(state: &mut GameState, journal: JournalV1) {
 /// The paid producer must still be resolving during the noncast entry.
 fn producer_resolution_matches(
     state: &GameState,
-    copy: MetamorphCopyV1,
+    copy: &MetamorphCopyV1,
     entry: usize,
     archived: bool,
 ) -> bool {
@@ -706,7 +741,7 @@ fn producer_resolution_matches(
 
 fn copy_entry_matches(
     state: &GameState,
-    copy: MetamorphCopyV1,
+    copy: &MetamorphCopyV1,
     entrant: AbilitySourceContractV4,
     entry: usize,
     archived: bool,
@@ -735,7 +770,15 @@ fn copy_entry_matches(
         }
         _ => return false,
     };
+    let prepared_matches = match copy.prepared_at {
+        Some(at) => copy.needs_prepared_receipt() && anchor <= at && at < entry &&
+            matches!(history.get(at), Some(CommittedEvent::MeddlingMageEntryV1 { journal })
+                if matches!(journal.as_ref(), JournalV1::NoncastCopyPrepared { copy: original } if original == copy))
+            && !history[at + 1..entry].iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == copy.copied.source)),
+        None => !copy.needs_prepared_receipt(),
+    };
     anchor < entry
+        && prepared_matches
         && copy.entrant_matches(entrant)
         && (copy.reanimated_by.is_none() && copy.vial.is_none() && copy.show_and_tell.is_none()
             || crate::standard_cards_v1::had_card_def(
@@ -761,7 +804,7 @@ pub(crate) fn record_metamorph_copy(
     entry_history_index: usize,
 ) -> Result<(), String> {
     let entrant = AbilitySourceContractV4::capture(state, copy.physical.source);
-    if !copy_entry_matches(state, copy, entrant, entry_history_index, false)
+    if !copy_entry_matches(state, &copy, entrant, entry_history_index, false)
         || AbilitySourceContractV4::capture(state, copy.copied.source) != copy.copied
         || !crate::eternal_vintage_v1::active_copy(state, entrant.source)
     {
@@ -784,13 +827,13 @@ fn named_copy_matches(
     entrant: AbilitySourceContractV4,
     entry: usize,
 ) -> bool {
-    let Some(copy) = choice.metamorph_copy else {
+    let Some(copy) = &choice.metamorph_copy else {
         return true;
     };
     matches!(state.engine.event_history.get(entry + 1), Some(CommittedEvent::MeddlingMageEntryV1 { journal })
             if matches!(journal.as_ref(), JournalV1::MetamorphCopied {
                 entry_history_index, entrant: recorded, copy: actual,
-            } if *entry_history_index == entry && *recorded == entrant && *actual == copy))
+            } if *entry_history_index == entry && *recorded == entrant && actual == copy))
 }
 
 pub(crate) fn decision(choice: &ChoiceV1, group: Option<u16>) -> Result<Decision, String> {
@@ -860,20 +903,22 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         || super::read_state(state).is_some_and(|s1b| !s1b.mage_names.is_empty())
 }
 
-/// Whether the schema 5 policy observation, which represents Meddling
-/// Mage's name menu and names (wave S1k), still refuses `state`: a pending
-/// native Metamorph copy menu (Reanimate's, Aether Vial's or a physical
-/// Show and Tell's), which no consumer represents.
+/// Schema 5 projects the registered copy and name checkpoints. Refuse other kinds.
 pub(crate) fn requires_copy_successor(state: &GameState) -> bool {
     state
         .engine
         .linked_aura_operation_v1
         .pending_meddling_mage_v1
         .as_ref()
-        .is_some_and(|pending| match &pending.choice {
-            GeneralChoiceV36::MeddlingMageV1 { .. } => false,
-            GeneralChoiceV36::ShowAndTellV1 { choice, .. } => choice.physical.is_some(),
-            _ => true,
+        .is_some_and(|pending| {
+            !matches!(
+                &pending.choice,
+                GeneralChoiceV36::MeddlingMageV1 { .. }
+                    | GeneralChoiceV36::CopyEntryOptionV1 { .. }
+                    | GeneralChoiceV36::ShowAndTellV1 { .. }
+                    | GeneralChoiceV36::ReanimateMetamorphV1 { .. }
+                    | GeneralChoiceV36::VialMetamorphV1 { .. }
+            )
         })
 }
 
@@ -907,13 +952,14 @@ fn entry_matches(
                 && !proposed.battlefield_manifested_v1
                 && original.source == source.source
                 && original.zone == *from
-                && choice
-                    .metamorph_copy
-                    .map_or(original.card_def == source.card_def, |copy| {
+                && choice.metamorph_copy.as_ref().map_or(
+                    original.card_def == source.card_def,
+                    |copy| {
                         copy.physical == original
                             && !choice.suppressed
                             && copy.entrant_matches(source)
-                    })
+                    },
+                )
                 && original.owner == source.owner
                 && original.controller == *controller_before
                 && original.zone_change_count.checked_add(1) == Some(source.zone_change_count)
@@ -985,6 +1031,17 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 }
             }
             JournalV1::VialMetamorphChosen { .. } => {}
+            JournalV1::NoncastCopyPrepared { copy } => {
+                if copy.prepared_at != Some(index as usize)
+                    || !copy.needs_prepared_receipt()
+                    || !copy.cast_matches(state)
+                        && !copy
+                            .vial
+                            .is_some_and(|vial| vial::entry_origin_matches(state, copy, vial))
+                {
+                    return Err("noncast copy choice changed its producer".into());
+                }
+            }
             JournalV1::ShowAndTellMetamorphChosen { copy } => {
                 if copy
                     .show_and_tell
@@ -1076,7 +1133,13 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 copy,
             } => {
                 if entry_history_index.checked_add(1) != Some(index as usize)
-                    || !copy_entry_matches(state, *copy, *entrant, *entry_history_index, true)
+                    || !copy_entry_matches(state, copy, *entrant, *entry_history_index, true)
+                    || !copy.copied_incarnation_at_entry(state, *entry_history_index)
+                    || copy
+                        .values
+                        .as_ref()
+                        .is_some_and(|values| values.card_def != copy.copied.card_def)
+                    || !crate::copy_entry_v1::installed_values_match(state, *entrant, copy)
                     || copy
                         .vial
                         .is_some_and(|_| !vial_copies.insert(copy.stack_item))

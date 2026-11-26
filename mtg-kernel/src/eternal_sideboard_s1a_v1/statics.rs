@@ -180,13 +180,20 @@ pub(crate) fn replace_zone_change(state: &GameState, change: &mut event::ZoneCha
             {
                 return;
             }
-            let printing =
-                crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object)
-                    .map_or(live.card_def, |copy| copy.copied.card_def);
+            let copy = crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object);
+            let printing = copy
+                .as_ref()
+                .map_or(live.card_def, |copy| copy.copied.card_def);
+            let values = copy.as_ref().and_then(|copy| copy.values.as_ref());
             let Some(def) = CARD_DEFS.get(usize::from(printing)) else {
                 return;
             };
-            if !change.battlefield_manifested_v1 && !def.has_type(CardType::Creature) {
+            if !change.battlefield_manifested_v1
+                && !values.is_some_and(|values| values.mods.added_creature)
+                && !def
+                    .types_for_face(values.map_or(0, |values| values.face_index))
+                    .contains(&CardType::Creature)
+            {
                 return;
             }
             // The Priest is on the battlefield; it does not exile itself.

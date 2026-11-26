@@ -69,7 +69,7 @@ pub(crate) const PROTECTION_TYPES: [CardType; 7] = [
     CardType::Sorcery,
 ];
 const DUNGEON_PROTECTION_INDEX: u8 = 7;
-const PROTECTION_CHOICE_COUNT: u16 = 8;
+pub(crate) const PROTECTION_CHOICE_COUNT: u16 = 8;
 
 /// The Serra's Emissary that just entered and has not chosen a card type.
 fn emissary_needing_type(state: &GameState) -> Option<ObjectId> {

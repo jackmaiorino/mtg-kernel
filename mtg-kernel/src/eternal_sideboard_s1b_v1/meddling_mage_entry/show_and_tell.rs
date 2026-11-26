@@ -1,7 +1,7 @@
 //! Show and Tell's paid resolution owns the private choices and simultaneous entry.
 use super::{
-    paid_cast_index, AbilitySourceContractV4, GameState, JournalV1, MetamorphCopyV1,
-    NoncastCopyChoiceV1, StackItemId, Zone,
+    paid_cast_index, AbilitySourceContractV4, GameState, JournalV1, MetamorphCopyV1, StackItemId,
+    Zone,
 };
 use crate::effect::EffectContinuation;
 use crate::ids::PlayerId;
@@ -15,6 +15,8 @@ pub struct ChoiceV1 {
     pub(crate) player: PlayerId,
     pub(crate) physical: Option<AbilitySourceContractV4>,
     pub(crate) candidates: Vec<AbilitySourceContractV4>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) values: crate::copy_entry_v1::CandidateValues,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -92,17 +94,14 @@ pub(crate) fn copy_choice(
     producer: AbilitySourceContractV4,
     physical: AbilitySourceContractV4,
 ) -> Result<Option<ChoiceV1>, String> {
-    let candidates = NoncastCopyChoiceV1::candidates(
-        state,
-        physical.source,
-        physical.owner,
-        super::NoncastProducer::ShowAndTell,
-    )?;
+    let (candidates, values) =
+        crate::copy_entry_v1::capture_menu(state, physical.source, physical.owner)?;
     Ok((!candidates.is_empty()).then_some(ChoiceV1 {
         producer,
         player: physical.owner,
         physical: Some(physical),
         candidates,
+        values,
     }))
 }
 
@@ -113,10 +112,14 @@ pub(crate) fn prospective_copy(
     stack_item: StackItemId,
     physical: AbilitySourceContractV4,
     copied: AbilitySourceContractV4,
+    values: Option<crate::copy_entry_v1::CopiableValuesV1>,
 ) -> MetamorphCopyV1 {
     MetamorphCopyV1 {
         physical,
         copied,
+        values,
+        prepared_at: None,
+        entry_answer: None,
         cast_at: Some(cast_at),
         stack_item,
         reanimated_by: None,
@@ -130,7 +133,7 @@ pub(crate) fn prospective_copy(
 
 pub(super) fn entry_origin_matches(
     state: &GameState,
-    copy: MetamorphCopyV1,
+    copy: &MetamorphCopyV1,
     origin: CopyOriginV1,
     entry: usize,
 ) -> bool {
@@ -141,7 +144,7 @@ pub(super) fn entry_origin_matches(
         && matches!(history.get(origin.chosen_at),
             Some(crate::event::CommittedEvent::MeddlingMageEntryV1 { journal })
             if matches!(journal.as_ref(), JournalV1::ShowAndTellMetamorphChosen { copy: actual }
-                if *actual == copy))
+                if actual == copy))
         && !history[origin.chosen_at + 1..entry].iter().any(|event| {
             matches!(event, crate::event::CommittedEvent::ZoneChange { object, .. }
                 if *object == copy.copied.source)

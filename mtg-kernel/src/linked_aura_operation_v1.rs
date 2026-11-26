@@ -7,6 +7,7 @@ use crate::engine::{Action, Decision};
 use crate::eternal_pauper_pf1c_v1::{HallowChoiceV1, HallowPreventionV1};
 use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::{self as mage_entry, show_and_tell};
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::ids::PlayerId;
 use crate::linked_aura_return_v1::HostChoiceV1;
 use crate::state::{GameState, Target, Zone};
 use serde::{Deserialize, Serialize};
@@ -110,6 +111,10 @@ pub enum GeneralAnswerV36 {
         choice: Box<HallowChoiceV1>,
         prevention: HallowPreventionV1,
     },
+    CopyEntryOptionV1 {
+        choice: Box<crate::copy_entry_v1::Requirement>,
+        index: u16,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -151,6 +156,10 @@ pub enum GeneralChoiceV36 {
     },
     HallowV1 {
         choice: Box<crate::eternal_pauper_pf1c_v1::HallowChoiceV1>,
+    },
+    CopyEntryOptionV1 {
+        choice: Box<crate::copy_entry_v1::Requirement>,
+        original_sha256: String,
     },
 }
 
@@ -1626,6 +1635,7 @@ fn replay_general_input_v1(
             || matches!(
                 choice,
                 GeneralChoiceV36::ReanimateMetamorphV1 { .. }
+                    | GeneralChoiceV36::CopyEntryOptionV1 { .. }
                     | GeneralChoiceV36::VialMetamorphV1 { .. }
                     | GeneralChoiceV36::ShowAndTellV1 { .. }
             )
@@ -2041,6 +2051,9 @@ fn validate_in_order(state: &GameState) -> Result<(), String> {
         let names_v2 = if let GeneralChoiceV36::ReanimateMetamorphV1 {
             original_sha256, ..
         }
+        | GeneralChoiceV36::CopyEntryOptionV1 {
+            original_sha256, ..
+        }
         | GeneralChoiceV36::VialMetamorphV1 {
             original_sha256, ..
         }
@@ -2278,6 +2291,7 @@ fn decision(state: &GameState) -> Result<Decision, String> {
             | GeneralChoiceV36::ReanimateMetamorphV1 { .. }
             | GeneralChoiceV36::VialMetamorphV1 { .. }
             | GeneralChoiceV36::ShowAndTellV1 { .. }
+            | GeneralChoiceV36::CopyEntryOptionV1 { .. }
             | GeneralChoiceV36::HallowV1 { .. } => {
                 return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
@@ -2933,11 +2947,11 @@ pub(crate) fn metamorph_mage_copy(
         .as_ref()?
         .metamorph_mage_copies
         .iter()
-        .copied()
         .find(|copy| {
             copy.physical.source == object
                 && copy.physical == crate::state::AbilitySourceContractV4::capture(state, object)
         })
+        .cloned()
 }
 
 fn mage_checkpoint_world(state: &GameState, runner: &RunnerV1) -> GameState {
@@ -3004,6 +3018,7 @@ pub(crate) fn resolve_show_and_tell(
                 player,
                 physical: None,
                 candidates,
+                values: Default::default(),
             },
         )?
         else {
@@ -3017,30 +3032,34 @@ pub(crate) fn resolve_show_and_tell(
     }
     let mut proposals = Vec::new();
     for physical in entrants {
-        let copy = if mage_entry::vial::is_physical_metamorph_in_hand(state, physical.source) {
+        if mage_entry::vial::is_physical_metamorph_in_hand(state, physical.source) {
             if let Some(choice) = show_and_tell::copy_choice(state, producer, physical)? {
-                let Some(answer) = show_and_tell_answer(state, choice)? else {
-                    return Ok(true);
+                let original_sha256 = state
+                    .engine
+                    .linked_aura_operation_v1
+                    .runtime
+                    .as_ref()
+                    .unwrap()
+                    .original_sha256
+                    .clone();
+                let checkpoint = GeneralChoiceV36::ShowAndTellV1 {
+                    choice: Box::new(choice),
+                    original_sha256,
                 };
-                answer.map(|copied| {
-                    show_and_tell::prospective_copy(
-                        state, producer, cast_at, item, physical, copied,
-                    )
-                })
-            } else {
-                None
+                if !prepare_copy_entry(state, physical.owner, checkpoint, Some((cast_at, item)))? {
+                    return Ok(true);
+                }
             }
-        } else {
-            None
-        };
-        if let Some(copy) = copy {
-            stage_metamorph_mage_copy(state, copy)?;
         }
+        let copy = metamorph_mage_copy(state, physical.source);
         let ProposedEvent::ZoneChange(mut proposal) =
             ProposedEvent::zone_change(physical.source, Zone::Battlefield)
         else {
             unreachable!("Show and Tell moves selected hand cards");
         };
+        if copy_declined_discard(state, physical.source) {
+            proposal.to_zone = Zone::Graveyard;
+        }
         crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut proposal);
         if let Some(copy) = copy.filter(|_| proposal.to_zone == Zone::Battlefield) {
             mage_entry::record(
@@ -3221,51 +3240,99 @@ fn prepare_noncast_metamorph(
     choice: mage_entry::NoncastCopyChoiceV1,
     vial: bool,
 ) -> Result<bool, String> {
+    let original_sha256 = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("noncast copy has no operation owner")?
+        .original_sha256
+        .clone();
+    let player = choice.producer.controller;
+    let checkpoint = if vial {
+        GeneralChoiceV36::VialMetamorphV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        }
+    } else {
+        GeneralChoiceV36::ReanimateMetamorphV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        }
+    };
+    prepare_copy_entry(state, player, checkpoint, None)
+}
+
+/// Open or resume a noncast copy menu before the producer proposes entry.
+/// The wire variants retain their historical shapes and authenticate the actual producer.
+fn prepare_copy_entry(
+    state: &mut GameState,
+    player: PlayerId,
+    checkpoint: GeneralChoiceV36,
+    show_origin: Option<(usize, crate::ids::StackItemId)>,
+) -> Result<bool, String> {
     let runner = state
         .engine
         .linked_aura_operation_v1
         .runtime
         .as_ref()
-        .ok_or("noncast Metamorph has no entry owner")?;
-    if let Some(answer) = runner.answers.get(runner.cursor) {
-        let (expected, copied) = match (vial, answer) {
-            (false, GeneralAnswerV36::ReanimateMetamorphV1 { choice, copied })
-            | (true, GeneralAnswerV36::VialMetamorphV1 { choice, copied }) => (choice, copied),
-            _ => return Err("Metamorph replay changed its confirmed copy choice kind".into()),
-        };
-        if **expected != choice || copied.is_some_and(|source| !choice.candidates.contains(&source))
-        {
-            return Err("Metamorph replay changed its confirmed copy candidate".into());
-        }
-        let copy = copied.map(|copied| choice.copy(copied));
+        .ok_or("copy entry has no replay owner")?;
+    let Some(answer) = runner.answers.get(runner.cursor) else {
+        let snapshot = mage_checkpoint_world(state, runner);
         state
             .engine
             .linked_aura_operation_v1
             .runtime
             .as_mut()
             .unwrap()
-            .cursor += 1;
-        if let Some(copy) = copy {
-            if vial {
-                mage_entry::vial::record_hand_answer(state, copy)?;
-            }
-            stage_metamorph_mage_copy(state, copy)?;
+            .checkpoint = Some((Box::new(snapshot), checkpoint));
+        return Ok(false);
+    };
+    let copy = match (&checkpoint, answer) {
+        (
+            GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. },
+            GeneralAnswerV36::ReanimateMetamorphV1 {
+                choice: expected,
+                copied,
+            },
+        )
+        | (
+            GeneralChoiceV36::VialMetamorphV1 { choice, .. },
+            GeneralAnswerV36::VialMetamorphV1 {
+                choice: expected,
+                copied,
+            },
+        ) if expected == choice
+            && copied.is_none_or(|source| choice.candidates.contains(&source)) =>
+        {
+            copied.map(|source| choice.copy(source))
         }
-        return Ok(true);
-    }
-    let snapshot = mage_checkpoint_world(state, runner);
-    let original_sha256 = runner.original_sha256.clone();
-    let choice = Box::new(choice);
-    let checkpoint = if vial {
-        GeneralChoiceV36::VialMetamorphV1 {
-            choice,
-            original_sha256,
+        (
+            GeneralChoiceV36::ShowAndTellV1 { choice, .. },
+            GeneralAnswerV36::ShowAndTellV1 {
+                choice: expected,
+                selected,
+            },
+        ) if expected == choice
+            && selected.is_none_or(|source| choice.candidates.contains(&source)) =>
+        {
+            let (cast_at, item) = show_origin.ok_or("missing paid Show and Tell origin")?;
+            let physical = choice
+                .physical
+                .ok_or("missing physical Show and Tell entrant")?;
+            selected.map(|copied| {
+                show_and_tell::prospective_copy(
+                    state,
+                    choice.producer,
+                    cast_at,
+                    item,
+                    physical,
+                    copied,
+                    choice.values.get(&copied.source).cloned(),
+                )
+            })
         }
-    } else {
-        GeneralChoiceV36::ReanimateMetamorphV1 {
-            choice,
-            original_sha256,
-        }
+        _ => return Err("noncast copy answer disagrees with its original menu".into()),
     };
     state
         .engine
@@ -3273,8 +3340,95 @@ fn prepare_noncast_metamorph(
         .runtime
         .as_mut()
         .unwrap()
-        .checkpoint = Some((Box::new(snapshot), checkpoint));
+        .cursor += 1;
+    if let Some(mut copy) = copy {
+        if !prepare_copy_requirement(state, &mut copy, player)? {
+            return Ok(false);
+        }
+        if matches!(checkpoint, GeneralChoiceV36::VialMetamorphV1 { .. }) {
+            mage_entry::vial::record_hand_answer(state, &copy)?;
+        }
+        pay_copy_entry_cost(state, &copy);
+        copy.refresh_show_origin(state);
+        copy.record_prepared(state);
+        stage_metamorph_mage_copy(state, copy)?;
+    }
+    Ok(true)
+}
+
+/// Resolve the copied permanent's own replacement before proposing any entry
+/// (CR 614.12, 616.1). All producers share this replay cursor.
+fn prepare_copy_requirement(
+    state: &mut GameState,
+    copy: &mut mage_entry::MetamorphCopyV1,
+    player: PlayerId,
+) -> Result<bool, String> {
+    let Some(choice) = crate::copy_entry_v1::requirement(state, player, copy)? else {
+        return Ok(true);
+    };
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("copy entry has no replay owner")?;
+    if let Some(answer) = runner.answers.get(runner.cursor) {
+        let GeneralAnswerV36::CopyEntryOptionV1 {
+            choice: expected,
+            index,
+        } = answer
+        else {
+            return Err("unexpected chained copy answer".into());
+        };
+        if **expected != choice {
+            return Err("chained copy menu changed".into());
+        }
+        copy.entry_answer = Some(
+            *choice
+                .options
+                .get(usize::from(*index))
+                .ok_or("invalid chained copy answer")?,
+        );
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
+        return Ok(true);
+    }
+    let snapshot = mage_checkpoint_world(state, runner);
+    let original_sha256 = runner.original_sha256.clone();
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((
+        Box::new(snapshot),
+        GeneralChoiceV36::CopyEntryOptionV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        },
+    ));
     Ok(false)
+}
+
+fn pay_copy_entry_cost(state: &mut GameState, copy: &mage_entry::MetamorphCopyV1) {
+    if let Some(crate::copy_entry_v1::EntryAnswer::Discard(Some(land))) = copy.entry_answer {
+        crate::engine::commit_discarded_card(state, land.source);
+    }
+}
+
+pub(crate) fn copy_declined_discard(state: &GameState, entrant: crate::ids::ObjectId) -> bool {
+    metamorph_mage_copy(state, entrant).is_some_and(|copy| {
+        matches!(
+            copy.entry_answer,
+            Some(crate::copy_entry_v1::EntryAnswer::Discard(None))
+        )
+    })
 }
 
 fn mage_answer(
@@ -3887,6 +4041,12 @@ pub(crate) fn commit_entry_color(
 
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
+        GeneralChoiceV36::CopyEntryOptionV1 { choice, .. } => Ok(Decision::ChooseEffectOption {
+            player: choice.player,
+            source: choice.physical.source,
+            option_count: u16::try_from(choice.options.len())
+                .map_err(|_| "too many copy entry options")?,
+        }),
         GeneralChoiceV36::HallowV1 { choice } => Ok(hallow_decision(choice)),
         GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
         GeneralChoiceV36::ShowAndTellV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
@@ -3972,6 +4132,14 @@ fn answer_equipment_checkpoint_v48(
     action: Action,
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
+        (GeneralChoiceV36::CopyEntryOptionV1 { choice, .. }, Action::ChooseEffectOption(index))
+            if choice.options.get(usize::from(index)).is_some() =>
+        {
+            Ok(GeneralAnswerV36::CopyEntryOptionV1 {
+                choice: choice.clone(),
+                index,
+            })
+        }
         (GeneralChoiceV36::ShowAndTellV1 { choice, .. }, action) => {
             let selected = match action {
                 Action::FinishEffectSelection => None,

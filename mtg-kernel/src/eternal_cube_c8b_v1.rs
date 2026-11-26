@@ -110,7 +110,7 @@ pub struct C8bCopyModsV1 {
 }
 
 impl C8bCopyModsV1 {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         !self.added_artifact
             && self.added_subtypes.is_empty()
             && self.override_name.is_none()
@@ -121,7 +121,7 @@ impl C8bCopyModsV1 {
             && !self.added_vigilance
     }
 
-    fn merge_subtypes(&mut self, extra: &[Subtype]) {
+    pub(crate) fn merge_subtypes(&mut self, extra: &[Subtype]) {
         for subtype in extra {
             let id = subtype.stable_id();
             if !self.added_subtypes.contains(&id) {
@@ -237,7 +237,7 @@ fn c8b_state(state: &mut GameState) -> &mut C8bStateV1 {
     &mut state.eternal_v1.get_or_insert_with(Default::default).c8b
 }
 
-fn read_state(state: &GameState) -> Option<&C8bStateV1> {
+pub(crate) fn read_state(state: &GameState) -> Option<&C8bStateV1> {
     state.eternal_v1.as_ref().map(|eternal| &eternal.c8b)
 }
 
@@ -550,7 +550,7 @@ fn face_object_name(card_def: u16, face_index: u8) -> &'static str {
     }
 }
 
-fn current_copy_mods(state: &GameState, link: ObjectLinkV4) -> Option<C8bCopyModsV1> {
+pub(crate) fn current_copy_mods(state: &GameState, link: ObjectLinkV4) -> Option<C8bCopyModsV1> {
     read_state(state).and_then(|c8b| {
         c8b.copy_mods
             .iter()
@@ -559,79 +559,12 @@ fn current_copy_mods(state: &GameState, link: ObjectLinkV4) -> Option<C8bCopyMod
     })
 }
 
-struct CapturedCopyValues {
-    card_def: u16,
-    face_index: u8,
-    mods: C8bCopyModsV1,
-    copied_end_step_sacrifices_v1: u32,
-    copied_nightmare_v1: bool,
-    prototyped: bool,
-}
-
-/// Reads the CR 707.2 copiable values of a battlefield permanent `object`,
-/// propagating any existing C8b copy modifications, Phyrexian Metamorph's
-/// added artifact type, and face-down anonymous blueprint.
-fn capture_battlefield_copiable_values(
-    state: &GameState,
-    object: ObjectId,
-) -> Option<CapturedCopyValues> {
-    let live = state.objects.try_get(object)?;
-    if live.v4.face_down_v1.is_some() {
-        let anonymous = card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)
-            .filter(|id| crate::self_reflection_v1::anonymous_blueprint_is_exact(*id))?;
-        return Some(CapturedCopyValues {
-            card_def: anonymous,
-            face_index: 0,
-            mods: C8bCopyModsV1::default(),
-            copied_end_step_sacrifices_v1: 0,
-            copied_nightmare_v1: false,
-            prototyped: false,
-        });
-    }
-    let link = live_link(state, object);
-    let has_saheeli = read_state(state)
-        .is_some_and(|c8b| c8b.saheeli_copies.iter().any(|copy| copy.host == link));
-    let mut mods = if !has_saheeli && crate::eternal_cube_c8c_v1::is_absorbing_copy(state, object) {
-        let mut absorbing = C8bCopyModsV1 {
-            added_artifact: crate::eternal_cube_c8c_v1::absorbing_copy_adds_artifact(state, object),
-            override_name: Some(crate::eternal_cube_c8c_v1::ABSORBING_MAN.to_string()),
-            base_pt: Some((4, 4)),
-            added_creature: true,
-            added_legendary: true,
-            added_vigilance: true,
-            ..Default::default()
-        };
-        absorbing.merge_subtypes(&[Subtype::Human, Subtype::Villain]);
-        absorbing
-    } else {
-        let mut current = current_copy_mods(state, link).unwrap_or_default();
-        if crate::eternal_vintage_v1::active_copy(state, object) {
-            current.added_artifact = true;
-        }
-        current
-    };
-    if has_saheeli && crate::eternal_vintage_v1::active_copy(state, object) {
-        mods.added_artifact = true;
-    }
-    let copied_end_step_sacrifices_v1 =
-        event::copiable_token_abilities_v1(state, object).unwrap_or(0);
-    let copied_nightmare_v1 =
-        crate::effect::harvester_v1::copiable_nightmare(state, object).unwrap_or(false);
-    let prototyped = crate::eternal_pauper_pf2c_v1::is_prototyped_permanent(state, object);
-    Some(CapturedCopyValues {
-        card_def: live.card_def,
-        face_index: live.v4.face_index,
-        mods,
-        copied_end_step_sacrifices_v1,
-        copied_nightmare_v1,
-        prototyped,
-    })
-}
+use crate::copy_entry_v1::{capture_battlefield_copiable_values, CopiableValuesV1};
 
 /// Installs `(card_def, face_index, mods)` onto battlefield permanent `host`
 /// without changing its zone, counters, damage, attachments, or summoning
 /// sickness.
-fn apply_copied_characteristics(
+pub(crate) fn apply_copied_characteristics(
     state: &mut GameState,
     host: ObjectId,
     card_def: u16,
@@ -1428,9 +1361,9 @@ fn create_token_copy(
     state: &mut GameState,
     source: ObjectId,
     controller: PlayerId,
-    values: CapturedCopyValues,
+    values: CopiableValuesV1,
 ) -> bool {
-    let CapturedCopyValues {
+    let CopiableValuesV1 {
         card_def,
         face_index,
         mods,
@@ -1601,7 +1534,7 @@ fn resolve_vaultborn_death_copy(ctx: &ExecCtx, state: &mut GameState) {
         state,
         ctx.source,
         ctx.controller,
-        CapturedCopyValues {
+        CopiableValuesV1 {
             card_def,
             face_index,
             mods,

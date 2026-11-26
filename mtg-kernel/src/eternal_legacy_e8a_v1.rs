@@ -2313,7 +2313,14 @@ pub(crate) fn finish_selection(
                 )? {
                     return Ok(false);
                 }
-                put_onto_battlefield(state, card.object, player, false);
+                if crate::linked_aura_operation_v1::copy_declined_discard(state, card.object) {
+                    event::propose_and_commit(
+                        state,
+                        ProposedEvent::zone_change(card.object, Zone::Graveyard),
+                    );
+                } else {
+                    put_onto_battlefield(state, card.object, player, false);
+                }
             }
             Ok(false)
         }

@@ -4768,7 +4768,9 @@ fn commit_with_entry_batch_and_source_color(
                 let live = state.objects.get(change.object);
                 let characteristics = entry_context.0.as_ref().map(|(_, entry)| entry);
                 (
-                    metamorph_mage_copy.map_or(live.card_def, |copy| copy.copied.card_def),
+                    metamorph_mage_copy
+                        .as_ref()
+                        .map_or(live.card_def, |copy| copy.copied.card_def),
                     live.zone == Zone::Stack
                         && state.engine.pending_kicked_source == Some(change.object),
                     characteristics.is_some_and(|entry| entry.face_down.is_some()),
@@ -9005,7 +9007,11 @@ fn materialize_zone_change_v1(
         .then(|| crate::linked_aura_operation_v1::metamorph_mage_copy(state, id))
         .flatten();
     let entry_definition = transformed_entry.map_or_else(
-        || metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def),
+        || {
+            metamorph_mage_copy
+                .as_ref()
+                .map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def)
+        },
         |(definition, _)| definition,
     );
     let source_face = state.objects.get(id).v4.face_down_v1;
@@ -9217,7 +9223,7 @@ fn materialize_zone_change_v1(
             obj.summoning_sick = false;
         }
     }
-    if let Some(copy) = metamorph_mage_copy {
+    if let Some(copy) = &metamorph_mage_copy {
         crate::eternal_vintage_v1::retain_mage_copy_on_entry(state, copy);
     }
     #[cfg(feature = "eternal-fixtures")]
@@ -9294,6 +9300,14 @@ fn materialize_zone_change_v1(
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         if entering_face_down.is_none() {
             initialize_entry_counters(state, id, kicked, counter_input);
+            if metamorph_mage_copy.as_ref().is_some_and(|copy| {
+                matches!(
+                    copy.entry_answer,
+                    Some(crate::copy_entry_v1::EntryAnswer::Discard(Some(_)))
+                )
+            }) {
+                crate::eternal_legacy_e7a_v1::clear_paid_mox_entry(state, id);
+            }
         }
         if to_zone == Zone::Battlefield && (nine_lives_cast_entry || requested_revival.is_some()) {
             if nine_lives_cast_entry && requested_revival.is_some() {
@@ -12526,6 +12540,11 @@ fn copied_token_entry_v1(
     state: &GameState,
     source: crate::state::AbilitySourceContractV4,
 ) -> Result<u32, String> {
+    if let Some(values) =
+        crate::copy_entry_v1::inherited_values(state, source, state.engine.event_history.len())
+    {
+        return Ok(values.copied_end_step_sacrifices_v1);
+    }
     let pick = |at: usize, e: &CommittedEvent| match e {
         CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
             source: actual,
@@ -12595,7 +12614,15 @@ pub(crate) fn record_copied_token_end_step_v1(
         }
         let source = crate::state::AbilitySourceContractV4::capture(state, id);
         let count = copied_token_entry_v1(state, source)?;
-        if !o.v4.is_token || count != o.v4.copied_end_step_sacrifices_v1 {
+        if count != o.v4.copied_end_step_sacrifices_v1
+            || (!o.v4.is_token
+                && crate::copy_entry_v1::inherited_values(
+                    state,
+                    source,
+                    state.engine.event_history.len(),
+                )
+                .is_none())
+        {
             return Err("copied ability count differs from original entry".into());
         }
         sources.push((source, count));
@@ -12852,6 +12879,11 @@ pub(crate) fn historical_copiable_token_abilities_v1(
     state: &GameState,
     source: crate::state::AbilitySourceContractV4,
 ) -> Result<u32, String> {
+    if let Some(values) =
+        crate::copy_entry_v1::inherited_values(state, source, state.engine.event_history.len())
+    {
+        return Ok(values.copied_end_step_sacrifices_v1);
+    }
     if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenAbilitiesEnteredV1{source: original,..} if original.source==source.source && original.zone_change_count==source.zone_change_count)) {
         copied_token_entry_v1(state, source)
     } else {
@@ -12865,6 +12897,18 @@ pub(crate) fn copiable_token_abilities_v1(
     let live = state.objects.try_get(object).ok_or("copy source absent")?;
     if live.v4.face_down_v1.is_some() {
         return Ok(0);
+    }
+    if !live.v4.is_token {
+        if let Some(values) = crate::copy_entry_v1::inherited_values(
+            state,
+            crate::state::AbilitySourceContractV4::capture(state, object),
+            state.engine.event_history.len(),
+        ) {
+            return (live.zone == Zone::Battlefield
+                && live.v4.copied_end_step_sacrifices_v1 == values.copied_end_step_sacrifices_v1)
+                .then_some(values.copied_end_step_sacrifices_v1)
+                .ok_or_else(|| "copy lost inherited end-step ability count".into());
+        }
     }
     if live.v4.copied_end_step_sacrifices_v1 == 0 {
         if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenAbilitiesEnteredV1{source,..} if source.source==object && source.zone_change_count==live.zone_change_count)) {
@@ -12929,7 +12973,13 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
                 state,
                 crate::state::AbilitySourceContractV4::capture(state, id),
             )? != live.v4.copied_end_step_sacrifices_v1
-                || !live.v4.is_token)
+                || (!live.v4.is_token
+                    && crate::copy_entry_v1::inherited_values(
+                        state,
+                        crate::state::AbilitySourceContractV4::capture(state, id),
+                        state.engine.event_history.len(),
+                    )
+                    .is_none()))
         {
             return Err("native copied token count lacks its actual entry".into());
         }

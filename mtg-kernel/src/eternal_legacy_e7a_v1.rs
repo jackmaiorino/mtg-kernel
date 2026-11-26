@@ -1438,7 +1438,9 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     return;
                 }
             }
-            put_onto_battlefield(state, card, ctx.controller);
+            if !crate::linked_aura_operation_v1::copy_declined_discard(state, card) {
+                put_onto_battlefield(state, card, ctx.controller);
+            }
             if life > 0 {
                 crate::effect::execute(
                     &EffectOp::LoseLife {
@@ -3376,6 +3378,11 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     })
 }
 
+pub(crate) fn clear_paid_mox_entry(state: &mut GameState, object: ObjectId) {
+    let host = live_link(state, object);
+    e7a_state(state).mox_entering.retain(|&entry| entry != host);
+}
+
 fn live_mox_entry(state: &GameState) -> Option<ObjectLinkV4> {
     read_state(state)?
         .mox_entering
@@ -3384,7 +3391,7 @@ fn live_mox_entry(state: &GameState) -> Option<ObjectLinkV4> {
         .find(|&link| link_live_in(state, link, Zone::Battlefield))
 }
 
-fn hand_land_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn hand_land_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
     state.players[player.index()]
         .hand
         .iter()

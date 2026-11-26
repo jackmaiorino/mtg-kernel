@@ -299,6 +299,7 @@ mod authority_public_capture_v1;
 pub mod authority_public_v1;
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
+mod copy_entry_v1;
 pub mod crystal_public_v1;
 mod divine_actions_v44;
 pub mod divine_observation_v44;

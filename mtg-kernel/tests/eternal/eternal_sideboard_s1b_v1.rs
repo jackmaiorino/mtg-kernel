@@ -1565,11 +1565,471 @@ fn reanimated_metamorph_chooses_copy_and_mage_name_before_entry_both_seats() {
     }
 }
 
-#[test]
-fn reanimated_metamorph_refuses_mixed_painter_copy_before_lethal_life_loss_both_seats() {
-    use mtg_kernel::engine::UnsupportedMechanic;
-    use mtg_kernel::event::CommittedEvent;
+fn reanimate_copy(state: &mut GameState, actor: PlayerId) -> ObjectId {
+    let metamorph = put(
+        state,
+        actor.opponent(),
+        "Phyrexian Metamorph",
+        Zone::Graveyard,
+    );
+    let spell = put(state, actor, "Reanimate", Zone::Hand);
+    pool(state, actor, &[ManaColor::B], 0);
+    cast(state, spell, &[Target::Object(metamorph)]);
+    assert!(
+        matches!(settle(state), Some(Decision::ChooseEffectTargets { source, can_finish: true, .. }) if source == metamorph)
+    );
+    metamorph
+}
 
+fn shroud_copy_menu(state: &GameState, viewer: PlayerId) -> serde_json::Value {
+    let observation = mtg_kernel::rl::observe_policy_v5(
+        state,
+        &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+        viewer,
+        0,
+        0,
+        0,
+        1,
+    )
+    .unwrap();
+    serde_json::to_value(observation.projection.copy_entry).unwrap()
+}
+
+#[test]
+fn noncast_metamorph_face_down_and_peacekeeper_halt_only_on_selection() {
+    use mtg_kernel::engine::UnsupportedMechanic;
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.public_shroud_v1 = true;
+        let stone = put(&mut state, actor, "Mind Stone", Zone::Battlefield);
+        let keeper = put(&mut state, actor, "Anointed Peacekeeper", Zone::Battlefield);
+        let hidden = put(
+            &mut state,
+            actor.opponent(),
+            "Lava Spike",
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(hidden).v4.face_down_v1 = Some(mtg_kernel::state::FaceDownV1 {
+            disguised: false,
+            lookers: 0,
+            hidden_by: None,
+            hidden_by_source: None,
+        });
+        let metamorph = reanimate_copy(&mut state, actor);
+        for viewer in [actor, actor.opponent()] {
+            let menu = shroud_copy_menu(&state, viewer);
+            let candidates = menu["candidates"].as_array().unwrap();
+            assert_eq!(candidates.len(), 3);
+            let redacted = candidates
+                .iter()
+                .find(|row| row["source"] == serde_json::json!(hidden))
+                .unwrap();
+            assert_eq!(redacted["card_def"], id("Face-down card"));
+            assert_eq!(menu["can_decline"], true);
+        }
+        for unsupported in [keeper, hidden] {
+            let mut selected = state.clone();
+            act(
+                &mut selected,
+                Action::ChooseEffectTarget(Target::Object(unsupported)),
+            );
+            assert!(matches!(
+                engine::advance_until_decision(&mut selected),
+                Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    ..
+                }
+            ));
+            assert_eq!(zone(&selected, metamorph), Zone::Graveyard);
+        }
+        let mut declined = state.clone();
+        act(&mut declined, Action::FinishEffectSelection);
+        settled(&mut declined);
+        assert_eq!(zone(&declined, metamorph), Zone::Graveyard);
+        assert_eq!(
+            declined.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
+        assert_eq!(life(&declined, actor), 16);
+        assert!(declined.engine.event_history.iter().any(|event| matches!(event, mtg_kernel::event::CommittedEvent::ZoneChange { object, to: Zone::Battlefield, .. } if *object == metamorph)));
+
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(stone)),
+        );
+        settled(&mut state);
+        assert_eq!(life(&state, actor), 16);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Mind Stone"));
+        assert!(!state.objects.get(metamorph).v4.is_token);
+        mtg_kernel::event::propose_and_commit(
+            &mut state,
+            mtg_kernel::event::ProposedEvent::zone_change(metamorph, Zone::Graveyard),
+        );
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
+    }
+}
+
+#[test]
+fn show_and_tell_noncast_metamorph_copies_only_preexisting_mind_stone() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.public_shroud_v1 = true;
+        let stone = put(
+            &mut state,
+            actor.opponent(),
+            "Mind Stone",
+            Zone::Battlefield,
+        );
+        let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+        let island = put(&mut state, actor.opponent(), "Island", Zone::Hand);
+        let show = put(&mut state, actor, "Show and Tell", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 2);
+        cast(&mut state, show, &[]);
+        assert!(settle(&mut state).is_some());
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(metamorph)),
+        );
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(island)),
+        );
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectTargets { legal_targets, .. } if legal_targets == [Target::Object(stone)])
+        );
+        for viewer in [actor, actor.opponent()] {
+            assert_eq!(
+                shroud_copy_menu(&state, viewer)["candidates"][0]["card_def"],
+                id("Mind Stone")
+            );
+        }
+        let mut declined = state.clone();
+        act(&mut declined, Action::FinishEffectSelection);
+        settled(&mut declined);
+        assert_eq!(zone(&declined, metamorph), Zone::Graveyard);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(stone)),
+        );
+        settled(&mut state);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Mind Stone"));
+        assert_eq!(zone(&state, island), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn copied_entry_requirements_are_answered_before_reanimate_moves_the_card() {
+    for actor in [P0, P1] {
+        for (name, step) in [
+            ("Serra's Emissary", "card_type"),
+            ("Pithing Needle", "name"),
+            ("Phyrexian Revoker", "name"),
+            ("Cavern of Souls", "creature_type"),
+            ("Mox Diamond", "discard"),
+        ] {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            state.public_shroud_v1 = true;
+            let donor = put(&mut state, actor, name, Zone::Battlefield);
+            settle_option(&mut state, 0);
+            if name == "Cavern of Souls" {
+                let coating = put(&mut state, actor, "Liquimetal Coating", Zone::Battlefield);
+                activate(&mut state, coating, 0, &[Target::Object(donor)]);
+                settled(&mut state);
+            }
+            let land = put(&mut state, actor, "Island", Zone::Hand);
+            let metamorph = reanimate_copy(&mut state, actor);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(donor)),
+            );
+            assert!(
+                matches!(next(&mut state), Decision::ChooseEffectOption { player, source, .. } if player == actor && source == metamorph)
+            );
+            assert_eq!(life(&state, actor), 20);
+            assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+            assert_eq!(shroud_copy_menu(&state, actor)["step"], step);
+            let opponent = shroud_copy_menu(&state, actor.opponent());
+            assert!(opponent.get("options").is_none());
+            if step == "discard" {
+                let mut declined = state.clone();
+                act(&mut declined, Action::ChooseEffectOption(0));
+                settled(&mut declined);
+                assert_eq!(zone(&declined, metamorph), Zone::Graveyard);
+                assert_eq!(zone(&declined, land), Zone::Hand);
+                assert_eq!(life(&declined, actor), 16);
+            }
+            let index = u16::from(step == "discard");
+            act(&mut state, Action::ChooseEffectOption(index));
+            settled(&mut state);
+            assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+            assert_eq!(state.objects.get(metamorph).card_def, id(name));
+            assert_eq!(life(&state, actor), 16);
+            if step == "discard" {
+                assert_eq!(zone(&state, land), Zone::Graveyard);
+            }
+        }
+    }
+}
+
+fn assert_copy_restore_refused(value: serde_json::Value, action: Action) {
+    let mut restored: GameState = serde_json::from_value(value).unwrap();
+    let before = restored.state_hash();
+    assert!(engine::step(&mut restored, action).is_err());
+    assert_eq!(before, restored.state_hash());
+}
+
+#[test]
+fn noncast_metamorph_copies_image_values_and_refuses_forged_frozen_values() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.public_shroud_v1 = true;
+        let strix = put(
+            &mut state,
+            actor.opponent(),
+            "Baleful Strix",
+            Zone::Battlefield,
+        );
+        let image = put(&mut state, actor, "Phantasmal Image", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        cast(&mut state, image, &[]);
+        settle_option(&mut state, 1);
+        let metamorph = reanimate_copy(&mut state, actor);
+        let snapshot = serde_json::to_value(&state).unwrap();
+        for extra in [true, false] {
+            let mut changed = snapshot.clone();
+            let choice = &mut changed["engine"]["linked_aura_operation_v1"]
+                ["pending_meddling_mage_v1"]["choice"]["ReanimateMetamorphV1"]["choice"];
+            if extra {
+                let candidates = choice["candidates"].as_array_mut().unwrap();
+                candidates.push(candidates[0].clone());
+            } else {
+                choice["values"][image.0.to_string()]["mods"]["illusion_sacrifice"] = false.into();
+            }
+            assert_copy_restore_refused(changed, Action::FinishEffectSelection);
+        }
+        let hand = state.players[actor.index()].hand.len();
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(image)),
+        );
+        settled(&mut state);
+        assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Baleful Strix"));
+        assert!(engine::has_effective_subtype(
+            &state,
+            metamorph,
+            mtg_kernel::card_def::Subtype::Illusion
+        ));
+        let original = serde_json::to_value(&state).unwrap();
+        for wrong_source in [false, true] {
+            let mut changed = original.clone();
+            let journal = changed["engine"]["event_history"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find_map(|row| {
+                    row.get_mut("MeddlingMageEntryV1")?
+                        .get_mut("journal")?
+                        .get_mut("MetamorphCopied")
+                })
+                .unwrap();
+            if wrong_source {
+                journal["copy"]["copied"]["source"] = serde_json::json!(strix);
+            } else {
+                journal["copy"]["values"]["mods"]["illusion_sacrifice"] = false.into();
+            }
+            assert_copy_restore_refused(changed, Action::Pass);
+        }
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        cast(&mut state, bolt, &[Target::Object(metamorph)]);
+        assert_eq!(
+            state.stack.len(),
+            2,
+            "Illusion sacrifice trigger above the bolt"
+        );
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
+    }
+}
+
+#[test]
+fn noncast_metamorph_copies_token_blueprints_and_prototype_characteristics() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let goblin = token(&mut state, actor.opponent(), "Goblin Token");
+        let metamorph = reanimate_copy(&mut state, actor);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(goblin)),
+        );
+        settled(&mut state);
+        assert!(!state.objects.get(metamorph).v4.is_token);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Goblin Token"));
+        mtg_kernel::event::propose_and_commit(
+            &mut state,
+            mtg_kernel::event::ProposedEvent::zone_change(metamorph, Zone::Graveyard),
+        );
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
+
+        let golem = put(&mut state, actor, "Boulderbranch Golem", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G], 3);
+        cast(&mut state, golem, &[]);
+        if let Decision::ChooseCastMode { .. } = next(&mut state) {
+            act(&mut state, Action::ChooseCastMode(CastMode::Alternative));
+        }
+        settled(&mut state);
+        let second = reanimate_copy(&mut state, actor);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(golem)),
+        );
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, second), (3, 3));
+        assert_eq!(engine::object_mana_value(&state, second), 4);
+        assert_eq!(
+            engine::object_color_mask(&state, second),
+            engine::object_color_mask(&state, golem)
+        );
+    }
+}
+
+#[test]
+fn noncast_metamorph_copies_transformed_faces_before_containment_priest() {
+    use mtg_kernel::event::{propose_and_commit, ProposedEvent};
+    for actor in [P0, P1] {
+        for (name, creature_back) in [
+            ("Fable of the Mirror-Breaker", true),
+            ("Ojer Axonil, Deepest Might", false),
+        ] {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let donor = put(&mut state, actor.opponent(), name, Zone::Battlefield);
+            propose_and_commit(&mut state, ProposedEvent::transform_in_place(donor, 1));
+            if !creature_back {
+                let coating = put(&mut state, actor, "Liquimetal Coating", Zone::Battlefield);
+                activate(&mut state, coating, 0, &[Target::Object(donor)]);
+                settled(&mut state);
+            }
+            for priest in [false, true] {
+                let mut world = state.clone();
+                if priest {
+                    put(&mut world, actor, "Containment Priest", Zone::Battlefield);
+                }
+                let metamorph = reanimate_copy(&mut world, actor);
+                act(
+                    &mut world,
+                    Action::ChooseEffectTarget(Target::Object(donor)),
+                );
+                settled(&mut world);
+                if priest && creature_back {
+                    assert_eq!(zone(&world, metamorph), Zone::Exile);
+                } else {
+                    assert_eq!(zone(&world, metamorph), Zone::Battlefield);
+                    assert_eq!(world.objects.get(metamorph).v4.face_index, 1);
+                    assert_eq!(
+                        world.objects.get(metamorph).name,
+                        world.objects.get(donor).name
+                    );
+                    assert_eq!(
+                        engine::object_has_type(&world, metamorph, CardType::Creature),
+                        creature_back
+                    );
+                    propose_and_commit(
+                        &mut world,
+                        ProposedEvent::zone_change(metamorph, Zone::Graveyard),
+                    );
+                }
+                assert_eq!(
+                    world.objects.get(metamorph).card_def,
+                    id("Phyrexian Metamorph")
+                );
+                assert_eq!(world.objects.get(metamorph).v4.face_index, 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn noncast_metamorph_copies_a_cast_metamorph_and_absorbing_man() {
+    for actor in [P0, P1] {
+        let other = actor.opponent();
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let stone = put(&mut state, actor, "Mind Stone", Zone::Battlefield);
+        let first = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 3);
+        cast(&mut state, first, &[]);
+        settle_choosing(&mut state, stone);
+        let second = reanimate_copy(&mut state, actor);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(first)),
+        );
+        settled(&mut state);
+        assert_eq!(state.objects.get(second).card_def, id("Mind Stone"));
+        assert!(engine::object_has_type(&state, second, CardType::Artifact));
+        let donor = put(&mut state, other, "Absorbing Man", Zone::Battlefield);
+        let turn = state.turn;
+        run_until(
+            &mut state,
+            |s| {
+                s.active_player == other
+                    && s.step == Step::Main1
+                    && s.turn > turn
+                    && s.stack.is_empty()
+                    && s.engine.pending_triggers.is_empty()
+            },
+            |_, decision| match decision {
+                Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(stone)) =>
+                {
+                    Some(Action::ChooseTarget(Target::Object(stone)))
+                }
+                _ => None,
+            },
+        );
+        assert_eq!(state.objects.get(donor).card_def, id("Mind Stone"));
+        pass_until(&mut state, |s| {
+            s.active_player == actor && s.step == Step::Main1
+        });
+        let third = reanimate_copy(&mut state, actor);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(donor)),
+        );
+        settled(&mut state);
+        assert_eq!(engine::effective_name(&state, third), "Absorbing Man");
+        assert_eq!(power_toughness(&state, third), (4, 4));
+        assert!(engine::object_has_type(&state, third, CardType::Creature));
+        assert!(keyword(&state, third, Keywords::VIGILANCE));
+    }
+}
+
+#[test]
+fn reanimated_metamorph_chooses_painter_color_before_lethal_life_loss_both_seats() {
     for actor in [P0, P1] {
         let mut state = paid_meddling_against(actor, "Lava Dart", &["Island"; 20]);
         let painter = put(&mut state, actor, "Painter's Servant", Zone::Hand);
@@ -1587,32 +2047,27 @@ fn reanimated_metamorph_refuses_mixed_painter_copy_before_lethal_life_loss_both_
         let reanimate = put(&mut state, actor, "Reanimate", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::B], 0);
         cast(&mut state, reanimate, &[Target::Object(metamorph)]);
-        let mut halted = false;
-        for _ in 0..8 {
-            match engine::advance_until_decision(&mut state) {
-                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
-                Decision::Halted {
-                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
-                    source,
-                } if source == reanimate => {
-                    halted = true;
-                    break;
-                }
-                other => panic!("unsupported mixed roster published a decision: {other:?}"),
-            }
-        }
-        assert!(halted);
-        assert_eq!(life(&state, actor), 4);
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(painter)))
+        );
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(painter)),
+        );
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 5 } if player == actor && source == metamorph)
+        );
         assert_eq!(zone(&state, metamorph), Zone::Graveyard);
-        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
-        assert!(state.engine.event_history.iter().any(|event| {
-            matches!(event, CommittedEvent::SpellCast { spell, controller }
-                if *spell == reanimate && *controller == actor)
-        }));
-        assert!(!state.engine.event_history.iter().any(|event| {
-            matches!(event, CommittedEvent::ZoneChange { object, to: Zone::Battlefield, .. }
-                if *object == metamorph)
-        }));
+        assert_eq!(life(&state, actor), 4);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        act(&mut restored, Action::ChooseEffectOption(2));
+        assert_eq!(life(&restored, actor), 0);
+        assert_eq!(zone(&restored, metamorph), Zone::Battlefield);
+        assert_eq!(
+            restored.objects.get(metamorph).v4.chosen_color,
+            Some(ManaColor::B)
+        );
     }
 }
 
@@ -2172,6 +2627,15 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                 Action::ChooseEffectTarget(Target::Object(metamorph)),
             );
             let copy_choice = next(&mut state);
+            for viewer in [actor, opponent] {
+                let menu = mtg_kernel::rl::pending_copy_entry_v1(&state, viewer).unwrap();
+                assert_eq!(menu.player, actor);
+                assert!(menu.can_decline);
+                assert!(menu
+                    .candidates
+                    .iter()
+                    .any(|candidate| candidate.source == wall));
+            }
             let other_copy = mage.unwrap_or(vial);
             assert!(matches!(&copy_choice, Decision::ChooseEffectTargets {
                 player, source, legal_targets, can_finish: true, ..
