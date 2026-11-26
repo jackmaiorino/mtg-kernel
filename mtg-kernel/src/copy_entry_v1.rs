@@ -404,6 +404,7 @@ pub(crate) fn install_answer(state: &mut GameState, host: ObjectLinkV4, answer: 
 
 /// CR 701.28: a single-faced physical card cannot transform. Keep the
 /// battlefield face copied at entry when the day/night designation changes.
+#[cfg(feature = "standard-magezero-fixtures")]
 pub(crate) fn is_noncast_copy(state: &GameState, object: ObjectId) -> bool {
     if !crate::eternal_vintage_v1::active_copy(state, object) {
         return false;
