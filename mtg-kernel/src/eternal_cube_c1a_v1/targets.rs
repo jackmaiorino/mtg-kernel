@@ -33,9 +33,14 @@ fn slots(target: StandardTargetV1) -> Option<(u8, u8)> {
     }
 }
 
-/// How many targets this module's filter takes, and how many at least.
+/// How many targets this module's filter takes, and how many at least. A
+/// printed mode takes at most three; the sum saturates so that a restored
+/// spec past any printed count cannot overflow.
 pub(crate) fn counts(target: StandardTargetV1) -> Option<(u8, u8)> {
-    slots(target).map(|(spells, creatures)| (spells + creatures, spells + creatures))
+    slots(target).map(|(spells, creatures)| {
+        let count = spells.saturating_add(creatures);
+        (count, count)
+    })
 }
 
 /// Whether an object target of this module's filter may be in `zone`.
