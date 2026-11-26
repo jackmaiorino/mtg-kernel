@@ -188,12 +188,14 @@ fn worlds_do_not_read_the_true_opponent_deck() {
         postboard: false,
         max_physical_decisions: 100_000,
         max_policy_steps: 1_000_000,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: None,
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     };
     let original = episode_session_v1(&episode, &episode.configurations().unwrap()).unwrap();
     let FastActorResponseV1::Decision(d) = original.current_response() else {

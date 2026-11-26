@@ -1953,16 +1953,7 @@ fn mesmeric_fiend_return_effect() -> EffectOp {
 }
 
 fn sneaky_snacker_effect() -> EffectOp {
-    // Return Sneaky Snacker from your graveyard to the battlefield tapped.
-    EffectOp::Sequence(vec![
-        EffectOp::MoveObject {
-            object: crate::effect::ObjectRef::ThisSource,
-            to_zone: Zone::Battlefield,
-        },
-        EffectOp::TapObject {
-            object: crate::effect::ObjectRef::ThisSource,
-        },
-    ])
+    EffectOp::ReturnAbilitySourceFromGraveyard { tapped: true }
 }
 
 const GUTTERSNIPE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {

@@ -1651,6 +1651,7 @@ reporting as E1 to E9:
 | P3f | Sideboard of Mono-Black Control (Contagion, Lurking Skirge, Phyrexian Processor) | 3 | Premodern full 75 68% to 70% |
 | P3g | Sideboards of Landstill and BW Control (Akroma's Vengeance, Arcane Laboratory, Circle of Protection: Red, Infest), and Circle of Protection: Blue's Full contract | 4 | Premodern full 75 70% to 78%; Pauper 85.1% to 91.0% |
 | Volrath Full (B2) | Volrath's Shapeshifter promoted from Partial to Full under the registered ordered-graveyard owner (`docs/design/premodern_shapeshifter_alter_reality_v1.md`) | 1 promoted | Premodern 304/305 Full; playable mainboards 87.0% to 90.0% (24/24); full 75 81.0% to 84.0% (23/24) |
+| P3i (C2) | Sideboard of Replenish (`Alter Reality`, Layer-3 color-word replacement + Flashback `{1}{U}`) | 1 | Premodern 305/305 Full (0 Partial, 0 Missing); playable mainboards 90.0% (24/24); full 75 84.0% to 90.0% (24/24) |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -2412,6 +2413,24 @@ refusal (`DeckPreflightError::RequiresOrderedGraveyardOwnerV1`). Following steps
 `data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json` to **304 of 305 distinct cards
 Full** (0 Partial, 1 Missing: `Alter Reality`), **90.0% of 90.0% playable mainboards** (24/24),
 and **84.0% full 75s** (23/24).
+
+### P3i: Alter Reality Full (Step C2, #460)
+
+Wave P3i (`src/eternal_premodern_p3i_v1.rs`, `build_eternal_p3i_v1.rs`,
+`tests/eternal/eternal_premodern_p3i_v1.rs`) adds `Alter Reality` (`{1}{U}`, Instant, Flashback
+`{1}{U}`) on top of Step C1's Layer-3 color-word infrastructure (`src/text_color_change_v1.rs`) and
+appended `StandardTargetV1::SpellOrPermanentV1`. Oracle text was cross-checked against XMage at
+`a5c90fe180021e70e2a644ade00eeab07f857a40` (`Utils/mtg-cards-data.txt:25485`;
+`Mage.Sets/src/mage/sets/Torment.java:195` notes `AlterReality.java` is unimplemented there, so
+the registry row uses `"java_file": null`). On resolution (CR 608.2), the controller picks the old
+color word (`From`, 5 options in WUBRG order) and replacement word (`To`, 4 remaining options in
+WUBRG order) via `EffectOptionChoicePurpose::ChooseTextColorWordV1` and
+`ActionSemanticV1::ChooseTextColorWordV1`, then applies the change after the 305-card+9-token
+Premodern audit (halting with `UnsupportedMechanic::TextColorChangeOutsideAuditV1` on unaudited
+face-up targets). With `premodern-replenish` joining `PLAYABLE_75` (138 decks) and the CR 613.8
+Volrath's Shapeshifter x Alter Reality interaction verified in both seats, the Premodern snapshot
+census reaches **305 of 305 distinct cards Full** (0 Partial, 0 Missing), **90.0% of 90.0%
+playable mainboards** (24/24), and **90.0% full 75s** (24/24).
 
 ### S1n: Vintage Scam, Legacy Bant Control, Jeskai Control and LED Dredge sideboards
 

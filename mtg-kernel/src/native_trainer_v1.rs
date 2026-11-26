@@ -5136,7 +5136,7 @@ mod tests {
         // Re-baselined again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) bytes: [146, 96, 71, 19, 161, 67, 106, 182, 228, 70,
         // 255, 159, 173, 185, 114, 122, 177, 100, 70, 139, 150, 215, 245,
         // 17, 209, 229, 50, 14, 103, 162, 8, 48]. model_digest_before,
@@ -5149,8 +5149,8 @@ mod tests {
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                33, 73, 6, 167, 119, 116, 213, 206, 57, 62, 147, 196, 186, 57, 62, 235, 83, 80,
-                106, 205, 110, 99, 182, 119, 48, 244, 83, 73, 117, 44, 234, 11,
+                250, 65, 91, 174, 116, 190, 144, 186, 179, 104, 99, 28, 88, 18, 34, 109, 243, 48,
+                235, 83, 216, 158, 86, 138, 19, 213, 69, 85, 125, 236, 212, 81,
             ]
         );
         // Re-baselined once per the owner ruling on record (collab CLAUDE
@@ -5166,7 +5166,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
         // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
         // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) bytes: [98, 192, 36, 61, 165, 126, 250, 1, 161, 202,
         // 78, 70, 100, 50, 198, 91, 242, 42, 198, 17, 126, 28, 170, 1, 127,
         // 206, 41, 245, 145, 161, 230, 14]. New value is this test's own
@@ -5177,8 +5177,8 @@ mod tests {
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                179, 245, 74, 214, 194, 31, 195, 235, 179, 28, 91, 229, 205, 207, 193, 4, 112, 78,
-                182, 65, 228, 90, 136, 211, 33, 14, 77, 133, 114, 160, 69, 206,
+                25, 223, 92, 235, 14, 41, 74, 96, 84, 185, 140, 149, 60, 178, 117, 6, 138, 51, 162,
+                28, 141, 247, 45, 161, 238, 165, 86, 14, 155, 90, 67, 198,
             ]
         );
 
@@ -6103,7 +6103,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
         // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
         // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) value:
         // [("7076afcbed3e4901263986cf49dec2aef0fc524298035a1303d9ee5c18ac391c",
         // "99d5adb203cee530600150364f452a38312d0b1e3ec1a452484be04a892083af"),
@@ -6115,12 +6115,12 @@ mod tests {
             digest_hexes,
             [
                 (
-                    "720cc813789de134346f2f7fcd5ed36694ca595e5668509d880a691d9d8a0863".to_owned(),
-                    "0ed70bf6763dbec93ee0693b8f2ddc039bcd536b9976e5c8e22cc0c5031c77d7".to_owned(),
+                    "b0e48953baea9b368752d93a8eac93669742b894b106c3b25ad64be2ffeee20d".to_owned(),
+                    "94899fc5889cb48e6973c8fe595f190202ee2ae98eaef6e83613136400000602".to_owned(),
                 ),
                 (
-                    "c840b7f4bfa23e06573a6b88a5734307b832035890d2bf5176c1132362878c4d".to_owned(),
-                    "c0a6fe9722461e91d73acd7d6f72a579345b3e5f079f1b461724223e85a9f762".to_owned(),
+                    "01e2372bbd521843f317b6c82cb74be8857da2b77c975cb981a06a5680db0f6a".to_owned(),
+                    "e57b071ca28ca659b41c374652e25442c36ca8e363026569dd1c3b0072250c2d".to_owned(),
                 ),
             ],
             "the distinct-deck V2 pair goldens drifted"

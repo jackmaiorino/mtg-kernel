@@ -1036,7 +1036,12 @@ fn mine_collapse_may_sacrifice_a_mountain_instead_of_its_cost_on_your_turn() {
             assert!(options.contains(&engine::CastMode::Alternative));
             Action::ChooseCastMode(engine::CastMode::Alternative)
         }
-        Decision::ChooseCostTargets { candidates, .. } => {
+        Decision::ChooseCostTargets {
+            cost_kind,
+            candidates,
+            ..
+        } => {
+            assert_eq!(cost_kind, engine::CostKind::SacrificeLands);
             assert!(candidates.contains(&mountain));
             assert!(candidates.contains(&island));
             assert!(!candidates.contains(&plains_land));

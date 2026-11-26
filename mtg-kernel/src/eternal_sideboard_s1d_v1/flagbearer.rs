@@ -299,6 +299,7 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         | S::InstantOrSorcerySpellV1
         | S::SpellWithSingleTargetV1
         | S::OpponentSpellOrNonlandPermanentV1
+        | S::SpellOrPermanentV1
         | S::AnotherArtifactV1
         | S::AttackingClericRogueWarriorOrWizardV1
         | S::UpToOneNoncreatureArtifactV1
