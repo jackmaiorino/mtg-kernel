@@ -318,6 +318,57 @@ pub(crate) fn modified_life_loss(
         .fold(amount, |lost, _| lost.saturating_mul(2))
 }
 
+/// Exact modified life loss for `player` at historical event `loss_index`,
+/// reconstructing the active player's Bloodletter of Aclazotz count at that
+/// event so later zone changes while a spell waits on the stack neither break
+/// legal games nor allow forged doubling mismatches (CR 118.11).
+pub(crate) fn modified_life_loss_at_event(
+    state: &GameState,
+    player: crate::ids::PlayerId,
+    amount: i32,
+    loss_index: usize,
+) -> i32 {
+    let active = state.active_player;
+    if amount <= 0 || player == active {
+        return amount;
+    }
+    let mut bloodletters: Vec<ObjectId> = state.players[active.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&source| {
+            battlefield_definition_name(state, source) == Some("Bloodletter of Aclazotz")
+                && state.objects.get(source).controller == active
+        })
+        .collect();
+    let history = &state.engine.event_history;
+    for idx in (loss_index.saturating_add(1)..history.len()).rev() {
+        if let Some(crate::event::CommittedEvent::ZoneChange {
+            object,
+            from,
+            to,
+            controller_before,
+        }) = history.get(idx)
+        {
+            if *to == Zone::Battlefield && *from != Zone::Battlefield {
+                bloodletters.retain(|id| id != object);
+            } else if *from == Zone::Battlefield
+                && *to != Zone::Battlefield
+                && *controller_before == active
+                && state.objects.try_get(*object).is_some_and(|obj| {
+                    CARD_DEFS[usize::from(obj.card_def)].name == "Bloodletter of Aclazotz"
+                })
+                && !bloodletters.contains(object)
+            {
+                bloodletters.push(*object);
+            }
+        }
+    }
+    bloodletters
+        .iter()
+        .fold(amount, |lost, _| lost.saturating_mul(2))
+}
+
 /// Exact quote for new unbounded soul-count loss. Legacy callers retain
 /// their existing saturating calculation; this path refuses an inexact quote.
 pub(crate) fn modified_soul_life_loss_checked_v1(

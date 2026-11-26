@@ -3606,6 +3606,220 @@ mod cast_x_routes {
         pending.targets_chosen = vec![Target::Object(fleshraker)];
         pending.target_contracts = vec![fleshraker_contract];
         assert_refused(&forged, dominate);
+
+        // Finalized Dominate on the stack at X = 0: forging target to MV 3
+        // Glaring Fleshraker must be rejected.
+        act(&mut state, Action::ChooseTarget(Target::Object(ballista)));
+        cast_finished(&mut state);
+        let mut forged_stack = restore(&state);
+        let fleshraker_contract = mtg_kernel::state::StackTargetContractV4::capture(
+            &forged_stack,
+            Target::Object(fleshraker),
+        );
+        let top = forged_stack.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(fleshraker)];
+        top.v4.target_contracts = vec![fleshraker_contract];
+        assert_refused(&forged_stack, dominate);
+
+        // Finalized Blue Sun's Twilight on the stack at X = 0: forging target
+        // to MV 3 Glaring Fleshraker must be rejected.
+        let mut state = plains();
+        let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+        let ballista = put(&mut state, P1, "Walking Ballista", Zone::Battlefield);
+        state.objects.get_mut(ballista).counters.plus1_plus1 = 1;
+        let blue_sun = free_exile(&mut state, "Blue Sun's Twilight");
+        act(&mut state, Action::CastSpell(blue_sun));
+        act(&mut state, Action::ChooseTarget(Target::Object(ballista)));
+        cast_finished(&mut state);
+        let mut forged_blue = restore(&state);
+        let fleshraker_contract = mtg_kernel::state::StackTargetContractV4::capture(
+            &forged_blue,
+            Target::Object(fleshraker),
+        );
+        let top = forged_blue.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(fleshraker)];
+        top.v4.target_contracts = vec![fleshraker_contract];
+        assert_refused(&forged_blue, blue_sun);
+
+        // Finalized Kozilek's Command Mode 1 (PlayerThenCreatureV1) and Mode 5
+        // (CreatureThenGraveyardCardsV1) at X = 0: forging the creature target
+        // to MV 3 Glaring Fleshraker must be rejected.
+        for (mode_idx, needs_finish) in [(1_u8, false), (5_u8, true)] {
+            let mut state = plains();
+            let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+            let ballista = put(&mut state, P1, "Walking Ballista", Zone::Battlefield);
+            state.objects.get_mut(ballista).counters.plus1_plus1 = 1;
+            let cmd = free_exile(&mut state, "Kozilek's Command");
+            act(&mut state, Action::CastSpell(cmd));
+            let _ = next(&mut state);
+            act(&mut state, Action::ChooseSpellMode(mode_idx));
+            if mode_idx == 1 {
+                let _ = next(&mut state);
+                act(&mut state, Action::ChooseTarget(Target::Player(P0)));
+            }
+            let _ = next(&mut state);
+            act(&mut state, Action::ChooseTarget(Target::Object(ballista)));
+            if needs_finish {
+                let _ = next(&mut state);
+                act(&mut state, Action::FinishEffectSelection);
+            }
+            cast_finished(&mut state);
+            let mut forged_cmd = restore(&state);
+            let fleshraker_contract = mtg_kernel::state::StackTargetContractV4::capture(
+                &forged_cmd,
+                Target::Object(fleshraker),
+            );
+            let creature_pos = usize::from(mode_idx == 1);
+            let top = forged_cmd.stack.last_mut().unwrap();
+            top.targets[creature_pos] = Target::Object(fleshraker);
+            top.v4.target_contracts[creature_pos] = fleshraker_contract;
+            assert_refused(&forged_cmd, cmd);
+        }
+    }
+
+    #[test]
+    fn cast_life_x_authenticates_exact_bloodletter_doubling() {
+        // 1. One Bloodletter of Aclazotz controlled by active player P1:
+        //    P0 casts free-exile Fire Covenant with X = 3 on P1's turn, losing 6 life.
+        //    Genuine snapshot is accepted; forging X = 3 -> X = 6 while keeping
+        //    the same 6-life LifeLoss must be refused; exiling Bloodletter in
+        //    response while Fire Covenant waits on the stack must still remain valid.
+        let mut state = plains();
+        state.active_player = P1;
+        state.priority_player = P0;
+        let bloodletter = put(&mut state, P1, "Bloodletter of Aclazotz", Zone::Battlefield);
+        let target_creature = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let swords = put(&mut state, P0, "Swords to Plowshares", Zone::Hand);
+        let covenant = free_exile(&mut state, "Fire Covenant");
+        act(&mut state, Action::CastSpell(covenant));
+        for _ in 0..3 {
+            let _ = next(&mut state);
+            act(
+                &mut state,
+                Action::ChooseTarget(Target::Object(target_creature)),
+            );
+        }
+        let _ = next(&mut state);
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        assert_eq!(
+            life(&state, P0),
+            14,
+            "1 Bloodletter doubles 3 life loss to 6"
+        );
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 3);
+        let mut restored_valid = restore(&state);
+        settled(&mut restored_valid);
+        assert!(restored_valid.engine.halted.is_none());
+
+        // Forge X = 3 -> X = 6 (with 6 matching targets and receipt amount = 6)
+        // while keeping the genuine LifeLoss { player: P0, amount: 6 }.
+        let mut forged_six = restore(&state);
+        let wall_contract = mtg_kernel::state::StackTargetContractV4::capture(
+            &forged_six,
+            Target::Object(target_creature),
+        );
+        let top = forged_six.stack.last_mut().unwrap();
+        top.v4.x_value = 6;
+        top.targets = vec![Target::Object(target_creature); 6];
+        top.v4.target_contracts = vec![wall_contract; 6];
+        for event in forged_six.engine.event_history.iter_mut() {
+            if let event::CommittedEvent::CastLifeXPaidV1 { amount, .. } = event {
+                *amount = 6;
+            }
+        }
+        assert_refused(&forged_six, covenant);
+
+        // If Bloodletter is exiled in response while Fire Covenant is still on
+        // the stack, historical reconstruction still accepts X = 3 / lost = 6.
+        let mut after_removal = restore(&state);
+        pool(&mut after_removal, P0, &[ManaColor::W], 0);
+        cast(&mut after_removal, swords, &[Target::Object(bloodletter)]);
+        cast_finished(&mut after_removal);
+        // Resolve Swords to Plowshares so Bloodletter is in Exile while Fire Covenant remains on the stack.
+        while after_removal.stack.len() > 1 {
+            let _ = next(&mut after_removal);
+            act(&mut after_removal, Action::Pass);
+        }
+        let _ = next(&mut after_removal);
+        assert_eq!(zone(&after_removal, bloodletter), Zone::Exile);
+        assert_eq!(after_removal.stack.len(), 1);
+        let mut after_removal = restore(&after_removal);
+        settled(&mut after_removal);
+        assert!(after_removal.engine.halted.is_none());
+        assert_eq!(zone(&after_removal, bloodletter), Zone::Exile);
+
+        // 2. Two Bloodletters double 3 -> 12; forging X = 6 with lost = 12 is refused.
+        let mut state = plains();
+        state.active_player = P1;
+        state.priority_player = P0;
+        put(&mut state, P1, "Bloodletter of Aclazotz", Zone::Battlefield);
+        put(&mut state, P1, "Bloodletter of Aclazotz", Zone::Battlefield);
+        let target_creature = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let covenant = free_exile(&mut state, "Fire Covenant");
+        act(&mut state, Action::CastSpell(covenant));
+        for _ in 0..3 {
+            let _ = next(&mut state);
+            act(
+                &mut state,
+                Action::ChooseTarget(Target::Object(target_creature)),
+            );
+        }
+        let _ = next(&mut state);
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        assert_eq!(
+            life(&state, P0),
+            8,
+            "2 Bloodletters quadruple 3 life loss to 12"
+        );
+        let mut forged_six = restore(&state);
+        let wall_contract = mtg_kernel::state::StackTargetContractV4::capture(
+            &forged_six,
+            Target::Object(target_creature),
+        );
+        let top = forged_six.stack.last_mut().unwrap();
+        top.v4.x_value = 6;
+        top.targets = vec![Target::Object(target_creature); 6];
+        top.v4.target_contracts = vec![wall_contract; 6];
+        for event in forged_six.engine.event_history.iter_mut() {
+            if let event::CommittedEvent::CastLifeXPaidV1 { amount, .. } = event {
+                *amount = 6;
+            }
+        }
+        assert_refused(&forged_six, covenant);
+
+        // 3. Zero Bloodletters on P1's turn: genuine X = 3 loses 3; forging
+        //    LifeLoss { amount: 6 } + receipt loss = 6 must be refused.
+        let mut state = plains();
+        state.active_player = P1;
+        state.priority_player = P0;
+        let target_creature = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let covenant = free_exile(&mut state, "Fire Covenant");
+        act(&mut state, Action::CastSpell(covenant));
+        for _ in 0..3 {
+            let _ = next(&mut state);
+            act(
+                &mut state,
+                Action::ChooseTarget(Target::Object(target_creature)),
+            );
+        }
+        let _ = next(&mut state);
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 17);
+        let mut forged_double = restore(&state);
+        for event in forged_double.engine.event_history.iter_mut() {
+            match event {
+                event::CommittedEvent::LifeLoss { amount, .. } => *amount = 6,
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    loss: Some((_, lost)),
+                    ..
+                } => *lost = 6,
+                _ => {}
+            }
+        }
+        assert_refused(&forged_double, covenant);
     }
 
     #[test]

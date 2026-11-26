@@ -2452,27 +2452,30 @@ fn spell_copy_origin_chain(
     Ok(())
 }
 
-/// Checks that a committed life loss matches a positive nominal payment,
-/// accounting for Bloodletter of Aclazotz's opponent-turn doubling (CR 118.11).
-fn life_loss_matches_nominal(state: &GameState, player: PlayerId, lost: i32, nominal: i32) -> bool {
+/// Checks that a committed life loss at `loss_index` matches a positive
+/// nominal payment, accounting for the exact active-player Bloodletter of
+/// Aclazotz count at `loss_index` (CR 118.11).
+fn life_loss_matches_nominal(
+    state: &GameState,
+    player: PlayerId,
+    lost: i32,
+    nominal: i32,
+    loss_index: usize,
+) -> bool {
     if nominal <= 0 || lost <= 0 {
         return false;
     }
-    if lost == nominal {
-        return true;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        lost == crate::standard_statics_v1::modified_life_loss_at_event(
+            state, player, nominal, loss_index,
+        )
     }
-    if !cfg!(feature = "standard-magezero-fixtures") || player == state.active_player {
-        return false;
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        let _ = (state, player, loss_index);
+        lost == nominal
     }
-    let mut doubled = nominal;
-    while doubled < lost {
-        let next = doubled.saturating_mul(2);
-        if next == doubled {
-            return false;
-        }
-        doubled = next;
-    }
-    doubled == lost
 }
 
 /// The receipt identifies the nominal cost and the committed loss after
@@ -2515,7 +2518,7 @@ fn validate_cast_life_x(
                         player,
                         amount: lost,
                     })
-                && life_loss_matches_nominal(state, player, lost, i32::from(amount))
+                && life_loss_matches_nominal(state, player, lost, i32::from(amount), at - 1)
                 && !history
                     .of_kinds_v2(&[EventKindV1::CastLifeXPaidV1])
                     .any(|(other_at, event)| {
@@ -2554,7 +2557,7 @@ fn validate_cast_life_x(
             return Err("Citadel life payment missing after additional life X receipt".into());
         };
         if *citadel_player != caster
-            || !life_loss_matches_nominal(state, caster, *citadel_lost, citadel_mv)
+            || !life_loss_matches_nominal(state, caster, *citadel_lost, citadel_mv, at + 1)
         {
             return Err("Citadel life payment disagrees with spell mana value".into());
         }
@@ -23145,11 +23148,34 @@ fn validated_stack_item_target_metadata(
     if !cardinality_complete || item.v4.target_contracts.len() != item.targets.len() {
         return Err("stack target and contract cardinalities are malformed".to_string());
     }
+    if item.kind == StackItemKind::Spell {
+        // CR 107.3b, 601.2c: finalized X-bounded single creature target spells
+        // (Blue Sun's Twilight, Dominate) cannot carry a battlefield creature
+        // whose mana value exceeds the spell's announced X.
+        if let Some(spell_obj) = state.objects.try_get(item.source) {
+            let def = &crate::card_def::CARD_DEFS[usize::from(spell_obj.card_def)];
+            if crate::standard_cards_v1::x_bounded_creature_target(def) {
+                if let Some(&Target::Object(target)) = item.targets.first() {
+                    if state.objects.try_get(target).is_some_and(|live| {
+                        live.zone == Zone::Battlefield
+                            && object_mana_value(state, target) > item.v4.x_value
+                    }) {
+                        return Err("stack target mana value exceeds announced X".to_string());
+                    }
+                }
+            }
+        }
+    }
     #[cfg(feature = "eternal-fixtures")]
     if item.kind == StackItemKind::Spell {
-        // CR 107.3b, 601.2d, 601.2f: finalized X-bounded target counts cannot
-        // exceed (or, for Fire Covenant's life-per-damage division, differ from)
-        // the spell's announced X.
+        // CR 107.3b, 601.2c, 601.2d, 601.2f: finalized X-bounded target counts
+        // and MV-bounded creature targets cannot violate the spell's announced X.
+        let creature_mv_ok = |target: Option<&Target>| match target {
+            Some(&Target::Object(object)) => !state.objects.try_get(object).is_some_and(|live| {
+                live.zone == Zone::Battlefield && object_mana_value(state, object) > item.v4.x_value
+            }),
+            _ => true,
+        };
         let x_cardinality_ok = match spec {
             TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::C1cV1(
                 crate::eternal_cube_c1c_v1::targets::C1cTargetV1::CreaturePicksPerLifeV1,
@@ -23158,9 +23184,17 @@ fn validated_stack_item_target_metadata(
                 crate::eternal_cube_c1b_v1::targets::C1bTargetV1::ArtifactsAndEnchantmentsV1,
             )) => item.targets.len() <= usize::from(item.v4.x_value),
             TargetSpec::StandardV1(
-                crate::standard_cards_v1::StandardTargetV1::PlayerThenGraveyardCardsV1
-                | crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+                crate::standard_cards_v1::StandardTargetV1::PlayerThenGraveyardCardsV1,
             ) => item.targets.len().saturating_sub(1) <= usize::from(item.v4.x_value),
+            TargetSpec::StandardV1(
+                crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1,
+            ) => creature_mv_ok(item.targets.get(1)),
+            TargetSpec::StandardV1(
+                crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+            ) => {
+                item.targets.len().saturating_sub(1) <= usize::from(item.v4.x_value)
+                    && creature_mv_ok(item.targets.first())
+            }
             spec if spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC => {
                 u16::from(
                     crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&item.targets),
