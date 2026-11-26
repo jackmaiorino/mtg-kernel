@@ -135,7 +135,9 @@ gh() {
 
 class DraftLightTests(unittest.TestCase):
     def test_changed_path_gates_preserve_git_paths(self):
-        classify = workflow_step("Classify changed paths").replace("${{ github.event_name }}", "pull_request")
+        classify = workflow_step("Classify changed paths").replace("${{ github.event_name }}", "pull_request").replace(
+            "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
+        )
         checks = workflow_step("Choose the checks").replace(
             "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
         )
@@ -146,12 +148,23 @@ class DraftLightTests(unittest.TestCase):
             ("docs/café.md", "docs/updated.md", "false", "false", "docs"),
             ("docs/before.txt", "mtg-kernel/src/bin/kernel_limited_café.rs", "false", "true", "rules-limited"),
             ("tools/café.py", "mtg-kernel/src/bin/kernel_limited_café.rs", "true", "true", "all"),
+            # The website schedules no Rust or Python job alone or with docs; with other files they decide alone.
+            ("viewer/public/café.html", "README.md", "false", "false", "viewer"),
+            ("viewer/src/main.tsx", None, "false", "false", "viewer"),
+            ("viewer/index.html", "mtg-kernel/src/engine.rs", "false", "true", "all"),
+            ("viewer/index.html", "python/tools/café.py", "true", "false", "python"),
+            ("viewer_tools/café.py", None, "false", "true", "all"),
+            # ci:full runs every Rust and Python job whatever the paths.
+            ("viewer/src/main.tsx", None, "true", "true", "all", True),
+            ("viewer/public/café.html", "README.md", "true", "true", "all", True),
+            ("docs/café.md", None, "true", "true", "all", True),
+            ("python/tests/café.py", None, "true", "true", "all", True),
         ]
         if sys.platform != "win32":
             cases.append(('tools/"quoted"\nname.py', None, "true", "false", "python"))
 
-        for before, after, python, rust, scope in cases:
-            with self.subTest(before=before, after=after), tempfile.TemporaryDirectory() as scratch:
+        for before, after, python, rust, scope, *label in cases:
+            with self.subTest(before=before, after=after, label=label), tempfile.TemporaryDirectory() as scratch:
                 repo = Path(scratch)
                 env = os.environ.copy()
                 env.pop("GIT_CONFIG_COUNT", None)
@@ -178,7 +191,8 @@ class DraftLightTests(unittest.TestCase):
                 output = repo / "outputs"
                 env.update(RUNNER_TEMP=repo.as_posix(), GITHUB_OUTPUT=output.as_posix(),
                            GITHUB_STEP_SUMMARY=(repo / "summary").as_posix(), INPUT_SCOPE="", EVENT="pull_request",
-                           SCOPE="pr", LABELS="[]", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
+                           SCOPE="pr", LABELS='["ci:full"]' if label else "[]",
+                           FULL_LABEL="true" if label else "false", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
                            CI_TEST_SCOPE=(WORKFLOW.parents[2] / "tools/ci/ci_scope.py").as_posix())
                 for rendered in (classify, checks):
                     subprocess.run([BASH, "-eo", "pipefail", "-c", rendered], cwd=repo, env=env, check=True,

@@ -122,7 +122,7 @@ jobs:
       # formatting and lint job.
       scope: ${{ steps.scope.outputs.scope }}
       # all: every job of the group set above. A scope name (trainer, tools,
-      # python, rules-limited, w5-tools, workflow, docs): only that scope's
+      # python, rules-limited, w5-tools, workflow, viewer, docs): only that scope's
       # jobs (tools/ci/ci_scope.py, docs/CI-SCOPES.md).
       checks: ${{ steps.checks.outputs.checks || 'all' }}
     steps:
@@ -206,6 +206,8 @@ jobs:
       - name: Classify changed paths
         id: classify
         shell: bash
+        env:
+          FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: |
           # Non-PR events (push to main, tags, manual dispatch) always run
           # the full matrix: the merge gate must never be narrowed there.
@@ -218,39 +220,10 @@ jobs:
           # base branch tip, so this diff is exactly the PR's file set.
           # Keep both paths of a rename and preserve Git's raw path bytes.
           git diff --no-renames --name-only -z HEAD^1 HEAD > "$RUNNER_TEMP/ci-changed-paths"
-          echo "changed files:"
-          python_relevant=false
-          rust_relevant=false
-          while IFS= read -r -d '' f; do
-            printf '  %q\n' "$f"
-            # Python jobs care about python sources/tools/tests, the data
-            # artifacts they validate, workflow changes, and the pinned
-            # interpreter/lock config. Top-level tools/** is Python only;
-            # python/tests imports several of its packages, and the lease
-            # adapter's tests run in the Python job's lease guard step.
-            case "$f" in
-              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version|tools/*)
-                python_relevant=true ;;
-            esac
-            # Rust jobs run unless a file is provably outside the crate's
-            # input surface. python/mtg_kernel_rl/** stays rust-relevant
-            # (embedded authorities: features.py and twins); data/** stays
-            # rust-relevant (include_str goldens). Native CI runners are
-            # also relevant because they determine which tests execute.
-            # Other non-embedded python, top-level tools/** (Python and
-            # PowerShell scripts no crate source or test reads), docs, and
-            # markdown are irrelevant. build.rs still hashes every tracked
-            # file into its provenance digest; no test pins that value.
-            case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/rust_workspace_lib_plan.py|python/tools/rust_workspace_lib_seconds.json|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/check_rust_integration_parts.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
-                rust_relevant=true ;;
-              python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
-              *) rust_relevant=true ;;
-            esac
-          done < "$RUNNER_TEMP/ci-changed-paths"
-          echo "python_relevant=$python_relevant" >> "$GITHUB_OUTPUT"
-          echo "rust_relevant=$rust_relevant" >> "$GITHUB_OUTPUT"
-          echo "verdict: python_relevant=$python_relevant rust_relevant=$rust_relevant"
+          # Python and Rust relevance of the paths, and the ci:full override
+          # (every Rust and Python job, whatever the paths): ci_scope.py
+          # relevance, the only copy of the patterns.
+          python3 tools/ci/ci_scope.py relevance < "$RUNNER_TEMP/ci-changed-paths"
 
       # A ready pull request whose files all map to one scope runs only that
       # scope's checks; mixed, shared or unmapped files run the whole set. The
@@ -363,10 +336,10 @@ jobs:
     name: Rust formatting and lint
     needs: detect-changes
     # Same path rule as the Rust test groups: a change that touches only
-    # docs, markdown, Python tests, non-embedded Python tools or top-level
-    # tools/** cannot change what rustfmt or Clippy see. Pushes to main
-    # always run it. Windows-only group sets leave it to the run they
-    # complement or rerun.
+    # docs, markdown, Python tests, non-embedded Python tools, top-level
+    # tools/** or the website (viewer/**) cannot change what rustfmt or
+    # Clippy see. Pushes to main always run it. Windows-only group sets
+    # leave it to the run they complement or rerun.
     if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope) && contains(fromJSON('["all", "trainer", "rules-limited"]'), needs.detect-changes.outputs.checks)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
