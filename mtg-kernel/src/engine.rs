@@ -2643,6 +2643,14 @@ fn validate_physical_spell_cast_origin(
     }
     let x_cost = CastXCost::of(def, item.kicked);
     let free_x_valid = item.v4.x_value == 0 || x_cost != CastXCost::Mana;
+    // Both routes replace the printed mana cost (CR 107.3b), even though
+    // the spell's cast method is Normal and the caster still pays a cost.
+    if !free_x_valid
+        && (crate::eternal_e5a_v1::permissions::citadel_cast(state, item.source, caster)
+            || crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, item.source, caster))
+    {
+        return Err("spell claims mana X under a fixed alternative cost".into());
+    }
     if !is_pending_placeholder && x_cost == CastXCost::Life {
         validate_cast_life_x(state, item, caster)?;
     }
@@ -2807,12 +2815,6 @@ fn validate_physical_spell_cast_origin(
             permission_zone_change_count,
         } => {
             origin.origin_zone == Zone::Library
-                && (free_x_valid
-                    || !crate::eternal_e5a_v1::permissions::citadel_cast(
-                        state,
-                        item.source,
-                        caster,
-                    ))
                 && source.owner == caster
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count

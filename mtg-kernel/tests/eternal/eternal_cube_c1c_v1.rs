@@ -3022,6 +3022,26 @@ mod cast_x_routes {
     }
 
     #[test]
+    fn fixed_two_mana_route_rejects_a_restored_positive_mana_x() {
+        let mut state = plains();
+        let spell = put(&mut state, P0, "Walking Ballista", Zone::Battlefield);
+        state.objects.get_mut(spell).counters.plus1_plus1 = 1;
+        let aang = put(&mut state, P0, "Aang, Swift Savior", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::W, ManaColor::U], 1);
+        cast(&mut state, aang, &[]);
+        settle_choosing(&mut state, spell);
+        assert_eq!(zone(&state, spell), Zone::Exile);
+        pool(&mut state, P0, &[], 6);
+        cast(&mut state, spell, &[]);
+        cast_finished(&mut state);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 0);
+        assert_eq!(mana(&state, P0, ManaColor::C), 4);
+        forge_final_x(&state, spell, 2);
+        settled(&mut state);
+        assert_eq!(zone(&state, spell), Zone::Graveyard);
+    }
+
+    #[test]
     fn free_deluge_pays_three_and_rejects_a_different_paid_x() {
         let mut state = plains();
         let creature = put(&mut state, P0, "Annoyed Altisaur", Zone::Battlefield);
