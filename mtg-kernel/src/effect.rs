@@ -13477,8 +13477,10 @@ fn authenticated_draw_attempts(
         }
         _ => return Ok(None),
     };
-    Ok((nonland_sacrifice_payment_v1::remaining(&root, path)? == continuation.frames)
-        .then_some(attempts))
+    Ok(
+        (nonland_sacrifice_payment_v1::remaining(&root, path)? == continuation.frames)
+            .then_some(attempts),
+    )
 }
 
 /// Authenticates a suspended miracle draw remainder: the printed draw at
@@ -13510,10 +13512,12 @@ fn miracle_draw_remainder(
         || drawn.expected_zone != Zone::Hand
         || state.players[player.index()].draws_this_turn != 1
         || remaining
-            >= printed_count
-                .saturating_add(event::draw_instruction_extra_at_hand_size(
-                    state, player, printed_count, 0,
-                ))
+            >= printed_count.saturating_add(event::draw_instruction_extra_at_hand_size(
+                state,
+                player,
+                printed_count,
+                0,
+            ))
         || tail != nonland_sacrifice_payment_v1::remaining(&root, path)?
     {
         return Err("miracle draw lost its first draw or the rest of its program".into());
@@ -18263,8 +18267,8 @@ fn resumable_discard_below(
 ) -> Result<Vec<EffectFrame>, String> {
     let root = validated_definition_owned_root_effect(state, pending)?;
     // Builds without Eternal programs keep the root sequence leaf only.
-    if !cfg!(feature = "eternal-fixtures")
-        && !(matches!(root.as_ref(), EffectOp::Sequence(_)) && path.len() == 1)
+    if !(cfg!(feature = "eternal-fixtures")
+        || matches!(root.as_ref(), EffectOp::Sequence(_)) && path.len() == 1)
     {
         return Err("nonterminal discard requires a root sequence leaf".to_string());
     }

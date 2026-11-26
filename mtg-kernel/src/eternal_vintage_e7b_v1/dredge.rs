@@ -834,8 +834,8 @@ pub(crate) fn resume_draw_step_after_miracle(state: &mut GameState) {
 /// choice, so the draw runs through the resumable turn-draw driver.
 pub(crate) fn defer_draw_step_draw(state: &mut GameState, player: PlayerId) -> bool {
     let total = 1 + event::draw_instruction_extra(state, player, 1);
-    if !owned_draw_needs_choice(state, player, 1)
-        && !(total > 1 && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player))
+    if !(owned_draw_needs_choice(state, player, 1)
+        || total > 1 && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player))
     {
         return false;
     }

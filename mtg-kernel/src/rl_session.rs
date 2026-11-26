@@ -14426,17 +14426,15 @@ mod tests {
                 .pending_discard
                 .clone()
                 .expect("Dack's terminal discard waits inside its resolution");
-            assert!(crate::effect::validate_resumable_discard(
-                &terminal_without_capture,
-                &discard
-            )
-            .is_ok());
+            assert!(
+                crate::effect::validate_resumable_discard(&terminal_without_capture, &discard)
+                    .is_ok()
+            );
             crate::eternal_vintage_e7b_v1::dredge::stop_deferring(&mut terminal_without_capture);
-            assert!(crate::effect::validate_resumable_discard(
-                &terminal_without_capture,
-                &discard
-            )
-            .is_err());
+            assert!(
+                crate::effect::validate_resumable_discard(&terminal_without_capture, &discard)
+                    .is_err()
+            );
             choose(&mut session, |action| {
                 matches!(action, ActionSemanticV1::Discard { cards, .. }
                     if cards.iter().any(|card| card.arena_id == miracle.0))
