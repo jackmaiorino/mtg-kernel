@@ -974,7 +974,12 @@ fn a_forged_placement_capture_above_a_lone_spell_is_refused() {
 fn a_forged_placement_capture_behind_a_legend_rule_choice_is_refused() {
     let mut state = plains();
     let cub = put(&mut state, P0, "Scythecat Cub", Zone::Battlefield);
-    let kept = put(&mut state, P0, "Ragavan, Nimble Pilferer", Zone::Battlefield);
+    let kept = put(
+        &mut state,
+        P0,
+        "Ragavan, Nimble Pilferer",
+        Zone::Battlefield,
+    );
     let second = put(&mut state, P0, "Ragavan, Nimble Pilferer", Zone::Hand);
     let land = put(&mut state, P0, "Plains", Zone::Hand);
     play(&mut state, land);

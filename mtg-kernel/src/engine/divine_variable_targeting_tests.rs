@@ -151,6 +151,9 @@ fn restored_ordered_trigger_refuses_an_overflowing_slot_spec_without_panicking()
             assert_eq!(stepped, replay, "{action:?}");
         }
         let mut advanced = replay.clone();
-        assert!(matches!(advance_until_decision(&mut advanced), Decision::Halted { .. }));
+        assert!(matches!(
+            advance_until_decision(&mut advanced),
+            Decision::Halted { .. }
+        ));
     }
 }

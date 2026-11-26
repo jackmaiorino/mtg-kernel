@@ -20622,7 +20622,9 @@ fn pending_trigger_order_group(state: &GameState) -> Option<usize> {
         .iter()
         .take_while(|trigger| trigger.controller == first.controller)
         .count();
-    let unordered = group[..group_len].iter().any(|trigger| !trigger.placement_ordered);
+    let unordered = group[..group_len]
+        .iter()
+        .any(|trigger| !trigger.placement_ordered);
     (group_len >= 2 && unordered).then_some(group_len)
 }
 

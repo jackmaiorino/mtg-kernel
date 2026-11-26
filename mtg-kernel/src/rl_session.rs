@@ -14558,7 +14558,13 @@ mod tests {
                 .engine
                 .pending_triggers
                 .iter()
-                .map(|trigger| (trigger.source, trigger.placement_ordered, trigger.targets.len()))
+                .map(|trigger| {
+                    (
+                        trigger.source,
+                        trigger.placement_ordered,
+                        trigger.targets.len(),
+                    )
+                })
                 .collect::<Vec<_>>();
             assert_eq!(marks, [(first, true, 0), (second, true, 0)]);
             let Decision::ChooseTargets {

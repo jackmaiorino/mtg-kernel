@@ -49,7 +49,10 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
         return Ok(());
     }
     let top = state.stack.last().map(|item| item.kind);
-    if !matches!(top, Some(StackItemKind::TriggeredAbility | StackItemKind::MadnessOffer)) {
+    if !matches!(
+        top,
+        Some(StackItemKind::TriggeredAbility | StackItemKind::MadnessOffer)
+    ) {
         return Err("waiting placement captures have no placed trigger on top".into());
     }
     if decision_precedes_trigger_placement(state) {
