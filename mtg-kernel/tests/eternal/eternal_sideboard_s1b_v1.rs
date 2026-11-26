@@ -1721,7 +1721,12 @@ fn dress_down_suppresses_the_noncast_copy_menu_in_both_seats() {
 
 #[test]
 fn show_and_tell_noncast_metamorph_copies_only_preexisting_mind_stone() {
-    for actor in [P0, P1] {
+    for (actor, companion_name) in [
+        (P0, "Island"),
+        (P1, "Island"),
+        (P0, "Wall of Blossoms"),
+        (P1, "Wall of Blossoms"),
+    ] {
         let mut state = islands();
         state.active_player = actor;
         state.priority_player = actor;
@@ -1733,7 +1738,7 @@ fn show_and_tell_noncast_metamorph_copies_only_preexisting_mind_stone() {
             Zone::Battlefield,
         );
         let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
-        let island = put(&mut state, actor.opponent(), "Island", Zone::Hand);
+        let companion = put(&mut state, actor.opponent(), companion_name, Zone::Hand);
         let show = put(&mut state, actor, "Show and Tell", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::U], 2);
         cast(&mut state, show, &[]);
@@ -1744,7 +1749,7 @@ fn show_and_tell_noncast_metamorph_copies_only_preexisting_mind_stone() {
         );
         act(
             &mut state,
-            Action::ChooseEffectTarget(Target::Object(island)),
+            Action::ChooseEffectTarget(Target::Object(companion)),
         );
         assert!(
             matches!(next(&mut state), Decision::ChooseEffectTargets { legal_targets, .. } if legal_targets == [Target::Object(stone)])
@@ -1762,11 +1767,14 @@ fn show_and_tell_noncast_metamorph_copies_only_preexisting_mind_stone() {
             .unwrap();
         roster.push(
             serde_json::to_value(mtg_kernel::state::AbilitySourceContractV4::capture(
-                &state, island,
+                &state, companion,
             ))
             .unwrap(),
         );
-        assert_copy_restore_refused(forged, Action::ChooseEffectTarget(Target::Object(island)));
+        assert_copy_restore_refused(
+            forged,
+            Action::ChooseEffectTarget(Target::Object(companion)),
+        );
         let mut declined = state.clone();
         act(&mut declined, Action::FinishEffectSelection);
         settled(&mut declined);
@@ -1777,7 +1785,22 @@ fn show_and_tell_noncast_metamorph_copies_only_preexisting_mind_stone() {
         );
         settled(&mut state);
         assert_eq!(state.objects.get(metamorph).card_def, id("Mind Stone"));
-        assert_eq!(zone(&state, island), Zone::Battlefield);
+        assert_eq!(zone(&state, companion), Zone::Battlefield);
+        let mana = state.players[actor.index()].mana_pool[ManaColor::C.pool_index()];
+        act(&mut state, Action::ActivateManaAbility(metamorph));
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            mana + 1
+        );
+        mtg_kernel::event::propose_and_commit(
+            &mut state,
+            mtg_kernel::event::ProposedEvent::zone_change(metamorph, Zone::Graveyard),
+        );
+        assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Phyrexian Metamorph")
+        );
     }
 }
 
@@ -1797,6 +1820,8 @@ fn copied_entry_requirements_are_answered_before_reanimate_moves_the_card() {
             state.priority_player = actor;
             state.public_shroud_v1 = true;
             let donor = put(&mut state, actor, name, Zone::Battlefield);
+            // Resolve the original permanent's own entry choice before the copy is offered.
+            settle_first(&mut state);
             if name == "Cavern of Souls" {
                 let coating = put(&mut state, actor, "Liquimetal Coating", Zone::Battlefield);
                 activate(&mut state, coating, 0, &[Target::Object(donor)]);
