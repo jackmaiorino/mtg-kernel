@@ -755,3 +755,82 @@ fn killed_launcher_refuses_reopen_without_resume() {
     assert_eq!(stop["kind"], "process_death");
     assert!(!root.0.join("b1/updates/update-0000").exists());
 }
+
+#[test]
+fn restart_run_ids_parse_and_prepare_after_stopped_b1() {
+    assert_eq!(parse_training_run("b1"), Some((Segment::BuilderOnly, 1)));
+    assert_eq!(parse_training_run("b2"), Some((Segment::BuilderOnly, 2)));
+    assert_eq!(parse_training_run("k1"), Some((Segment::PickPhase, 1)));
+    assert_eq!(parse_training_run("k2"), Some((Segment::PickPhase, 2)));
+    for bad in ["", "b", "k", "b0", "k0", "b01", "k02", "i1", "b-1", "x2"] {
+        assert_eq!(parse_training_run(bad), None, "{bad}");
+    }
+
+    let root = Scratch::new();
+    let (mut args, mut spec, _) = fixture(&root.0);
+    let mut manifest = fs::read_to_string(root.0.join("manifest")).unwrap();
+    append_entry(
+        &mut manifest,
+        5,
+        "training_run",
+        json!({"run_id":"shakedown-pods/b1","tripwire":{"mode":"q9"},"files":{"b1/run.json":"0".repeat(64)}}),
+    );
+    append_entry(
+        &mut manifest,
+        6,
+        "stop",
+        json!({"run_id":"shakedown-pods/b1","stop_kind":"tripwire"}),
+    );
+    spec["manifest"] = write_pin(&root.0, "manifest", manifest.as_bytes());
+    spec["manifest_prefix_sha256"] = spec["manifest"]["sha256"].clone();
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+
+    args.run = "b2".into();
+    args.prepare = true;
+    let init = seed(&[
+        SeedPart::Str("shakedown-pods"),
+        SeedPart::Str("pod"),
+        SeedPart::Str("i1"),
+        SeedPart::Int(0),
+    ])
+    .unwrap();
+    let inputs_for_b2: Inputs = serde_json::from_value(spec.clone()).unwrap();
+    let data_for_b2 = inputs_for_b2.load().unwrap();
+    let cfg_b2 = inputs_for_b2.config(&args, &data_for_b2).unwrap();
+    let b2_init_sha =
+        TrainingDriver::initial_state_sha256(&cfg_b2, &data_for_b2.rows, init).unwrap();
+    assert_ne!(b2_init_sha, spec["initial_state_sha256"].as_str().unwrap());
+    spec["initial_state_sha256"] = json!(b2_init_sha);
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+
+    assert!(launch(&args).unwrap());
+    assert!(root.0.join("b2/run.json").is_file());
+    assert!(!root.0.join("b2/updates/update-0000").exists());
+    let b2_ckpt: Value =
+        serde_json::from_slice(&fs::read(root.0.join("b2/initial/checkpoint.json")).unwrap())
+            .unwrap();
+    assert_eq!(b2_ckpt["run"], "b2");
+    assert_eq!(b2_ckpt["state_sha256"], b2_init_sha);
+    assert_eq!(
+        b2_ckpt["parameter_layout_sha256"],
+        "da3770aecef52011764d3cc330fb783eaf76ab63cdafefc843c9381aeff1fd0b"
+    );
+
+    // Authorizing b2 at seq 7 passes verify_run and rejects k2 prepare before b2 completes.
+    let b2_pin = pinned(&root.0.join("b2/run.json"))["sha256"].clone();
+    append_entry(
+        &mut manifest,
+        7,
+        "training_run",
+        json!({"run_id":"shakedown-pods/b2","tripwire":{"mode":"q9"},"files":{"b2/run.json":b2_pin}}),
+    );
+    spec["manifest"] = write_pin(&root.0, "manifest", manifest.as_bytes());
+    spec["manifest_prefix_sha256"] = spec["manifest"]["sha256"].clone();
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+
+    args.run = "k2".into();
+    args.prepare = true;
+    let err = launch(&args).unwrap_err().to_string();
+    assert!(err.contains("completed builder segment"), "{err}");
+    assert!(!root.0.join("k2/run.json").exists());
+}

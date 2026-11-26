@@ -1,5 +1,5 @@
 //! D8 learned training. Invoke once per segment and stage:
-//! `cube_training_launcher_v1 prepare|run ROOT b1|k1 INPUTS.json --threads N`.
+//! `cube_training_launcher_v1 prepare|run ROOT b<n>|k<n> INPUTS.json --threads N`.
 //! For a host-loss resume, append `--resume-entry SEQ --records-repository PATH`.
 //! Paths in INPUTS are relative to the working directory. Each of cube_table,
 //! cube_list, ordered_pool, card_database (cube_card_ids/v1 export), fence,
@@ -243,11 +243,8 @@ impl Inputs {
     }
 
     fn config(&self, args: &Args, data: &Data) -> ResultBox<RunConfig> {
-        let segment = if args.run == "b1" {
-            Segment::BuilderOnly
-        } else {
-            Segment::PickPhase
-        };
+        let (segment, _) =
+            parse_training_run(&args.run).ok_or("invalid stage, segment or thread count")?;
         let mut cfg = RunConfig::shakedown(args.root.join(&args.run), &args.run, segment);
         cfg.workers = args.threads;
         if self.host.trim().is_empty() || self.build_profile.trim().is_empty() {
@@ -302,6 +299,21 @@ impl Inputs {
     }
 }
 
+fn parse_training_run(run: &str) -> Option<(Segment, u64)> {
+    let (segment, digits) = if let Some(rest) = run.strip_prefix('b') {
+        (Segment::BuilderOnly, rest)
+    } else if let Some(rest) = run.strip_prefix('k') {
+        (Segment::PickPhase, rest)
+    } else {
+        return None;
+    };
+    if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let generation: u64 = digits.parse().ok()?;
+    (generation >= 1).then_some((segment, generation))
+}
+
 #[derive(Clone)]
 struct Args {
     prepare: bool,
@@ -314,11 +326,11 @@ struct Args {
 impl Args {
     fn parse(args: &[String]) -> ResultBox<Self> {
         let [stage, root, run, inputs, threads_flag, threads, rest @ ..] = args else {
-            return Err("usage: prepare|run ROOT b1|k1 INPUTS.json --threads N [--resume-entry SEQ --records-repository PATH]".into());
+            return Err("usage: prepare|run ROOT b<n>|k<n> INPUTS.json --threads N [--resume-entry SEQ --records-repository PATH]".into());
         };
         let threads = threads.parse()?;
         if !matches!(stage.as_str(), "prepare" | "run")
-            || !matches!(run.as_str(), "b1" | "k1")
+            || parse_training_run(run).is_none()
             || threads_flag != "--threads"
             || threads == 0
         {
@@ -475,12 +487,16 @@ fn execute(
     ])?;
     let run_path = config.root.join("run.json");
     config.preflight_open()?;
-    let mut builder_config = if config.segment == Segment::BuilderOnly {
+    let (_, generation) =
+        parse_training_run(&args.run).ok_or("invalid stage, segment or thread count")?;
+    let builder_run = format!("b{generation}");
+    let is_builder = config.segment == Segment::BuilderOnly;
+    let mut builder_config = if is_builder {
         config.clone()
     } else {
         inputs.config(
             &Args {
-                run: "b1".into(),
+                run: builder_run.clone(),
                 resume: None,
                 ..args.clone()
             },
@@ -493,21 +509,22 @@ fn execute(
     {
         return Err("initial checkpoint state sha256 mismatch".into());
     }
-    if (!args.prepare && args.run == "b1") || (args.prepare && args.run == "k1") {
+    if (!args.prepare && is_builder) || (args.prepare && !is_builder) {
         let path = builder_config.root.join("initial/checkpoint.json");
         if stored_state_sha256(&path)? != inputs.initial_state_sha256 {
             return Err("stored builder initial checkpoint state sha256 mismatch".into());
         }
     }
     let tripwire = serde_json::to_value(&config.tripwire)?;
-    let mut driver = if args.run == "k1" && args.prepare {
-        let builder_entry = training_entry(&data.entries, "b1")?.ok_or("missing b1 entry")?;
+    let mut driver = if !is_builder && args.prepare {
+        let builder_entry = training_entry(&data.entries, &builder_run)?
+            .ok_or_else(|| format!("missing {builder_run} entry"))?;
         let mut previous = builder_config;
         previous.open_intent = OpenIntent::ReadCompletedBuilder;
         previous.manifest_prefix_sha256 = Some(
             builder_entry["prefix_sha256"]
                 .as_str()
-                .ok_or("missing b1 prefix")?
+                .ok_or_else(|| format!("missing {builder_run} prefix"))?
                 .to_owned(),
         );
         previous.tripwire = serde_json::from_value(builder_entry["tripwire"].clone())?;
@@ -517,7 +534,9 @@ fn execute(
                 .as_ref()
                 .or(inputs.baseline.as_ref())
                 .filter(|b| &b.pin == baseline)
-                .ok_or("missing evidence for b1's full-mode baseline")?;
+                .ok_or_else(|| {
+                    format!("missing evidence for {builder_run}'s full-mode baseline")
+                })?;
             previous.tripwire_files = Some(evidence.files());
         }
         let saved = verify_run(&previous, builder_entry)?;
