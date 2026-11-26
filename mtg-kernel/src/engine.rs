@@ -31575,18 +31575,13 @@ fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackI
     let origin = source.v4.spell_cast_origin;
     let route = origin.map(|origin| origin.route);
     // Retrace (702.81, Wrenn and Six's emblem) is the route that discards a
-    // land: `RetraceV1`, or an ordinary graveyard permission route that only
-    // retrace allows (another permission casts without the discard).
+    // land. Whether a cast was a retrace cast is decided when it is
+    // announced and recorded as its route, `RetraceV1` (`begin_cast`), so a
+    // graveyard permission that begins later (Yawgmoth's Will cast at
+    // instant speed) does not change it. Every other route discards no land.
     let retrace = cfg!(feature = "eternal-fixtures")
         && origin.is_some_and(|origin| {
-            origin.origin_zone == Zone::Graveyard
-                && crate::eternal_vintage_e7b_v1::retrace_route(
-                    state,
-                    parent.source,
-                    caster,
-                    origin.route,
-                    origin.origin_zone_change_count,
-                )
+            origin.origin_zone == Zone::Graveyard && origin.route == SpellCastRouteV4::RetraceV1
         });
     match (parent.v4.cast_method, route) {
         (Some(CastMethodV4::Escape), Some(route)) if route.is_escape() => {
@@ -32998,6 +32993,25 @@ fn materialize_begin_cast_with_quote_v1(
                     holder: player,
                     graveyard_generation: origin_zone_change_count,
                 }
+            }
+            // A cast that only retrace allows (702.81: Wrenn and Six's
+            // emblem, Six) is a retrace cast, and records the retrace route
+            // whether or not another route competed, so that it stays a
+            // retrace cast if another graveyard permission begins while it
+            // is on the stack.
+            CastMethodV4::Normal
+                if cfg!(feature = "eternal-fixtures")
+                    && origin_zone == Zone::Graveyard
+                    && !graveyard_bestow
+                    && graveyard_permission == Some(origin_zone_change_count)
+                    && crate::eternal_vintage_e7b_v1::retrace_cast(
+                        state,
+                        spell_id,
+                        player,
+                        origin_zone_change_count,
+                    ) =>
+            {
+                SpellCastRouteV4::RetraceV1
             }
             CastMethodV4::Normal if origin_zone == Zone::Graveyard => {
                 SpellCastRouteV4::GraveyardPermissionV1 {
@@ -44061,9 +44075,9 @@ mod tests {
         }
     }
 
-    /// Review round 3, finding 3: a retrace cast recorded on the ordinary
-    /// graveyard permission route must carry its discarded land; the same
-    /// parent with that payment stripped is refused.
+    /// Review round 3, finding 3: a retrace cast, recorded on the retrace
+    /// route even with no competing route, must carry its discarded land;
+    /// the same parent with that payment stripped is refused.
     #[cfg(feature = "eternal-fixtures")]
     #[test]
     fn chain_copy_rejects_a_retrace_cast_with_its_land_payment_stripped() {
@@ -44073,15 +44087,15 @@ mod tests {
             Zone::Graveyard,
             "retrace discard"
         );
-        assert!(matches!(
+        assert_eq!(
             state
                 .objects
                 .get(state.stack.last().unwrap().source)
                 .v4
                 .spell_cast_origin
                 .map(|origin| origin.route),
-            Some(SpellCastRouteV4::GraveyardPermissionV1 { .. })
-        ));
+            Some(SpellCastRouteV4::RetraceV1)
+        );
         assert_eq!(state.stack.last().unwrap().v4.paid_cost_refs.len(), 1);
         assert!(matches!(
             pass_until_stack_resolves(&mut state),
@@ -44120,6 +44134,52 @@ mod tests {
         ));
         assert!(state.engine.halted.is_none());
         assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Review round 4, finding 1: whether a cast was a retrace cast is
+    /// fixed when it is announced. P0 retraces Chain Lightning (no other
+    /// graveyard permission, so it discards a Mountain), then, with Teferi,
+    /// Time Raveler's +1, casts Yawgmoth's Will at instant speed and lets it
+    /// resolve. Another permission now allows the graveyard cast, but the
+    /// retraced parent still offers its copy without halting.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_of_a_retraced_parent_survives_a_later_yawgmoths_will() {
+        let (mut state, chain, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+        let origin = state.objects.get(chain).v4.spell_cast_origin.unwrap();
+        assert_eq!(origin.route, SpellCastRouteV4::RetraceV1);
+        crate::eternal_legacy_e8a_v1::e8a_state(&mut state)
+            .sorcery_flash
+            .push(PlayerId::P0);
+        let will = put_in_hand(&mut state, PlayerId::P0, "Yawgmoth's Will");
+        state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        step(&mut state, Action::CastSpell(will)).unwrap();
+        assert_eq!(state.stack.len(), 2);
+        pass_until_one_stack_item_resolves(&mut state);
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack.last().unwrap().source, chain);
+        assert!(
+            crate::standard_cards_v1::graveyard_cast_granted_without_retrace(
+                &state,
+                chain,
+                PlayerId::P0,
+                origin.origin_zone_change_count,
+            ),
+            "Yawgmoth's Will now allows the graveyard cast too"
+        );
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        assert!(state.engine.halted.is_none());
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+        assert!(state.engine.halted.is_none());
     }
 
     /// Review round 4, finding 2(a): retrace's discarded land is recorded
