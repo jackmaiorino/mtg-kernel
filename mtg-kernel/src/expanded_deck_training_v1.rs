@@ -15968,6 +15968,13 @@ pub(crate) mod tests {
     mod v8_inclusion_tests;
     mod widening_b512_tests;
 
+    fn sd1_options_from_json_v1(run: &str, sd1: Value) -> ex1_collect_v1::Ex1CollectOptionsV1 {
+        serde_json::from_value(json!({"run":run,"update":0,"budget":600,
+            "w5":{"recipe":crate::w5_xact_v1::W5_XACT_VERSION_V1,"key_memo_mib":64,
+                "capture_0b":{"budgets":[],"search_seeds":[],"rollouts":0,"sd1":sd1}}}))
+        .unwrap()
+    }
+
     /// `sd1_capture_without_head_compare_keeps_its_bytes`'s first reached slot
     /// and capture digest, measured on origin/main ccadc6af (before the head
     /// comparison).
