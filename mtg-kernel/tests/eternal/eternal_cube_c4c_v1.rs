@@ -2006,7 +2006,13 @@ fn smugglers_copter_refuses_a_restored_loot_discard_its_resolution_never_reached
         .expect("Copter's choice waits inside its resolution");
     assert_eq!(continuation.resolving_item.v4.stack_item_id, stack_item_id);
     continuation.choice = None;
-    continuation.frames = discarding.engine.pending_effect.as_ref().unwrap().frames.clone();
+    continuation.frames = discarding
+        .engine
+        .pending_effect
+        .as_ref()
+        .unwrap()
+        .frames
+        .clone();
     forged.engine.pending_effect = Some(continuation);
     forged.eternal_v1.as_mut().unwrap().e7b.dredge_deferring = true;
     forged.engine.pending_discard = Some(engine::PendingDiscard {

@@ -14462,7 +14462,9 @@ mod tests {
             },
         };
         skipped_draw.engine.pending_discard = Some(skipped_discard.clone());
-        assert!(crate::eternal_vintage_e7b_v1::dredge::deferring_captures(&skipped_draw));
+        assert!(crate::eternal_vintage_e7b_v1::dredge::deferring_captures(
+            &skipped_draw
+        ));
         assert!(
             crate::effect::validate_resumable_discard(&skipped_draw, &skipped_discard).is_err()
         );
@@ -14474,7 +14476,13 @@ mod tests {
         let narset =
             add_battlefield_object(&mut prevented, PlayerId::P0, "Narset, Parter of Veils");
         crate::planeswalker_v1::after_zone_change(&mut prevented, narset, None);
-        let stopped = prevented.engine.pending_effect.as_ref().unwrap().frames.clone();
+        let stopped = prevented
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .frames
+            .clone();
         crate::engine::step(&mut prevented, crate::engine::Action::ChooseEffectOption(0)).unwrap();
         assert!(matches!(
             crate::engine::advance_until_decision(&mut prevented),

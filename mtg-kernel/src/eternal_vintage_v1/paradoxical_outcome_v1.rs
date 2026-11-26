@@ -308,8 +308,7 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     if returned.arrivals != owned_arrivals(state, &pending.ctx, batch) {
         return Err("Paradoxical Outcome changed its actual hand arrivals".into());
     }
-    let Some((path, remaining)) = crate::eternal_vintage_e7b_v1::dredge::draw_stage(pending)
-    else {
+    let Some((path, remaining)) = crate::eternal_vintage_e7b_v1::dredge::draw_stage(pending) else {
         // The staged next draw waits for a miracle reveal.
         if miracle_draw_stage(state, pending) {
             return Ok(());

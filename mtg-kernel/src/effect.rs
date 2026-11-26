@@ -13527,15 +13527,17 @@ pub(crate) fn suspend_miracle_draw(
             drawn: link,
             remaining,
         });
-    continuation.frames.push(EffectFrame::MiracleDrawRemainderV1 {
-        path: path.to_vec(),
-        drawn: EffectObjectBinding {
-            object: card,
-            expected_zone: Zone::Hand,
-            expected_zone_change_count: link.zone_change_count,
-        },
-        remaining,
-    });
+    continuation
+        .frames
+        .push(EffectFrame::MiracleDrawRemainderV1 {
+            path: path.to_vec(),
+            drawn: EffectObjectBinding {
+                object: card,
+                expected_zone: Zone::Hand,
+                expected_zone_change_count: link.zone_change_count,
+            },
+            remaining,
+        });
     true
 }
 

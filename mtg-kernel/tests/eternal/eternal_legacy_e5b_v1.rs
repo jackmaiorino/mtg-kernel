@@ -1235,7 +1235,10 @@ fn miracle_pauses_echo_of_eons_draws_for_each_drawer_without_a_dredger() {
         assert_eq!(state.players[drawer.index()].hand.len(), 1);
         assert_eq!(state.players[drawer.index()].draws_this_turn, 1);
         let other_drew = if drawer == P0 { 0 } else { 7 };
-        assert_eq!(state.players[drawer.opponent().index()].hand.len(), other_drew);
+        assert_eq!(
+            state.players[drawer.opponent().index()].hand.len(),
+            other_drew
+        );
         act(&mut state, Action::ChooseEffectOption(0));
     }
     settled(&mut state);
@@ -1311,8 +1314,7 @@ fn a_restored_draw_step_wait_needs_its_reveal_and_the_riddler_draws_it_names() {
     assert_eq!(state.players[0].draws_this_turn, 1);
     let waiting = |state: &GameState| {
         let mut forged = state.clone();
-        forged.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining =
-            OptionalRemainingV1(Some(1));
+        forged.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining = OptionalRemainingV1(Some(1));
         forged
     };
     // A restored wait for a draw the hand before the draw never earned.

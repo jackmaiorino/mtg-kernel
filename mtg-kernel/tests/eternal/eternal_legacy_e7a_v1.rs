@@ -1743,7 +1743,11 @@ fn archon_of_cruelty_draw_waits_for_a_first_draw_miracle_between_discard_and_lif
             } if source == fanatic && reveals == 0 => {
                 reveals += 1;
                 assert!(hand_contains(s, P0, fanatic));
-                assert_eq!(zone(s, held), Zone::Graveyard, "the opponent discarded first");
+                assert_eq!(
+                    zone(s, held),
+                    Zone::Graveyard,
+                    "the opponent discarded first"
+                );
                 assert_eq!(s.players[1].life, 17);
                 assert_eq!(s.players[0].life, 20, "the life gain comes after the draw");
                 assert!(s.engine.pending_effect.is_some());

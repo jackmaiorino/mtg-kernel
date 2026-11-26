@@ -881,12 +881,8 @@ pub(crate) fn validate_miracle_draw_step_wait(state: &GameState) -> Result<(), S
     let player = state.active_player;
     let hand = state.players[player.index()].hand.len();
     let accounted = (1..=hand.max(1)).any(|made| {
-        let extra = event::draw_instruction_extra_at_hand_size(
-            state,
-            player,
-            1,
-            hand.saturating_sub(made),
-        );
+        let extra =
+            event::draw_instruction_extra_at_hand_size(state, player, 1, hand.saturating_sub(made));
         u64::from(remaining) + u64::try_from(made).unwrap_or(u64::MAX) <= 1 + u64::from(extra)
     });
     let revealing = crate::eternal_legacy_e5b_v1::pending_decision(state).is_some_and(|decision| {

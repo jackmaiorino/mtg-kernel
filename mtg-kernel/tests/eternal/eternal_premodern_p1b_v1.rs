@@ -837,7 +837,11 @@ fn frantic_search_refuses_a_restored_discard_that_skips_its_draw_and_untap() {
     assert_eq!(state.players[0].hand.len(), 0, "drew two, discarded two");
     let revealing = revealing.expect("the first draw is a miracle reveal");
     let discarding = discarding.expect("the discard waits inside the resolution");
-    assert_eq!(revealing.players[0].hand.len(), 1, "one card drawn at the reveal");
+    assert_eq!(
+        revealing.players[0].hand.len(),
+        1,
+        "one card drawn at the reveal"
+    );
     let reached = discarding.engine.pending_discard.clone().unwrap();
     let engine::DiscardResume::FinishEffectContinuation {
         stack_item_id,
@@ -848,8 +852,13 @@ fn frantic_search_refuses_a_restored_discard_that_skips_its_draw_and_untap() {
         panic!("the discard resumes its resolution");
     };
     let mut forged = revealing.clone();
-    forged.engine.pending_effect.as_mut().unwrap().frames =
-        discarding.engine.pending_effect.as_ref().unwrap().frames.clone();
+    forged.engine.pending_effect.as_mut().unwrap().frames = discarding
+        .engine
+        .pending_effect
+        .as_ref()
+        .unwrap()
+        .frames
+        .clone();
     assert!(forged.eternal_v1.as_ref().unwrap().e7b.dredge_deferring);
     let original_hand = forged.players[0]
         .hand
