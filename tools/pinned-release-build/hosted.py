@@ -45,6 +45,7 @@ PACK3_SOURCES = (
     "d120ef55a20a4beb473b17c79693d8fe8aa25052",  # lever 32 bundle on release 46f7ecfec (the promo chains' source)
     "af1ea85d349ca67c94eb4dd698893b9650ed3296",  # lever 32 bundle on 46f7ecfec with the 32a review fixes (test and doc only)
     "a76c83ac1118befcefe00aaa6798156551d360c1",  # lever 34: byte-identical collection writes on the lever 32 bundle af1ea85d3
+    "6935a05ad52156683650fb82b7a5996b87fa349c",  # V7-to-V4 identity export for the Spellbench entrant (on the lever 32 bundle af1ea85d3)
 )
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
