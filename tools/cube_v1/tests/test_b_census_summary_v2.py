@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sys
-
-import pytest
+import tempfile
+import unittest
 
 CUBE_V1_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CUBE_V1_DIR))
@@ -96,5 +97,39 @@ def test_cli_reports_overlap_between_game_and_excluded_slot(tmp_path):
 def test_rejects_conflicting_slot_classes(tmp_path):
     slots = tmp_path / "slots.json"
     slots.write_text('{"lost":[1],"unrun":[1]}', encoding="utf-8")
-    with pytest.raises(ValueError, match="duplicate excluded slot"):
+    try:
         list(v2.read_excluded_slots(slots))
+    except ValueError as error:
+        assert re.search("duplicate excluded slot", str(error))
+    else:
+        raise AssertionError("conflicting slot classes were accepted")
+
+
+class SummaryV2Tests(unittest.TestCase):
+    """Run the module's test functions under unittest discovery, as CI does."""
+
+    def _run(self, test, needs_tmp):
+        if needs_tmp:
+            with tempfile.TemporaryDirectory() as tmp:
+                test(Path(tmp))
+        else:
+            test()
+
+    def test_exact_counts(self):
+        self._run(test_exact_counts_include_hangs_and_exclude_unplayed_slots, False)
+
+    def test_v1_cannot_distinguish(self):
+        self._run(test_v1_summary_cannot_distinguish_hidden_lost_card_presence, False)
+
+    def test_cli_reconciles(self):
+        self._run(test_cli_reconciles_only_declared_missing_slots, True)
+
+    def test_cli_reports_overlap(self):
+        self._run(test_cli_reports_overlap_between_game_and_excluded_slot, True)
+
+    def test_rejects_conflicts(self):
+        self._run(test_rejects_conflicting_slot_classes, True)
+
+
+if __name__ == "__main__":
+    unittest.main()
