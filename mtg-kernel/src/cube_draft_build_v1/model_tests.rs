@@ -350,6 +350,80 @@ fn layout_hash_depends_on_names_and_shapes_only() {
     assert_ne!(changed.parameter_sha256(), first.parameter_sha256());
 }
 
+fn assert_cached_hidden_refused<T>(forward: Result<T, ModelErrorV1>, reason: &str) {
+    assert!(matches!(
+        forward,
+        Err(ModelErrorV1::Shape(message)) if message.contains(reason)
+    ));
+}
+
+#[test]
+fn cached_forwards_refuse_stale_model_parameters() {
+    let rows = small_rows();
+    let mut model = small_model(INIT_SEED);
+    let mutations: [fn(&mut ModelV1); 3] = [
+        |model| model.tensor_mut_v1("value.out.bias").unwrap()[0] = 0.5,
+        |model| {
+            model.visit_tensors_mut_v1(|name, _, _, values| {
+                if name == "build.count_head.bias" {
+                    values[0] = 0.5;
+                }
+            });
+        },
+        ModelV1::copy_build_trunk_to_pick_trunk,
+    ];
+    for mutate in mutations {
+        let pick = model.card_hidden_table(&rows, TrunkV1::Pick, 1).unwrap();
+        let build = model.card_hidden_table(&rows, TrunkV1::Build, 1).unwrap();
+        assert!(PickForwardV1::from_cached_hidden(&model, &rows, &pick).is_ok());
+        assert!(BuildForwardV1::from_cached_hidden(&model, &rows, &build).is_ok());
+
+        mutate(&mut model);
+
+        assert_cached_hidden_refused(
+            PickForwardV1::from_cached_hidden(&model, &rows, &pick),
+            "different model parameters",
+        );
+        assert_cached_hidden_refused(
+            BuildForwardV1::from_cached_hidden(&model, &rows, &build),
+            "different model parameters",
+        );
+    }
+
+    let pick = model.card_hidden_table(&rows, TrunkV1::Pick, 1).unwrap();
+    let build = model.card_hidden_table(&rows, TrunkV1::Build, 1).unwrap();
+    assert!(PickForwardV1::from_cached_hidden(&model, &rows, &pick).is_ok());
+    assert!(BuildForwardV1::from_cached_hidden(&model, &rows, &build).is_ok());
+}
+
+#[test]
+fn cached_forwards_refuse_wrong_trunk_and_row_count() {
+    let rows = small_rows();
+    let model = small_model(INIT_SEED);
+    let mut pick = model.card_hidden_table(&rows, TrunkV1::Pick, 1).unwrap();
+    let mut build = model.card_hidden_table(&rows, TrunkV1::Build, 1).unwrap();
+
+    assert_cached_hidden_refused(
+        PickForwardV1::from_cached_hidden(&model, &rows, &build),
+        "has trunk",
+    );
+    assert_cached_hidden_refused(
+        BuildForwardV1::from_cached_hidden(&model, &rows, &pick),
+        "has trunk",
+    );
+
+    pick.rows -= 1;
+    build.rows += 1;
+    assert_cached_hidden_refused(
+        PickForwardV1::from_cached_hidden(&model, &rows, &pick),
+        "cached hidden table has 79 rows, expected 80",
+    );
+    assert_cached_hidden_refused(
+        BuildForwardV1::from_cached_hidden(&model, &rows, &build),
+        "cached hidden table has 81 rows, expected 80",
+    );
+}
+
 #[test]
 fn layout_and_parameter_digest_bytes_are_the_stated_format() {
     let specs = vec![TensorSpecV1 {

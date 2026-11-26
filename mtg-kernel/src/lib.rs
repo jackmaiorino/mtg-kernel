@@ -215,11 +215,15 @@ pub mod cube_draft_build_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_draft_v1;
 #[cfg(feature = "eternal-fixtures")]
+pub mod cube_learned_seat_v1;
+#[cfg(feature = "eternal-fixtures")]
 pub mod cube_pod_runner_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_read_plan_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_seat_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_training_driver_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_worker_liveness_v1;
 pub mod elenda_observation_v52;
