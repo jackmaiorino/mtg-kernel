@@ -169,7 +169,7 @@ class HostReservationTests(unittest.TestCase):
             hr.release(uuid.uuid4().hex, "success")
         self.assertEqual(hr.status()["record"]["token"], r["token"])
         # Killing a Windows venv redirector can leave the Python worker alive.
-        worker = self.spawn(SLEEP.format(30), executable=sys._base_executable)
+        worker = self.spawn(SLEEP.format(30), executable=getattr(sys, "_base_executable", None) or sys.executable)
         recorded = hr.record_descendant(r["token"], worker.pid)
         identity = (recorded["pid"], recorded["creation_time"])
         with self.assertRaises(hr.Refused):
