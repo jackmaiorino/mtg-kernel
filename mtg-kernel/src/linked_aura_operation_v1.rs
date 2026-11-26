@@ -2952,6 +2952,25 @@ pub(crate) fn stage_metamorph_mage_copy(
     Ok(())
 }
 
+fn update_staged_metamorph_mage_copy(
+    state: &mut GameState,
+    copy: mage_entry::MetamorphCopyV1,
+) -> Result<(), String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .ok_or("Metamorph copy has no native entry replay owner")?;
+    let slot = runner
+        .metamorph_mage_copies
+        .iter_mut()
+        .find(|owned| owned.physical.source == copy.physical.source)
+        .ok_or("Metamorph copy lost its staged entry")?;
+    *slot = copy;
+    Ok(())
+}
+
 pub(crate) fn metamorph_mage_copy(
     state: &GameState,
     object: crate::ids::ObjectId,
@@ -3046,8 +3065,10 @@ pub(crate) fn resolve_show_and_tell(
         // spellbench-public-reveal: reveal selected cards only after both hand answers.
         state.reveal_hand_card(entrant.owner.opponent(), entrant.owner, entrant.source)?;
     }
-    let mut proposals = Vec::new();
-    for physical in entrants {
+    // CR 614.12: resolve all simultaneous pre-entry copy and replacement
+    // choices before paying discard costs or committing any Show and Tell
+    // choice receipts.
+    for &physical in &entrants {
         if !prepare_registered_entry(
             state,
             physical.source,
@@ -3059,7 +3080,10 @@ pub(crate) fn resolve_show_and_tell(
         )? {
             return Ok(true);
         }
-        let copy = metamorph_mage_copy(state, physical.source);
+    }
+    let mut proposals = Vec::new();
+    for physical in entrants {
+        let mut copy = metamorph_mage_copy(state, physical.source);
         let ProposedEvent::ZoneChange(mut proposal) =
             ProposedEvent::zone_change(physical.source, Zone::Battlefield)
         else {
@@ -3069,11 +3093,21 @@ pub(crate) fn resolve_show_and_tell(
             proposal.to_zone = Zone::Graveyard;
         }
         crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut proposal);
-        if let Some(copy) = copy.filter(|_| proposal.to_zone == Zone::Battlefield) {
-            mage_entry::record(
-                state,
-                mage_entry::JournalV1::ShowAndTellMetamorphChosen { copy },
-            );
+        if proposal.to_zone == Zone::Battlefield {
+            if let Some(copy) = copy.as_mut() {
+                pay_copy_entry_cost(state, copy)?;
+                copy.refresh_show_origin(state);
+                if crate::state::AbilitySourceContractV4::capture(state, copy.copied.source)
+                    != copy.copied
+                {
+                    return Err("chosen copy source changed before its entry batch".into());
+                }
+                update_staged_metamorph_mage_copy(state, copy.clone())?;
+                mage_entry::record(
+                    state,
+                    mage_entry::JournalV1::ShowAndTellMetamorphChosen { copy: copy.clone() },
+                );
+            }
         }
         proposals.push((physical, proposal));
     }
@@ -3540,8 +3574,9 @@ fn prepare_copy_entry(
         if matches!(checkpoint, GeneralChoiceV36::VialMetamorphV1 { .. }) {
             mage_entry::vial::record_hand_answer(state, &copy)?;
         }
-        pay_copy_entry_cost(state, &mut copy)?;
-        copy.refresh_show_origin(state);
+        if show_origin.is_none() {
+            pay_copy_entry_cost(state, &mut copy)?;
+        }
         // Validate against the unmodified battlefield before any simultaneous move.
         if crate::state::AbilitySourceContractV4::capture(state, copy.copied.source) != copy.copied
         {

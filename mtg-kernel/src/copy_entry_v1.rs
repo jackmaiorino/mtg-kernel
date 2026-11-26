@@ -293,6 +293,38 @@ pub struct Requirement {
     pub(crate) options: Vec<EntryAnswer>,
 }
 
+fn unsupported_copy_face(
+    def: &crate::card_def::CardDef,
+    face_index: u8,
+    face_name: &str,
+) -> Option<&'static str> {
+    if matches!(
+        face_name,
+        "Anointed Peacekeeper"
+            | "Disruptor Flute"
+            | "Heraldic Banner"
+            | "Banner of Kinship"
+            | "Phantasmal Image"
+            | "Superior Spider-Man"
+            | "Phyrexian Metamorph"
+            | "Valgavoth's Lair"
+            | "Alpine Moon"
+            | "Echoing Deeps"
+            | "Secluded Courtyard"
+            | "Engineered Plague"
+            | "Phyrexian Processor"
+            | "Shared Triumph"
+    ) {
+        return Some("chosen copy requires an unsupported entry replacement");
+    }
+    if crate::eternal_cube_c2a_v1::as_enters_life_cost(face_name).is_some()
+        || (face_index == 1 && crate::eternal_cards_v1::e3::has_land_back_face(def.name))
+    {
+        return Some("copy requires an entry life payment");
+    }
+    None
+}
+
 pub(crate) fn requirement(
     state: &GameState,
     player: PlayerId,
@@ -305,11 +337,8 @@ pub(crate) fn requirement(
         return Err("Eternal has no nameless face-up blueprint for a face-down copy".into());
     }
     let definition = &CARD_DEFS[usize::from(contract.card_def)];
-    let name = if copy
-        .values
-        .as_ref()
-        .is_some_and(|values| values.face_index != 0)
-    {
+    let face_index = copy.values.as_ref().map_or(0, |values| values.face_index);
+    let name = if face_index != 0 {
         definition
             .transform_face
             .as_ref()
@@ -318,6 +347,9 @@ pub(crate) fn requirement(
     } else {
         definition.object_name
     };
+    if let Some(reason) = unsupported_copy_face(definition, face_index, name) {
+        return Err(reason.into());
+    }
     let options = match name {
         "Painter's Servant" => crate::eternal_legacy_e9a_v1::statics::COLORS
             .into_iter()
@@ -349,25 +381,6 @@ pub(crate) fn requirement(
                     }),
             )
             .collect(),
-        "Anointed Peacekeeper"
-        | "Disruptor Flute"
-        | "Heraldic Banner"
-        | "Banner of Kinship"
-        | "Phantasmal Image"
-        | "Superior Spider-Man"
-        | "Phyrexian Metamorph"
-        | "Valgavoth's Lair"
-        | "Alpine Moon"
-        | "Echoing Deeps"
-        | "Secluded Courtyard"
-        | "Engineered Plague"
-        | "Phyrexian Processor"
-        | "Shared Triumph" => {
-            return Err("chosen copy requires an unsupported entry replacement".into())
-        }
-        other if crate::eternal_cube_c2a_v1::as_enters_life_cost(other).is_some() => {
-            return Err("copy requires an entry life payment".into())
-        }
         _ => return Ok(None),
     };
     Ok(Some(Requirement {
@@ -402,15 +415,422 @@ pub(crate) fn install_answer(state: &mut GameState, host: ObjectLinkV4, answer: 
     }
 }
 
-/// CR 701.28: a single-faced physical card cannot transform. Keep the
-/// battlefield face copied at entry when the day/night designation changes.
-#[cfg(feature = "standard-magezero-fixtures")]
+/// CR 701.28a: a single-faced physical card cannot transform in place,
+/// including when its copied ability or the day/night designation directs it.
 pub(crate) fn is_noncast_copy(state: &GameState, object: ObjectId) -> bool {
-    if !crate::eternal_vintage_v1::active_copy(state, object) {
+    if !cfg!(feature = "eternal-fixtures") || !crate::eternal_vintage_v1::active_copy(state, object)
+    {
         return false;
     }
     let source = AbilitySourceContractV4::capture(state, object);
     noncast_entry(state, source, state.engine.event_history.len()).is_some()
+}
+
+/// CR 701.28a: a single-faced physical card copying a double-faced permanent
+/// cannot transform in place (covers noncast Metamorph copies as well as cast
+/// Metamorph, Phantasmal Image, and Superior Spider-Man copies).
+pub(crate) fn cannot_transform_in_place(state: &GameState, object: ObjectId) -> bool {
+    if is_noncast_copy(state, object) {
+        return true;
+    }
+    if !cfg!(feature = "eternal-fixtures") {
+        return false;
+    }
+    let Some(live) = state.objects.try_get(object) else {
+        return false;
+    };
+    if live.zone != crate::state::Zone::Battlefield {
+        return false;
+    }
+    let link = ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    crate::standard_cards_v1::archived_copy_printing(state, link, live.card_def).is_some_and(
+        |physical| {
+            physical != live.card_def
+                && crate::card_def::CARD_DEFS[usize::from(physical)]
+                    .transform_face
+                    .is_none()
+        },
+    )
+}
+
+fn game_has_card_name(state: &GameState, name: &str, exclude_object: Option<ObjectId>) -> bool {
+    let Some(target_id) = card_id_by_name(name) else {
+        return false;
+    };
+    state
+        .objects
+        .iter()
+        .any(|(id, obj)| Some(id) != exclude_object && obj.card_def == target_id)
+        || crate::standard_cards_v1::any_copied_card_def(state, target_id, exclude_object)
+}
+
+fn donor_had_name(
+    state: &GameState,
+    donor: AbilitySourceContractV4,
+    same_incarnation: bool,
+    name: &str,
+) -> bool {
+    let Some(target_id) = card_id_by_name(name) else {
+        return false;
+    };
+    crate::standard_cards_v1::had_card_def(state, donor.source, donor.zone_change_count, target_id)
+        || (!same_incarnation
+            && state
+                .objects
+                .try_get(donor.source)
+                .is_some_and(|live| live.card_def == target_id))
+}
+
+/// Checks that `mods` is a combination reachable from registered copy-modifier
+/// producers (Plain, Superior Spider-Man, Absorbing Man, Phantasmal Image,
+/// Metamorph/Saheeli/Vaultborn Tyrant).
+fn copy_mods_structurally_valid(
+    def: &crate::card_def::CardDef,
+    face_index: u8,
+    mods: &C8bCopyModsV1,
+) -> bool {
+    let mut expected_subtypes: Vec<u16> = match mods.override_name.as_deref() {
+        None => {
+            if mods.base_pt.is_some()
+                || mods.added_creature
+                || mods.added_legendary
+                || mods.added_vigilance
+            {
+                return false;
+            }
+            Vec::new()
+        }
+        Some(crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN) => {
+            if mods.base_pt != Some((4, 4))
+                || mods.added_creature
+                || mods.added_legendary
+                || mods.added_vigilance
+                || face_index != 0
+                || !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+            {
+                return false;
+            }
+            vec![
+                Subtype::Spider.stable_id(),
+                Subtype::Human.stable_id(),
+                Subtype::Hero.stable_id(),
+            ]
+        }
+        Some(crate::eternal_cube_c8c_v1::ABSORBING_MAN) => {
+            if mods.base_pt != Some((4, 4))
+                || !mods.added_creature
+                || !mods.added_legendary
+                || !mods.added_vigilance
+            {
+                return false;
+            }
+            vec![Subtype::Human.stable_id(), Subtype::Villain.stable_id()]
+        }
+        Some(_) => return false,
+    };
+    if mods.illusion_sacrifice {
+        expected_subtypes.push(Subtype::Illusion.stable_id());
+    }
+    expected_subtypes.sort_unstable();
+    expected_subtypes.dedup();
+    mods.added_subtypes == expected_subtypes
+}
+
+fn game_has_type_granter_for(
+    state: &GameState,
+    def: &crate::card_def::CardDef,
+    face_index: u8,
+) -> bool {
+    use crate::card_def::CardType;
+    if game_has_card_name(state, "Liquimetal Coating", None)
+        || game_has_card_name(state, "Mycosynth Lattice", None)
+    {
+        return true;
+    }
+    let types = def.types_for_face(face_index);
+    if types.contains(&CardType::Enchantment)
+        && (game_has_card_name(state, "Opalescence", None) || def.name == "Lurking Skirge")
+    {
+        return true;
+    }
+    if types.contains(&CardType::Planeswalker) && def.name == "Kaito, Bane of Nightmares" {
+        return true;
+    }
+    if types.contains(&CardType::Land)
+        && (!def.activated_abilities.is_empty()
+            || game_has_card_name(state, "Life // Death", None)
+            || game_has_card_name(state, "Badgermole Cub", None)
+            || game_has_card_name(state, "Nissa, Who Shakes the World", None))
+    {
+        return true;
+    }
+    false
+}
+
+/// Authenticates a completed `MetamorphCopyV1` against the copied face's entry
+/// replacement contract, `CopiableValuesV1` bounds and provenance, and donor
+/// artifact/creature legality (CR 614.12, 707.2, 707.9).
+pub(crate) fn validate_completed_copy(
+    state: &GameState,
+    copy: &crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1,
+    entry: usize,
+) -> bool {
+    use crate::card_def::{CardType, CARD_DEFS};
+    if copy.physical.zone == crate::state::Zone::Stack {
+        return copy.values.is_none()
+            && copy.entry_answer.is_none()
+            && copy.prepared_at.is_none()
+            && copy.discarded_at.is_none()
+            && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::owns_definition(
+                copy.copied.card_def,
+            );
+    }
+    let Some(def) = CARD_DEFS.get(usize::from(copy.copied.card_def)) else {
+        return false;
+    };
+    if def.object_name.is_empty()
+        || !(def.is_executable() || def.is_token)
+        || def.name == crate::self_reflection_v1::ANONYMOUS_BLUEPRINT
+    {
+        return false;
+    }
+    if let Some(values) = &copy.values {
+        if values.card_def != copy.copied.card_def
+            || (values.face_index == 0
+                && values.mods.is_empty()
+                && !values.prototyped
+                && values.copied_end_step_sacrifices_v1 == 0
+                && !values.copied_nightmare_v1)
+        {
+            return false;
+        }
+    }
+    let face_index = copy.values.as_ref().map_or(0, |v| v.face_index);
+    let face_name = match face_index {
+        0 => def.object_name,
+        1 => {
+            let Some(back) = def.transform_face.as_ref() else {
+                return false;
+            };
+            back.name
+        }
+        _ => return false,
+    };
+    if unsupported_copy_face(def, face_index, face_name).is_some() {
+        return false;
+    }
+    let answer_ok = match (face_name, copy.entry_answer) {
+        ("Painter's Servant", Some(EntryAnswer::Color(color))) => {
+            crate::eternal_legacy_e9a_v1::statics::COLORS.contains(&color)
+        }
+        ("Serra's Emissary", Some(EntryAnswer::ProtectionType(index))) => {
+            u16::from(index) < crate::eternal_e5a_v1::statics::PROTECTION_CHOICE_COUNT
+        }
+        ("Pithing Needle", Some(EntryAnswer::NeedleName(id))) => {
+            CARD_DEFS.get(usize::from(id)).is_some_and(|named| {
+                !named.object_name.is_empty() && (named.is_executable() || named.is_token)
+            })
+        }
+        ("Phyrexian Revoker", Some(EntryAnswer::RevokerName(id))) => {
+            CARD_DEFS.get(usize::from(id)).is_some_and(|named| {
+                !named.object_name.is_empty()
+                    && (named.is_executable() || named.is_token)
+                    && !named.has_type(CardType::Land)
+            })
+        }
+        ("Cavern of Souls", Some(EntryAnswer::CreatureType(id))) => {
+            Subtype::from_stable_id(id).is_some_and(Subtype::is_creature_type)
+        }
+        ("Mox Diamond", Some(EntryAnswer::Discard(Some(_)))) => true,
+        (
+            "Painter's Servant" | "Serra's Emissary" | "Pithing Needle" | "Phyrexian Revoker"
+            | "Cavern of Souls" | "Mox Diamond",
+            _,
+        ) => false,
+        (_, None) => true,
+        (_, Some(_)) => false,
+    };
+    if !answer_ok {
+        return false;
+    }
+
+    let default_mods = C8bCopyModsV1::default();
+    let mods = copy.values.as_ref().map_or(&default_mods, |v| &v.mods);
+    let prototyped = copy.values.as_ref().is_some_and(|v| v.prototyped);
+    let sacrifices = copy
+        .values
+        .as_ref()
+        .map_or(0, |v| v.copied_end_step_sacrifices_v1);
+    let nightmare = copy.values.as_ref().is_some_and(|v| v.copied_nightmare_v1);
+
+    if prototyped
+        && (face_index != 0 || crate::eternal_pauper_pf2c_v1::prototype_profile(def).is_none())
+    {
+        return false;
+    }
+    if !copy_mods_structurally_valid(def, face_index, mods) {
+        return false;
+    }
+    let saheeli_in_game = game_has_card_name(state, crate::eternal_cube_c8b_v1::SAHEELI, None);
+    if mods.illusion_sacrifice
+        && !game_has_card_name(state, crate::eternal_cube_c8b_v1::PHANTASMAL_IMAGE, None)
+    {
+        return false;
+    }
+    if mods.override_name.as_deref() == Some(crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN)
+        && !game_has_card_name(state, crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN, None)
+    {
+        return false;
+    }
+    if mods.override_name.as_deref() == Some(crate::eternal_cube_c8c_v1::ABSORBING_MAN)
+        && !game_has_card_name(state, crate::eternal_cube_c8c_v1::ABSORBING_MAN, None)
+    {
+        return false;
+    }
+    if mods.added_artifact
+        && !saheeli_in_game
+        && !game_has_card_name(state, "Phyrexian Metamorph", Some(copy.physical.source))
+        && !game_has_card_name(state, crate::eternal_cube_c8b_v1::VAULTBORN_TYRANT, None)
+    {
+        return false;
+    }
+
+    let Some(donor_live) = state.objects.try_get(copy.copied.source) else {
+        return false;
+    };
+    let donor_same_incarnation = donor_live.zone == crate::state::Zone::Battlefield
+        && donor_live.zone_change_count == copy.copied.zone_change_count;
+    let donor_was_image = donor_had_name(
+        state,
+        copy.copied,
+        donor_same_incarnation,
+        crate::eternal_cube_c8b_v1::PHANTASMAL_IMAGE,
+    );
+    let donor_was_spider = donor_had_name(
+        state,
+        copy.copied,
+        donor_same_incarnation,
+        crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN,
+    );
+    let donor_was_absorbing = donor_had_name(
+        state,
+        copy.copied,
+        donor_same_incarnation,
+        crate::eternal_cube_c8c_v1::ABSORBING_MAN,
+    );
+    let donor_was_metamorph = donor_had_name(
+        state,
+        copy.copied,
+        donor_same_incarnation,
+        "Phyrexian Metamorph",
+    );
+    let saheeli_covered = saheeli_in_game && mods.added_artifact;
+
+    if !saheeli_covered {
+        if donor_was_image && !mods.illusion_sacrifice {
+            return false;
+        }
+        if donor_was_spider
+            && mods.override_name.as_deref()
+                != Some(crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN)
+        {
+            return false;
+        }
+        if donor_was_absorbing
+            && def.name != crate::eternal_cube_c8c_v1::ABSORBING_MAN
+            && mods.override_name.as_deref() != Some(crate::eternal_cube_c8c_v1::ABSORBING_MAN)
+        {
+            return false;
+        }
+        if donor_was_metamorph && !mods.added_artifact {
+            return false;
+        }
+        if !donor_live.v4.is_token
+            && !donor_was_image
+            && !donor_was_spider
+            && !donor_was_absorbing
+            && !donor_was_metamorph
+            && !mods.is_empty()
+        {
+            return false;
+        }
+    }
+
+    if donor_same_incarnation
+        && !saheeli_in_game
+        && donor_live.card_def == copy.copied.card_def
+        && !crate::standard_cards_v1::active_aegis_copy(state, copy.copied.source)
+        && !crate::eternal_legacy_e7a_v1::active_copy(state, copy.copied.source)
+    {
+        if donor_live.v4.face_down_v1.is_some() {
+            return false;
+        }
+        let Some(live_vals) = capture_battlefield_copiable_values(state, copy.copied.source) else {
+            return false;
+        };
+        if prototyped != live_vals.prototyped {
+            return false;
+        }
+        if donor_was_absorbing {
+            if mods.override_name != live_vals.mods.override_name
+                || mods.base_pt != live_vals.mods.base_pt
+                || mods.added_subtypes != live_vals.mods.added_subtypes
+                || mods.illusion_sacrifice != live_vals.mods.illusion_sacrifice
+                || mods.added_creature != live_vals.mods.added_creature
+                || mods.added_legendary != live_vals.mods.added_legendary
+                || mods.added_vigilance != live_vals.mods.added_vigilance
+            {
+                return false;
+            }
+        } else if mods != &live_vals.mods {
+            return false;
+        }
+        let donor_transformed_after = state.engine.event_history[entry + 1..].iter().any(|ev| {
+            matches!(ev, event::CommittedEvent::Transformed { object, .. } if *object == copy.copied.source)
+        });
+        if !donor_transformed_after
+            && !crate::eternal_cube_c8c_v1::is_absorbing_copy(state, copy.copied.source)
+            && face_index != donor_live.v4.face_index
+        {
+            return false;
+        }
+    }
+
+    match event::historical_copiable_token_abilities_v1(state, copy.copied) {
+        Ok(expected) => {
+            if sacrifices != expected && !(sacrifices == 0 && saheeli_covered) {
+                return false;
+            }
+        }
+        Err(_) => return false,
+    }
+    match crate::effect::harvester_v1::historical_nightmare(state, copy.copied, entry) {
+        Ok(expected) => {
+            if (!saheeli_covered || nightmare) && nightmare != expected {
+                return false;
+            }
+        }
+        Err(_) => return false,
+    }
+
+    let face_types = def.types_for_face(face_index);
+    let naturally_eligible = face_types.contains(&CardType::Artifact)
+        || face_types.contains(&CardType::Creature)
+        || mods.added_artifact
+        || mods.added_creature;
+    if !naturally_eligible {
+        let live_eligible = donor_same_incarnation
+            && (crate::engine::object_has_type(state, copy.copied.source, CardType::Artifact)
+                || crate::engine::object_has_type(state, copy.copied.source, CardType::Creature));
+        if !live_eligible && !game_has_type_granter_for(state, def, face_index) {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Recover non-token inherited copy abilities from the committed entry.

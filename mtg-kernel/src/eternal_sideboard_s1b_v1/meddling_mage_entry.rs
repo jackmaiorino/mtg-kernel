@@ -428,9 +428,16 @@ impl MetamorphCopyV1 {
             return false;
         };
         let start = self.cast_at.or(self.vial.map(|v| v.chosen_at));
+        let Some(receipt_at) = self
+            .show_and_tell
+            .map(|show| show.chosen_at)
+            .or(self.prepared_at)
+        else {
+            return false;
+        };
         if start.is_none_or(|start| start >= at)
-            || at >= entry
-            || self.show_and_tell.is_some_and(|s| s.chosen_at <= at)
+            || at >= receipt_at
+            || receipt_at >= entry
             || land.zone != Zone::Hand
             || land.owner != controller
             || land.controller != controller
@@ -439,15 +446,56 @@ impl MetamorphCopyV1 {
                 .get(usize::from(land.card_def))
                 .is_some_and(|def| def.has_type(CardType::Land))
             || !crate::engine::source_card_def_matches(state, land, live.card_def)
-            || !matches!(state.engine.event_history.get(at),
-                Some(CommittedEvent::ZoneChange {object,from:Zone::Hand,to,controller_before}) if *object == land.source && *to!=Zone::Hand && *controller_before==controller)
+            || !matches!(
+                state.engine.event_history.get(at),
+                Some(CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Hand,
+                    to: Zone::Graveyard | Zone::Exile,
+                    controller_before,
+                }) if *object == land.source && *controller_before == controller
+            )
         {
             return false;
+        }
+        // CR 614.12: the discard must occur inside this producer's resolution
+        // immediately before its choice/preparation receipt, with no
+        // intervening stack departures, casts, or other zone changes.
+        if state.engine.event_history[at + 1..receipt_at]
+            .iter()
+            .any(|ev| {
+                matches!(
+                    ev,
+                    CommittedEvent::ZoneChange { .. }
+                        | CommittedEvent::SpellCast { .. }
+                        | CommittedEvent::Tap { .. }
+                        | CommittedEvent::Draw { .. }
+                        | CommittedEvent::CreateToken { .. }
+                        | CommittedEvent::MeddlingMageEntryV1 { .. }
+                )
+            })
+        {
+            return false;
+        }
+        if let Some(vial) = self.vial {
+            if state.engine.event_history[vial.chosen_at + 1..at]
+                .iter()
+                .any(|ev| {
+                    matches!(
+                        ev,
+                        CommittedEvent::ZoneChange { .. }
+                            | CommittedEvent::SpellCast { .. }
+                            | CommittedEvent::MeddlingMageEntryV1 { .. }
+                    )
+                })
+            {
+                return false;
+            }
         }
         let changes = state.engine.event_history[at..]
             .iter()
             .filter(
-                |ev| matches!(ev, CommittedEvent::ZoneChange {object,..} if *object==land.source),
+                |ev| matches!(ev, CommittedEvent::ZoneChange { object, .. } if *object == land.source),
             )
             .count();
         live.zone_change_count
@@ -862,6 +910,7 @@ fn copy_entry_matches(
         && prepared_matches
         && copy.discard_matches(state, entry, entrant.controller)
         && copy.entrant_matches(entrant)
+        && crate::copy_entry_v1::validate_completed_copy(state, copy, entry)
         && (copy.reanimated_by.is_none() && copy.vial.is_none() && copy.show_and_tell.is_none()
             || crate::standard_cards_v1::had_card_def(
                 state,
@@ -1103,6 +1152,7 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
     let mut prepared_entries = HashSet::new();
     let mut show_choices = HashSet::new();
     let mut show_copies = HashSet::new();
+    let mut used_discards = HashSet::new();
     for (index, event) in state.engine.event_history.iter().enumerate() {
         let CommittedEvent::MeddlingMageEntryV1 { journal } = event else {
             continue;
@@ -1221,7 +1271,9 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 entrant,
                 copy,
             } => {
-                if copy.prepared_at.is_some_and(|at| !prepared_entries.remove(&at)) || entry_history_index.checked_add(1) != Some(index as usize)
+                if copy.prepared_at.is_some_and(|at| !prepared_entries.remove(&at))
+                    || copy.discarded_at.is_some_and(|at| !used_discards.insert(at))
+                    || entry_history_index.checked_add(1) != Some(index as usize)
                     || !copy_entry_matches(state, copy, *entrant, *entry_history_index, true)
                     // Old ordinary copies have no chosen-source receipt. A different
                     // equally legal, byte-indistinguishable donor is a valid history.

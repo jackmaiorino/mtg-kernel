@@ -9193,6 +9193,11 @@ fn materialize_zone_change_v1(
     // once the permanent is on the battlefield (below).
     let printed_entry_tapped = to_zone == Zone::Battlefield
         && entering_face_down.is_none()
+        && !metamorph_mage_copy.as_ref().is_some_and(|copy| {
+            copy.values
+                .as_ref()
+                .is_some_and(|values| values.face_index != 0)
+        })
         && permanent_enters_battlefield_tapped(
             state,
             id,

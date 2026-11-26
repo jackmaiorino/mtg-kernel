@@ -308,7 +308,7 @@ pub(crate) fn sync_day_night(state: &mut GameState) {
     let face = u8::from(designation == DayNightV1::Night);
     for id in daybound {
         if state.objects.get(id).v4.face_index != face
-            && !crate::copy_entry_v1::is_noncast_copy(state, id)
+            && !crate::copy_entry_v1::cannot_transform_in_place(state, id)
         {
             crate::event::propose_and_commit(
                 state,

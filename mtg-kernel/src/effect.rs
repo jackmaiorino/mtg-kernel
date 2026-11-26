@@ -26082,6 +26082,7 @@ fn execute_in_departure_scope_v1(
                 || source.owner != source_contract.owner
                 || source.zone_change_count != source_contract.zone_change_count
                 || source.zone != Zone::Battlefield
+                || crate::copy_entry_v1::cannot_transform_in_place(state, ctx.source)
             {
                 return;
             }

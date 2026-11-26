@@ -2216,7 +2216,9 @@ fn transformable_source(ctx: &ExecCtx, state: &GameState) -> bool {
 }
 
 fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
-    if transformable_source(ctx, state) {
+    if transformable_source(ctx, state)
+        && !crate::copy_entry_v1::cannot_transform_in_place(state, ctx.source)
+    {
         let face = 1 - state.objects.get(ctx.source).v4.face_index.min(1);
         event::propose_and_commit(state, ProposedEvent::transform_in_place(ctx.source, face));
     }
@@ -5956,6 +5958,21 @@ pub(crate) fn had_card_def(
         standard
             .copied_card_defs
             .contains(&(object, zone_change_count, card_def))
+    })
+}
+
+/// Whether any object (optionally excluding `exclude_object`) ever had
+/// `card_def` recorded in `copied_card_defs`.
+pub(crate) fn any_copied_card_def(
+    state: &GameState,
+    card_def: u16,
+    exclude_object: Option<ObjectId>,
+) -> bool {
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard
+            .copied_card_defs
+            .iter()
+            .any(|&(id, _, def)| Some(id) != exclude_object && def == card_def)
     })
 }
 
