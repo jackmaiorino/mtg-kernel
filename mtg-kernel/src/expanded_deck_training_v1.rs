@@ -12400,8 +12400,16 @@ pub(crate) mod tests {
     /// and capture digest, measured on origin/main ccadc6af (before the head
     /// comparison).
     const SD1_CAPTURE_FIXTURE_SLOT_V1: usize = 0;
+    /// The fixture runs under platform libm, whose last bits differ between
+    /// Windows and Linux, so the digest is pinned per platform. Both values
+    /// were produced by origin/main without the head comparison (Linux by the
+    /// probe run 45767846527).
+    #[cfg(windows)]
     const SD1_CAPTURE_FIXTURE_SHA256_V1: &str =
         "3452692ac195cf136cde20cbb56a006132f9cf4c23201bdb0a005e6f84f57e70";
+    #[cfg(not(windows))]
+    const SD1_CAPTURE_FIXTURE_SHA256_V1: &str =
+        "1914e32a1e5fea6dfaa1407c5acb31ccf33c87c6b76e966f4e8609ef1d6385db";
 
     /// The head comparison changes no existing capture: the SD1 capture of a
     /// fixture (rollout and value-leaf arms, both reference halves, the root
