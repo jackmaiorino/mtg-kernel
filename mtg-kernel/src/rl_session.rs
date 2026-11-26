@@ -14254,6 +14254,92 @@ mod tests {
         };
         path[0] = 1; // Dack's discard leaf cannot authenticate a draw.
         assert!(crate::effect::validate_pending_effect_choice(&forged).is_err());
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut forged),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        let mut forged_offer = snapshot.0.state.clone();
+        let ordinary = forged_offer.players[1]
+            .hand
+            .iter()
+            .copied()
+            .find(|&card| card != miracle)
+            .unwrap();
+        forged_offer.eternal_v1.as_mut().unwrap().e5b.miracle_offers[0] =
+            crate::state::ObjectLinkV4 {
+                object: ordinary,
+                zone_change_count: forged_offer.objects.get(ordinary).zone_change_count,
+            };
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut forged_offer),
+            crate::engine::Decision::Halted { .. }
+        ));
+
+        let mut wrong_zone = snapshot.0.state.clone();
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { drawn, .. }) = wrong_zone
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .last_mut()
+        else {
+            unreachable!()
+        };
+        drawn.expected_zone = Zone::Graveyard;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_zone).is_err());
+
+        let mut wrong_draw_count = snapshot.0.state.clone();
+        wrong_draw_count.players[1].draws_this_turn = 2;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_draw_count).is_err());
+
+        let mut wrong_card = snapshot.0.state.clone();
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { drawn, .. }) = wrong_card
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .last_mut()
+        else {
+            unreachable!()
+        };
+        drawn.object = ordinary;
+        drawn.expected_zone_change_count = wrong_card.objects.get(ordinary).zone_change_count;
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_card).is_err());
+
+        let mut wrong_tail = snapshot.0.state.clone();
+        wrong_tail
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .remove(0);
+        assert!(crate::effect::validate_pending_effect_choice(&wrong_tail).is_err());
+
+        let mut overlapping_choice = snapshot.0.state.clone();
+        overlapping_choice
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .choice = Some(crate::effect::PendingEffectChoice::ChooseOption {
+            player: PlayerId::P1,
+            path: Vec::new(),
+            options: Vec::new(),
+            purpose: crate::effect::EffectOptionChoicePurpose::Generic,
+        });
+        assert!(crate::effect::validate_pending_effect_choice(&overlapping_choice).is_err());
+
+        let mut overlapping_discard = snapshot.0.state.clone();
+        overlapping_discard.engine.pending_discard = Some(crate::engine::PendingDiscard {
+            player: PlayerId::P1,
+            count: 1,
+            resume: crate::engine::DiscardResume::None,
+        });
+        assert!(crate::effect::validate_pending_effect_choice(&overlapping_discard).is_err());
         for option in [0, 1] {
             session.restore_v5(&snapshot);
             assert_eq!(session.current_response(), decision);
@@ -14273,6 +14359,11 @@ mod tests {
             );
             assert_eq!(session.state.stack.len(), 1);
             assert_eq!(session.state.stack[0].source, dack);
+            let mut terminal_without_capture = session.state.clone();
+            crate::eternal_vintage_e7b_v1::dredge::stop_deferring(&mut terminal_without_capture);
+            assert!(
+                crate::effect::validate_pending_effect_choice(&terminal_without_capture).is_err()
+            );
             choose(&mut session, |action| {
                 matches!(action, ActionSemanticV1::Discard { cards, .. }
                     if cards.iter().any(|card| card.arena_id == miracle.0))

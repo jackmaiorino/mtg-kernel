@@ -1070,6 +1070,99 @@ fn a_miracle_card_that_is_not_the_first_draw_is_not_offered() {
     settled(&mut state);
 }
 
+#[test]
+fn miracle_after_dredge_pauses_before_the_next_draw() {
+    let mut state = game(&["Island"]);
+    let last = state.players[0].library[0];
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+    for _ in 0..5 {
+        put(&mut state, P0, "Island", Zone::Library);
+    }
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+    let recall = put(&mut state, P0, "Ancestral Recall", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, recall, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets.contains(&Target::Object(imp)) =>
+        {
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+        }
+        other => panic!("expected the first draw's dredge choice, got {other:?}"),
+    }
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        } if source == terminus
+    ));
+    assert!(hand_contains(&state, P0, terminus));
+    assert!(!hand_contains(&state, P0, last));
+    assert_eq!(state.players[0].library, [last]);
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert!(hand_contains(&state, P0, last));
+    assert_eq!(state.players[0].draws_this_turn, 2);
+}
+
+#[test]
+fn miracle_pauses_owned_riddler_draws_before_the_next_card() {
+    let mut state = game(&["Island"; 3]);
+    let second = state.players[0].library[0];
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    let recall = put(&mut state, P0, "Ancestral Recall", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, recall, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        }) if source == terminus
+    ));
+    assert!(hand_contains(&state, P0, terminus));
+    assert!(!hand_contains(&state, P0, second));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(state.players[0].library.len(), 3);
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 4);
+    assert_eq!(state.players[0].hand.len(), 4);
+    assert!(state.players[0].library.is_empty());
+}
+
+#[test]
+fn miracle_pauses_riddler_turn_draw_before_extra_card() {
+    let mut state = game(&["Island"; 4]);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let second = state.players[0].library[0];
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Draw
+    });
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        } if source == terminus
+    ));
+    assert!(hand_contains(&state, P0, terminus));
+    assert!(!hand_contains(&state, P0, second));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert!(hand_contains(&state, P0, second));
+    assert_eq!(state.players[0].draws_this_turn, 2);
+}
+
 // ---- Leyline Binding and Static Prison ---------------------------------------------
 
 #[test]

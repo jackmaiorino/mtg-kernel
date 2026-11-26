@@ -1921,6 +1921,32 @@ fn smugglers_copter_may_loot_when_it_attacks() {
 }
 
 #[test]
+fn smugglers_copter_nested_loot_completes_after_each_miracle_card() {
+    for miracle_name in [
+        "Terminus",
+        "Metamorphosis Fanatic",
+        "Triumph of Saint Katherine",
+    ] {
+        let (mut state, copter, _elves) = copter_game();
+        let miracle = put(&mut state, P0, miracle_name, Zone::Library);
+        attack_with(&mut state, vec![copter], |_, decision| match decision {
+            Decision::ChooseEffectOption { source, .. } if *source == copter => {
+                Some(Action::ChooseEffectOption(1))
+            }
+            Decision::ChooseEffectOption { source, .. } if *source == miracle => {
+                Some(Action::ChooseEffectOption(0))
+            }
+            _ => None,
+        });
+        assert!(hand_contains(&state, P0, miracle));
+        assert_eq!(library_len(&state, P0), 19, "the nested loot drew");
+        assert_eq!(state.players[0].graveyard.len(), 1, "and discarded");
+        assert!(state.engine.pending_effect.is_none());
+        assert!(state.engine.halted.is_none());
+    }
+}
+
+#[test]
 fn smugglers_copter_may_decline_to_loot() {
     let (mut state, copter, _elves) = copter_game();
     attack_with(&mut state, vec![copter], |_, _| None);
