@@ -31612,16 +31612,20 @@ fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackI
                 })
         }
         // A retrace cast pays with exactly one discarded land card of the
-        // caster. The discard puts it into the graveyard, or into exile if a
-        // replacement effect applies (Dauthi Voidwalker; 614.6).
+        // caster, other than the spell itself. The discard puts it into the
+        // graveyard, or into exile if a replacement effect applies (Dauthi
+        // Voidwalker; 614.6). Retrace's discard is an object cost, recorded
+        // only in `paid_cost_refs`; `discarded` holds a printed discard cost,
+        // which a copy-offer spell has none of.
         (Some(CastMethodV4::Normal), Some(_)) if retrace => match refs.as_slice() {
             [land] => {
-                land.owner == caster
+                parent.discarded.is_empty()
+                    && land.object != parent.source
+                    && land.owner == caster
                     && matches!(land.zone, Zone::Graveyard | Zone::Exile)
                     && card_def::CARD_DEFS
                         .get(usize::from(land.card_def))
                         .is_some_and(|land_def| land_def.has_type(CardType::Land))
-                    && (parent.discarded.is_empty() || parent.discarded == [land.object])
             }
             _ => false,
         },
@@ -44115,6 +44119,57 @@ mod tests {
             Decision::ChooseSpellCopyPayment { player, .. } if player == PlayerId::P1
         ));
         assert!(state.engine.halted.is_none());
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Review round 4, finding 2(a): retrace's discarded land is recorded
+    /// only as the parent's paid object cost. The same land also recorded
+    /// as the parent's printed discard is refused.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_rejects_a_retrace_land_also_recorded_as_a_printed_discard() {
+        let (mut state, _, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+        assert!(state.stack.last().unwrap().discarded.is_empty());
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let mut forged = state.clone();
+        forged.stack.last_mut().unwrap().discarded.push(land);
+        let before = forged.clone();
+        assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(forged, before);
+
+        // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Review round 4, finding 2(b): a retrace cast cannot pay with the
+    /// spell itself. The parent's land payment rewritten to name the parent
+    /// (keeping the land's characteristics) is refused.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_rejects_a_retrace_payment_naming_the_parent_itself() {
+        let (mut state, chain, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let mut forged = state.clone();
+        let parent = forged.stack.last_mut().unwrap();
+        assert_eq!(parent.source, chain);
+        let [payment] = parent.v4.paid_cost_refs.as_mut_slice() else {
+            panic!("a retrace cast pays exactly one land");
+        };
+        assert_eq!(payment.object, land);
+        payment.object = chain;
+        let before = forged.clone();
+        assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(forged, before);
+
+        // The genuine parent still offers its copy.
         assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
     }
 }
