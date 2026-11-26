@@ -24,6 +24,27 @@ case "$variant" in
     znver3) rustflags='-C target-cpu=znver3' ;;
     *) printf 'Unknown PINNED_TARGET_CPU\n' >&2; exit 2 ;;
 esac
+bins=(native_expanded_training_run_v1 checkpoint_container_v1)
+if [[ -n ${PINNED_BINS:-} ]]; then
+    IFS=' ' read -r -a bins <<< "${PINNED_BINS//[,$'\t\n\r\v\f']/ }"
+    if (( ${#bins[@]} == 0 )); then
+        printf 'Empty PINNED_BINS list\n' >&2
+        exit 2
+    fi
+    declare -A seen_bins=()
+    for bin in "${bins[@]}"; do
+        case "$bin" in
+            native_expanded_training_run_v1|checkpoint_container_v1|regret_census_v1) ;;
+            *) printf 'Unknown PINNED_BINS binary: %s\n' "$bin" >&2; exit 2 ;;
+        esac
+        if [[ -n ${seen_bins[$bin]:-} ]]; then
+            printf 'Duplicate PINNED_BINS binary: %s\n' "$bin" >&2
+            exit 2
+        fi
+        seen_bins[$bin]=1
+    done
+fi
+readonly -a bins
 variant_args=()
 variant_env=()
 if [[ -n $rustflags ]]; then
@@ -46,7 +67,6 @@ readonly out=$2
 readonly python=/usr/local/bin/python3.12
 readonly commit=$1
 readonly origin=https://github.com/jackmaiorino/mtg-kernel.git
-readonly -a bins=(native_expanded_training_run_v1 checkpoint_container_v1)
 
 check_stop() {
     if [[ -e /work/STOP || -L /work/STOP ]]; then
@@ -154,7 +174,7 @@ source_epoch=$(git -C "$repo" show -s --format=%ct HEAD)
 mkdir -- "$work/home" "$work/tmp" "$target" "$cargo_home"
 for bin in "${bins[@]}"; do
     check_stop
-    # Build the binaries sequentially so thin LTO cannot link both at once.
+    # Build the binaries sequentially to avoid concurrent thin LTO links.
     (
         cd -- "$repo"
         env -i PATH="$PATH" HOME="$work/home" TMPDIR="$work/tmp" LC_ALL="$LC_ALL" TZ="$TZ" \
@@ -232,8 +252,11 @@ manifest = {
         "rust_components": pin(out / "rust-components.json"),
         "debian_packages": pin(out / "debian-packages.tsv"),
     },
-    "trainer": executable(binaries[0]),
-    "checkpoint_container": executable(binaries[1]),
+    **{key: executable(name) for name, key in (
+        ("native_expanded_training_run_v1", "trainer"),
+        ("checkpoint_container_v1", "checkpoint_container"),
+        ("regret_census_v1", "regret_census"),
+    ) if name in binaries},
 }
 (out / "BUILD-MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 PY

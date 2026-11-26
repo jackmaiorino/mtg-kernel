@@ -8,7 +8,16 @@ The guard also accepts the London keep-offset backport (PR #700 into `release/mu
 
 Four later sources of the same release line are accepted the same way, each built by explicit dispatch: the per-count keep offset and terminal pregame advantage change (PR #707) at its first head `587b5aca2`, at its head after test-only lint fixes `6faa42219` and at its merge commit `ce3df74f8` (the same tree as that head), and the merge commit `b6516e6f5` of the pregame announcement step scale change (PR #729). `hosted.py` names each one beside its commit id.
 
-`build.sh` installs hash-pinned Rust 1.94.1 components in a pinned Debian 12 Python image. It verifies glibc 2.36, GCC 12, GNU ld 2.40 and the checkout's thin-LTO/one-codegen-unit release profile. Both binaries build sequentially with two Cargo jobs and a clean environment. The current hosted guard accepts only the exact sources above.
+The guard also accepts these exact `source_commit` values for the signed experiment.
+
+- `a561d7a3a4ea1762cf0f2ec9d8f8c2ac244e3acc` is the `main` merge of PR #991 with the game-test adapter for `regret_census_v1 s4a-budget`.
+- `46f7ecfec16dd0483f14865ff5a1af37fe6c3420` is the `release/mull-c5719e1cf` trainer that produced the frozen checkpoint for the parity gate.
+
+`hosted.py` holds the full exact allow-list, including this branch's `PACK3_SOURCES`.
+
+`build.sh` installs hash-pinned Rust 1.94.1 components in a pinned Debian 12 Python image. It verifies glibc 2.36, GCC 12, GNU ld 2.40 and the checkout's thin-LTO/one-codegen-unit release profile. The selected binaries build sequentially with two Cargo jobs and a clean environment.
+
+The optional dispatch input `bins` sets `PINNED_BINS` and accepts `native_expanded_training_run_v1`, `checkpoint_container_v1` and `regret_census_v1`. Separate names with spaces or commas. Omit the input or use an empty string to build the trainer followed by the checkpoint container. The guard refuses unknown or repeated names and input made entirely of separators. `BUILD-MANIFEST.json` lists the selection in `build.binaries`, and `guard.json` adds `binaries` when the ordered selection differs from the default pair.
 
 Before downloading the image, `hosted.py` requires a fresh root on a volume with at least 81.5 GiB free. Its private Docker daemon keeps image, container, client and temporary state on that volume. The guard samples free space, allocated owned bytes and available host RAM every five seconds. It budgets 5 GiB for the build plus a separate 16 GiB swap file, and stops its own work at 21 GiB total growth, below 60.5 GiB free, below 1 GiB host RAM or after 6,600 seconds. The container receives four CPUs, 12 GiB RAM and at most 16 GiB swap. Cleanup deactivates only the owned swap after stopping private Docker and verifies that existing swap entries remain. These are admission limits and enforced ceilings, not a claim that the build has demonstrated this footprint.
 

@@ -23,6 +23,10 @@ on:
           - x86-64-v3
           - znver5
           - znver3
+      bins:
+        description: Space- or comma-separated binary names (empty builds the trainer and checkpoint container)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -87,14 +91,16 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
               print('root=' + str(root), file=stream)
           PY
-      - name: Build exact release pair under resource guards
+      - name: Build selected release binaries under resource guards
         env:
           BUILD_ROOT: ${{ steps.capacity.outputs.root }}
           PINNED_TARGET_CPU: ${{ inputs.target_cpu || 'default' }}
+          PINNED_BINS: ${{ inputs.bins }}
         shell: bash
         run: |
           set -euo pipefail
-          sudo PINNED_TARGET_CPU="$PINNED_TARGET_CPU" python3 -B tools/pinned-release-build/hosted.py \
+          sudo PINNED_TARGET_CPU="$PINNED_TARGET_CPU" PINNED_BINS="${PINNED_BINS:-}" \
+            python3 -B tools/pinned-release-build/hosted.py \
             --work-root "$BUILD_ROOT" --source-commit "$BUILD_SOURCE"
       - name: Preserve capacity evidence
         if: always()

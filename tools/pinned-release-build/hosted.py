@@ -31,6 +31,10 @@ LONDON_VECTOR_SOURCE_B = "6faa42219a4e67d266019458a2380df5aa5e25f8"
 LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
 # The merge commit of PR 729 (pregame announcement step scale) on release/mull-c5719e1cf: this is what gets pinned for arm Q.
 ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
+# The main merge of PR #991, with the game-test adapter for regret_census_v1 s4a-budget.
+GAME_TEST_ADAPTER_SOURCE = "a561d7a3a4ea1762cf0f2ec9d8f8c2ac244e3acc"
+# The release/mull-c5719e1cf trainer that produced the frozen checkpoint for the parity gate.
+FROZEN_CHECKPOINT_SOURCE = "46f7ecfec16dd0483f14865ff5a1af37fe6c3420"
 # Speed pack3 on release/mull-c5719e1cf (guard branch only): exact backports of main's net-8 speed work.
 PACK3_SOURCES = (
     "572de58807a51254212e1cb2e4904f24a676e3d9",  # release head (PR 811 merge), the base
@@ -64,8 +68,12 @@ SOURCES = (
     LONDON_VECTOR_SOURCE_B,
     LONDON_VECTOR_SOURCE_MERGED,
     ANNOUNCE_STEP_SOURCE_MERGED,
+    GAME_TEST_ADAPTER_SOURCE,
+    FROZEN_CHECKPOINT_SOURCE,
     *PACK3_SOURCES,
 )
+DEFAULT_BINS = ("native_expanded_training_run_v1", "checkpoint_container_v1")
+ALLOWED_BINS = (*DEFAULT_BINS, "regret_census_v1")
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2
@@ -81,6 +89,17 @@ CONTAINER = "mtg-pinned-release-build"
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def parse_bins(value):
+    if not value:
+        return DEFAULT_BINS
+    bins = tuple(re.findall(r"[^, \t\n\r\v\f]+", value))
+    require(bins, "empty PINNED_BINS list")
+    for name in bins:
+        require(name in ALLOWED_BINS, f"unknown PINNED_BINS binary: {name}")
+    require(len(set(bins)) == len(bins), "duplicate PINNED_BINS binary")
+    return bins
 
 
 def mount_path(path):
@@ -251,7 +270,7 @@ def remove_container(docker, env, log, receipt):
         container_command(docker, env, log, "rm", allow_missing=True)
 
 
-def run(root, source, wall):
+def run(root, source, wall, bins=DEFAULT_BINS):
     resources = Resources(root, wall)
     started = time.monotonic()
     daemon = builder = None
@@ -270,6 +289,7 @@ def run(root, source, wall):
     socket = root / "docker.sock"
     host = f"unix://{socket}"
     env = {key: value for key, value in os.environ.items() if not key.startswith("DOCKER_")}
+    bins_env = [] if bins == DEFAULT_BINS else ["--env", "PINNED_BINS=" + " ".join(bins)]
     try:
         mount_path(helper)
         require(helper.is_file() and not helper.is_symlink(), "pinned build helper must be a regular file")
@@ -312,6 +332,7 @@ def run(root, source, wall):
         builder = start([*docker, "run", "--name", CONTAINER, "--network=host", "--platform=linux/amd64",
                          "--cpus=4", "--memory=12g", "--memory-swap=28g", "--sig-proxy=false",
                          "--env", "PINNED_TARGET_CPU=" + TARGET_CPU,
+                         *bins_env,
                          "--mount", f"type=bind,src={work},dst=/work",
                          "--mount", f"type=bind,src={helper},dst=/build.sh,readonly",
                          "--entrypoint", "/bin/bash", IMAGE, "/build.sh", source, "/work/out"],
@@ -375,6 +396,8 @@ def run(root, source, wall):
                    "resources": resources.receipt(), "elapsed_seconds": time.monotonic() - started,
                    "build_exit_code": code, "container": container, "swap": swap,
                    "error": error, "cleanup_errors": cleanup_errors}
+        if bins != DEFAULT_BINS:
+            receipt["binaries"] = list(bins)
         with (root / "guard.json.tmp").open("x", encoding="utf-8") as output:
             output.write(json.dumps(receipt, indent=2) + "\n")
             output.flush()
@@ -394,6 +417,7 @@ def main(argv=None):
     parser.add_argument("--wall-seconds", type=int, default=MAX_WALL)
     args = parser.parse_args(argv)
     try:
+        bins = parse_bins(os.environ.get("PINNED_BINS"))
         require(0 < args.wall_seconds <= MAX_WALL, f"wall limit must be 1 to {MAX_WALL} seconds")
         require(sys.platform.startswith("linux") and platform.machine() == "x86_64" and os.geteuid() == 0,
                 "run the hosted guard as root on Linux x86-64")
@@ -402,7 +426,7 @@ def main(argv=None):
     except (OSError, ValueError) as exc:
         parser.exit(2, f"{exc}\n")
     signal.signal(signal.SIGTERM, interrupted)
-    receipt = run(args.work_root, args.source_commit, args.wall_seconds)
+    receipt = run(args.work_root, args.source_commit, args.wall_seconds, bins)
     print(json.dumps({"pass": receipt["pass"], "receipt": str(args.work_root / "guard.json"), "error": receipt["error"]}))
     return 0 if receipt["pass"] else 1
 

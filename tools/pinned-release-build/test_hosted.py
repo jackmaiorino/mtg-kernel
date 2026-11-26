@@ -1,9 +1,12 @@
 """Exercise admission and owned-process cleanup without invoking Docker."""
 
+from io import StringIO
 import json
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -17,6 +20,21 @@ import hosted
 HERE = Path(__file__).resolve().parent
 PORTABLE_SCHEMA = "fleet-combined-trainer-build/v1"
 VARIANT_SCHEMA = "fleet-combined-trainer-build-target-variant/v1"
+DEFAULT_BINS = ("native_expanded_training_run_v1", "checkpoint_container_v1")
+BIN_SELECTIONS = (
+    (None, DEFAULT_BINS),
+    ("", DEFAULT_BINS),
+    (", ".join(DEFAULT_BINS), DEFAULT_BINS),
+    ("regret_census_v1", ("regret_census_v1",)),
+    ("checkpoint_container_v1, regret_census_v1\tnative_expanded_training_run_v1",
+     ("checkpoint_container_v1", "regret_census_v1", "native_expanded_training_run_v1")),
+)
+INVALID_SELECTIONS = (
+    ("other_binary", "unknown PINNED_BINS binary"),
+    ("regret_census_v1,checkpoint_container_v1 regret_census_v1", "duplicate PINNED_BINS binary"),
+    (" , \t,\n", "empty PINNED_BINS list"),
+    ("   ", "empty PINNED_BINS list"),
+)
 
 
 def import_hosted(value):
@@ -28,13 +46,18 @@ def import_hosted(value):
                           capture_output=True, text=True, timeout=60)
 
 
-def build_sh(value):
-    """Run build.sh as far as its first privilege check with PINNED_TARGET_CPU set to `value` (None: unset)."""
-    env = {key: item for key, item in os.environ.items() if key != "PINNED_TARGET_CPU"}
-    if value is not None:
-        env["PINNED_TARGET_CPU"] = value
-    return subprocess.run(["bash", "build.sh", "0" * 40, "/work/out"], cwd=HERE, env=env, capture_output=True,
-                          text=True, timeout=60)
+def build_sh(target_cpu=None, bins=None):
+    """Report the selected array while forcing the helper to stop at its platform check."""
+    settings = "\n".join(f"unset {key}" if value is None else f"export {key}={shlex.quote(value)}"
+                         for key, value in (("PINNED_TARGET_CPU", target_cpu), ("PINNED_BINS", bins)))
+    script = settings + r'''
+uname() { printf '%s\\n' unsupported-architecture; }
+trap 'printf "%s\\n" "${bins[@]}"' EXIT
+source ./build.sh
+'''
+    result = subprocess.run(["bash", "-s", "--", "0" * 40, "/work/out"], cwd=HERE,
+                            input=script.encode("utf-8"), capture_output=True, timeout=60)
+    return subprocess.CompletedProcess(result.args, result.returncode, result.stdout.decode(), result.stderr.decode())
 
 
 class TargetVariantTests(unittest.TestCase):
@@ -69,8 +92,7 @@ class TargetVariantTests(unittest.TestCase):
         for script in re.findall(r"run: \|\n((?:(?: {10}.*)?\n)+)", workflow):
             self.assertNotIn("inputs.target_cpu", script)
 
-    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
-                     "runs build.sh up to its root check: needs bash and a user that is not root")
+    @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_build_helper_gives_a_variant_another_manifest_schema_and_refuses_an_unknown_name(self):
         result = build_sh("bogus")
         self.assertEqual(result.returncode, 2)
@@ -90,6 +112,117 @@ class TargetVariantTests(unittest.TestCase):
             seen.add(line.group(3))
         self.assertEqual(len(seen), len(hosted.TARGET_CPUS) - 1)
         self.assertNotEqual(PORTABLE_SCHEMA, VARIANT_SCHEMA)
+
+
+class HostedInputTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ))
+        os.environ.pop("PINNED_BINS", None)
+        self.enterContext(patch.object(hosted.sys, "platform", "linux"))
+        self.enterContext(patch.object(hosted.platform, "machine", return_value="x86_64"))
+        self.enterContext(patch.object(hosted.os, "geteuid", return_value=0, create=True))
+        self.enterContext(patch.object(hosted.os, "umask"))
+        self.enterContext(patch.object(hosted.signal, "signal"))
+        self.create_root = self.enterContext(patch.object(hosted, "create_root"))
+        self.run_build = self.enterContext(patch.object(hosted, "run", return_value={"pass": True, "error": None}))
+
+    def dispatch(self, source=hosted.SOURCE):
+        self.run_build.reset_mock()
+        with patch("sys.stdout", new_callable=StringIO):
+            return hosted.main(["--source-commit", source, "--work-root", "/fake-build", "--wall-seconds", "60"])
+
+    def test_the_two_experiment_sources_reach_the_build(self):
+        for source in ("a561d7a3a4ea1762cf0f2ec9d8f8c2ac244e3acc", "46f7ecfec16dd0483f14865ff5a1af37fe6c3420"):
+            with self.subTest(source=source):
+                self.assertEqual(self.dispatch(source), 0)
+                self.run_build.assert_called_once_with(Path("/fake-build"), source, 60, DEFAULT_BINS)
+
+    def test_an_unknown_source_is_refused_before_creating_the_root(self):
+        with patch("sys.stderr", new_callable=StringIO) as stderr, self.assertRaises(SystemExit) as rejected:
+            self.dispatch("0" * 40)
+        self.assertEqual(rejected.exception.code, 2)
+        self.assertIn("invalid choice", stderr.getvalue())
+        self.create_root.assert_not_called()
+        self.run_build.assert_not_called()
+
+    def test_default_and_explicit_bin_selections_reach_the_build_in_order(self):
+        for value, expected in BIN_SELECTIONS:
+            with self.subTest(value=value):
+                if value is None:
+                    os.environ.pop("PINNED_BINS", None)
+                else:
+                    os.environ["PINNED_BINS"] = value
+                self.assertEqual(self.dispatch(), 0)
+                self.run_build.assert_called_once_with(Path("/fake-build"), hosted.SOURCE, 60, expected)
+
+    def test_invalid_bin_selections_are_refused_before_creating_the_root(self):
+        for value, diagnostic in INVALID_SELECTIONS:
+            with self.subTest(value=value):
+                os.environ["PINNED_BINS"] = value
+                with patch("sys.stderr", new_callable=StringIO) as stderr, self.assertRaises(SystemExit) as rejected:
+                    self.dispatch()
+                self.assertEqual(rejected.exception.code, 2)
+                self.assertIn(diagnostic, stderr.getvalue())
+                self.create_root.assert_not_called()
+                self.run_build.assert_not_called()
+
+    def test_the_workflow_passes_the_bin_input_through_the_environment(self):
+        workflow = (HERE.parents[1] / ".github/workflows/pinned-release-build.yml").read_text(encoding="utf-8")
+        self.assertRegex(workflow, r"\n      bins:\n        description: [^\n]+\n        required: false\n        type: string\n")
+        self.assertIn("PINNED_BINS: ${{ inputs.bins }}", workflow)
+        self.assertIn('sudo PINNED_TARGET_CPU="$PINNED_TARGET_CPU" PINNED_BINS="${PINNED_BINS:-}"', workflow)
+
+    @unittest.skipUnless(shutil.which("bash"), "needs bash")
+    def test_build_helper_selects_the_default_pair_and_admits_explicit_binaries(self):
+        for value, expected in BIN_SELECTIONS:
+            with self.subTest(value=value):
+                result = build_sh(bins=value)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(tuple(result.stdout.splitlines()), expected)
+
+    @unittest.skipUnless(shutil.which("bash"), "needs bash")
+    def test_build_helper_refuses_unknown_duplicate_and_empty_bin_lists(self):
+        for value, diagnostic in INVALID_SELECTIONS:
+            with self.subTest(value=value):
+                result = build_sh(bins=value)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(diagnostic.lower(), result.stderr.lower())
+
+
+class BuildManifestTests(unittest.TestCase):
+    def test_manifest_records_the_selected_binaries_under_their_own_keys(self):
+        helper = (HERE / "build.sh").read_text(encoding="utf-8")
+        writer = re.findall(r"<<'PY'\n(.*?)\nPY\n", helper, re.S)[-1]
+        root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        (root / "Cargo.lock").touch()
+        (root / "ld").touch()
+
+        def check_output(args, *, text):
+            if args == ("gcc", "-print-prog-name=ld"):
+                return str(root / "ld")
+            if args[0] == "readelf":
+                return "Advanced Micro Devices X86-64\n/lib64/ld-linux-x86-64.so.2"
+            return "fixture output"
+
+        for selected, keys in ((DEFAULT_BINS, ("trainer", "checkpoint_container")),
+                               (("regret_census_v1",), ("regret_census",)),
+                               (("checkpoint_container_v1", "regret_census_v1"),
+                                ("checkpoint_container", "regret_census"))):
+            with self.subTest(bins=selected):
+                out = root / "-".join(keys)
+                out.mkdir()
+                for name in (*selected, "rust-components.json", "debian-packages.tsv"):
+                    (out / name).write_bytes(name.encode())
+                argv = ["-", str(root), str(out), hosted.SOURCE, "fixture-origin", "1", *selected]
+                with (patch.object(sys, "argv", argv), patch.object(subprocess, "check_output", check_output),
+                      patch.dict(os.environ, PINNED_MANIFEST_SCHEMA=PORTABLE_SCHEMA, PINNED_RUSTFLAGS="")):
+                    exec(compile(writer, "build.sh manifest writer", "exec"), {})
+                manifest = json.loads((out / "BUILD-MANIFEST.json").read_bytes())
+                self.assertEqual(manifest["schema"], PORTABLE_SCHEMA)
+                self.assertEqual(manifest["build"]["binaries"], list(selected))
+                binary_keys = ("trainer", "checkpoint_container", "regret_census")
+                self.assertEqual(tuple(key for key in manifest if key in binary_keys), keys)
+                self.assertEqual(tuple(manifest[key]["name"] for key in keys), selected)
 
 
 class HostedGuardTests(unittest.TestCase):
@@ -124,7 +257,10 @@ class HostedGuardTests(unittest.TestCase):
         with patch.object(hosted, "TARGET_CPU", "znver5"):
             self.exercise_cleanup(growth_stop=True, target_cpu="znver5")
 
-    def exercise_cleanup(self, growth_stop=False, swapoff_error=False, target_cpu="default"):
+    def test_the_selected_bins_reach_the_container_and_the_written_receipt(self):
+        self.exercise_cleanup(bins=("regret_census_v1",))
+
+    def exercise_cleanup(self, growth_stop=False, swapoff_error=False, target_cpu="default", bins=DEFAULT_BINS):
         free = 85 * hosted.GIB
         daemon = Mock(pid=101, returncode=None)
         daemon.poll.return_value = None
@@ -175,7 +311,7 @@ class HostedGuardTests(unittest.TestCase):
               patch.object(hosted.subprocess, "run", side_effect=docker),
               patch.object(hosted.signal, "SIGKILL", 9, create=True),
               patch.object(hosted.os, "killpg", side_effect=lambda pid, sig: events.append((pid, sig)), create=True)):
-            receipt = hosted.run(self.root, hosted.SOURCE, 60)
+            receipt = hosted.run(self.root, hosted.SOURCE, 60, bins)
 
         self.assertEqual(commands[0][1]["DOCKER_TMPDIR"], str(self.root / "tmp"))
         self.assertEqual(commands[0][1]["TMPDIR"], str(self.root / "tmp"))
@@ -191,6 +327,15 @@ class HostedGuardTests(unittest.TestCase):
         self.assertEqual([item for item in commands[1][0] if item.startswith("PINNED_TARGET_CPU=")],
                          ["PINNED_TARGET_CPU=" + target_cpu])
         self.assertEqual(receipt["target_cpu"], target_cpu)
+        bins_options = [item for item in commands[1][0] if item.startswith("PINNED_BINS=")]
+        written_receipt = json.loads((self.root / "guard.json").read_bytes())
+        if bins == DEFAULT_BINS:
+            self.assertEqual(bins_options, [])
+            self.assertNotIn("binaries", written_receipt)
+        else:
+            self.assertEqual(bins_options, ["PINNED_BINS=" + " ".join(bins)])
+            self.assertEqual(commands[1][0][commands[1][0].index(bins_options[0]) - 1], "--env")
+            self.assertEqual(written_receipt["binaries"], list(bins))
         self.assertFalse(receipt["pass"])
         self.assertTrue((self.root / "daemon.log").is_file())
         self.assertTrue((self.root / "container.log").is_file())
