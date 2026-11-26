@@ -101,11 +101,11 @@ class HostReservationTests(unittest.TestCase):
         time.sleep(0.2)
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def spawn(self, code, **extra_env):
+    def spawn(self, code, *, executable=sys.executable, **extra_env):
         env = dict(os.environ, **{hr.TEST_ROOT_ENV: self.root})
         env.pop(hr.TOKEN_ENV, None)
         env.update(extra_env)
-        proc = subprocess.Popen([sys.executable, "-c", code], env=env, stdout=subprocess.PIPE,
+        proc = subprocess.Popen([executable, "-c", code], env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True)
         self.children.append(proc)
         return proc
@@ -168,13 +168,17 @@ class HostReservationTests(unittest.TestCase):
         with self.assertRaises(hr.Refused):
             hr.release(uuid.uuid4().hex, "success")
         self.assertEqual(hr.status()["record"]["token"], r["token"])
-        worker = self.spawn(SLEEP.format(30))
-        time.sleep(0.3)
-        hr.record_descendant(r["token"], worker.pid)
+        # Killing a Windows venv redirector can leave the Python worker alive.
+        worker = self.spawn(SLEEP.format(30), executable=getattr(sys, "_base_executable", None) or sys.executable)
+        recorded = hr.record_descendant(r["token"], worker.pid)
+        identity = (recorded["pid"], recorded["creation_time"])
         with self.assertRaises(hr.Refused):
             hr.release(r["token"], "cancelled")
         worker.kill()
-        worker.wait(10)
+        worker.wait(timeout=10)
+        # The worker handle can signal before its console helpers have exited.
+        self.assertTrue(wait_until(lambda: not hr.live_descendants([identity]), 10, step=0.05),
+                        f"descendants of worker {identity} did not exit")
         self.assertEqual(hr.release(r["token"], "cancelled")["outcome"], "cancelled")
         self.assertEqual(hr.status(r["token"])["token_fate"], "released")
 
@@ -656,11 +660,14 @@ class HostReservationTests(unittest.TestCase):
         result = hr.dispatch("test", "linux-sigkill", "reclaimed by the test", self.work_with_children(info_file),
                              cwd=self.root)
         token = result["token"]
-        self.assertTrue(wait_until(info_file.exists, 30))
+        self.assertTrue(wait_until(info_file.exists, 30), "work did not publish its process IDs")
         info = self.read_work(info_file)
-        adopt = [e for e in self.events(token) if e["kind"] == "adopt"][0]
+        events = self.events(token)
+        adopt = [e for e in events if e["kind"] == "adopt"][0]
         work = (info["pid"], hr.creation_time(info["pid"]))
         same = (info["children"]["same"], hr.creation_time(info["children"]["same"]))
+        self.assertIn(work, [(e["pid"], e["creation_time"]) for e in events if e["kind"] == "descendant"],
+                      "the work must be recorded before it starts")
         os.kill(adopt["pid"], 9)
         self.assertTrue(wait_until(lambda: hr.process_state(adopt["pid"], adopt["creation_time"]) == "absent", 10))
         self.assertEqual(hr.process_state(*work), "alive")
@@ -714,6 +721,33 @@ class HostReservationTests(unittest.TestCase):
             self.assertEqual(hr.lock_path(), Path(self.root) / f"{hr.HOST}.lock")
             os.environ[hr.TEST_ROOT_ENV] = str(Path(self.root) / "test")
             self.assertEqual(hr.root_dir(), Path(self.root) / "test", "the test root still wins")
+
+
+@unittest.skipUnless(SUPPORTED, "the host reservation supports Windows and Linux")
+class RecordedWorkTests(unittest.TestCase):
+    def test_work_exec_requires_a_published_descendant(self):
+        with tempfile.TemporaryDirectory(prefix="host-reservation-test-") as root, \
+                patch.dict(os.environ, {hr.TEST_ROOT_ENV: root}):
+            os.environ.pop(hr.TOKEN_ENV, None)
+            token = hr.acquire("test", "exec-order", "released by the test")["token"]
+            command = ["test-payload", "--arg"]
+
+            def check_registration(*_):
+                events, unreadable = hr.read_events(token)
+                self.assertFalse(unreadable)
+                self.assertEqual(hr._work_roots(events), [hr.self_identity()])
+
+            reader, writer = os.pipe()
+            with os.fdopen(reader, "rb") as errors:
+                with os.fdopen(writer, "wb") as report, patch.object(hr.signal, "signal"), \
+                        patch.object(hr.os, "execvpe", side_effect=check_registration) as execute:
+                    hr._exec_recorded_work(report.fileno(), command, token)
+                    execute.assert_called_once_with(command[0], command, os.environ)
+                    hr.release(token, "cancelled")
+                    execute.reset_mock()
+                    self.assertEqual(hr._exec_recorded_work(report.fileno(), command, token), 127)
+                    execute.assert_not_called()
+                self.assertIn(b"Refused: no reservation", errors.read())
 
 
 @unittest.skipUnless(os.name == "nt", "Windows backend")

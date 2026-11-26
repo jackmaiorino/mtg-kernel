@@ -1297,6 +1297,87 @@ mod tests {
         assert!(mapping::parse(text).is_err());
     }
 
+    #[test]
+    fn both_committed_tables_keep_counts_within_bound() {
+        const MAX_COLUMN_COUNT: i64 = 64;
+        let repo = repo_root();
+        for path in [table::TABLE_PATH, table::CUBE_TABLE_PATH] {
+            let parsed: serde_json::Value =
+                serde_json::from_str(&read(&repo, path).unwrap()).unwrap();
+            let vocab = parsed["vocabulary"].as_array().unwrap();
+            for row in parsed["cards"].as_array().unwrap() {
+                let vector = row["vector"].as_array().unwrap();
+                assert_eq!(vector.len(), vocab.len(), "{path}: {}", row["name"]);
+                for (column, value) in vocab.iter().zip(vector) {
+                    if column["kind"] == "count" {
+                        assert!(
+                            value.as_i64().unwrap() <= MAX_COLUMN_COUNT,
+                            "{path}: {} has count {value} for {}",
+                            row["name"],
+                            column["token"],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn committed_cube_table_encodes_tamiyo_name_list_once() {
+        let text = read(&repo_root(), table::CUBE_TABLE_PATH).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let vocab = parsed["vocabulary"].as_array().unwrap();
+        let tamiyo = parsed["cards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == "Tamiyo, Collector of Tales")
+            .unwrap();
+        for (token, expected) in [
+            (
+                "leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1=named",
+                1,
+            ),
+            (
+                "leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1.named",
+                0,
+            ),
+            ("op:Choice", 1),
+            ("op:Choice.options", 1),
+        ] {
+            let index = vocab
+                .iter()
+                .position(|column| column["token"] == token)
+                .unwrap();
+            assert_eq!(tamiyo["vector"][index], expected, "{token}");
+        }
+    }
+
+    #[test]
+    fn committed_cube_header_and_content_hash_match_inputs() {
+        let repo = repo_root();
+        let text = read(&repo, table::CUBE_TABLE_PATH).unwrap();
+        assert!(table::content_hash_holds(&text), "Cube content SHA-256");
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["schema"], table::TABLE_SCHEMA);
+        for (path_key, hash_key, path) in [
+            ("pool_path", "pool_sha256", table::CUBE_POOL_PATH),
+            ("mapping_path", "mapping_sha256", table::MAPPING_PATH),
+        ] {
+            assert_eq!(parsed[path_key], path, "{path_key}");
+            let bytes = std::fs::read(repo.join(path)).unwrap();
+            assert_eq!(parsed[hash_key], table::sha256_hex(&bytes), "{hash_key}");
+        }
+        let pauper = read(&repo, table::TABLE_PATH).unwrap();
+        let vocabulary = table::try_committed_vocabulary(&pauper).unwrap();
+        assert_eq!(parsed["pauper_table_path"], table::TABLE_PATH);
+        assert_eq!(parsed["pauper_vocabulary_len"], vocabulary.len());
+        assert_eq!(
+            parsed["pauper_vocabulary_sha256"],
+            table::vocabulary_sha256(&vocabulary)
+        );
+    }
+
     #[cfg(not(feature = "eternal-fixtures"))]
     #[test]
     fn non_eternal_build_refuses_cube_flag() {
@@ -1372,6 +1453,40 @@ mod tests {
             assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
         }
         std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn cube_table_references_outside_declared_consumers_are_flagged() {
+        let temp = scratch_repo("cube-declared-consumers");
+        // Exercise the separator mix emitted by the Windows directory walk.
+        let integration_test = if cfg!(windows) {
+            r"mtg-kernel/tests\eternal\cube_draft_build_v1.rs"
+        } else {
+            "mtg-kernel/tests/eternal/cube_draft_build_v1.rs"
+        };
+        let allowed = [
+            "mtg-kernel/src/cube_draft_build_v1/nested/loader.rs",
+            integration_test,
+        ];
+        let denied = [
+            "mtg-kernel/src/cube_draft_build_v1_extra/loader.rs",
+            "mtg-kernel/tests/eternal/cube_draft_build_v1.rs.bak",
+        ];
+        for path in allowed.into_iter().chain(denied) {
+            let path = temp.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, table::CUBE_TABLE_PATH).unwrap();
+        }
+
+        let mut expected = denied.map(|path| temp.join(path));
+        expected.sort();
+        let mut hits: Vec<_> = checks::unreferenced(&temp)
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        hits.sort();
+        std::fs::remove_dir_all(temp).unwrap();
+        assert_eq!(hits, expected);
     }
 
     #[cfg(not(feature = "limited-fdn-fixtures"))]

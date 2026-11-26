@@ -9,8 +9,10 @@ schema 5, public shroud).
 
 The draftable pool is `data/cube_v1/mtgo_vintage_cube_20261007.json` minus every name in
 `data/cube_v1/mtgo_vintage_cube_20261007_gaps.json`, which leaves about 483 cards in
-cube-list order. `CubePool::from_json_texts` takes both file texts. A name outside the gap
-record that the registry does not know is an error.
+cube-list order. `CubePool::from_json_texts` takes both file texts and an optional fence
+record (`{"cards": [{"name", "reason"}, ...]}` or the bare list that `tools/cube_v1/pool.py`
+reads), whose cards it also removes. A name outside the gap record and the fence that the
+registry does not know is an error, and so is a fenced name that is not on the cube list.
 
 ## Seeds
 

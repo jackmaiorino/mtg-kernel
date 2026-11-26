@@ -207,7 +207,27 @@ mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
 pub mod creature_types_v60;
 #[cfg(feature = "eternal-fixtures")]
+pub mod cube_b_census_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_deck_signal_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_draft_build_v1;
+#[cfg(feature = "eternal-fixtures")]
 pub mod cube_draft_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_learned_seat_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_owner_view_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_pod_runner_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_read_plan_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_seat_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_training_driver_v1;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_worker_liveness_v1;
 pub mod elenda_observation_v52;
 pub mod elenda_public_v52;
 pub mod embercleave_consumer_v1;
@@ -432,6 +452,9 @@ pub mod eternal_premodern_p3f_v1;
 pub mod eternal_premodern_p3g_v1;
 /// Premodern sideboard card programs of the eternal catalog (wave P3h).
 pub mod eternal_premodern_p3h_v1;
+/// Premodern sideboard card program of the eternal catalog (wave P3i: Alter
+/// Reality).
+pub mod eternal_premodern_p3i_v1;
 pub(crate) mod eternal_prevention_order_v1;
 /// Legacy sideboard card programs of the eternal catalog (wave S1a).
 pub mod eternal_sideboard_s1a_v1;
@@ -534,6 +557,7 @@ pub mod heartfire_public_v1;
 pub mod ids;
 pub mod infoset_v1;
 pub mod line_b_teacher_target_v1;
+pub mod m4_sampler_v1;
 pub mod ooze_public_v1;
 pub mod phase1_agent_v1;
 pub mod phase1_bo3_collection_v1;

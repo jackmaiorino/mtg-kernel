@@ -45,6 +45,48 @@ mod tests {
     }
 
     #[test]
+    fn eternal_actor_set_max_stack_objects_halts_pending_decision_and_preserves_terminal() {
+        use crate::rl_session::stack_size_cap_v1_tests::{cap_reason, untap_stack};
+
+        let (state, monolith) = untap_stack(17);
+        let mut finished = state.clone();
+        finished.players[1].has_lost = true;
+        let wrap = |state| EternalActorSessionV1 {
+            inner: FastActorSessionV1::from_v2_fixture_state(state),
+            owner: Arc::new(()),
+            generation: 0,
+            own_deck_types: Arc::new([Vec::new(), Vec::new()]),
+        };
+        let mut session = wrap(state);
+        assert_eq!(session.max_stack_objects(), None);
+        assert_eq!(session.stack_objects(), 17);
+        assert!(matches!(
+            session.current_response().unwrap(),
+            FastActorResponseV1::Decision(_)
+        ));
+
+        session.set_max_stack_objects(Some(16));
+
+        assert!(matches!(
+            session.current_response().unwrap(),
+            FastActorResponseV1::Terminal(t)
+                if t.terminal_outcome == TerminalOutcomeV1::Halted
+                    && t.terminal_reason == cap_reason(monolith)
+        ));
+
+        let mut session = wrap(finished);
+        assert_eq!(session.stack_objects(), 17);
+        let terminal = session.current_response().unwrap();
+        assert!(matches!(
+            &terminal,
+            FastActorResponseV1::Terminal(t) if t.terminal_outcome == TerminalOutcomeV1::P0Win
+        ));
+        session.set_max_stack_objects(Some(16));
+        assert_eq!(session.current_response().unwrap(), terminal);
+        assert_eq!(session.inner.game_state().engine.halted, None);
+    }
+
+    #[test]
     fn issue454_eternal_reported_mainboards_use_sealed_scorer_and_learner() {
         for name in ["legacy-reanimator", "legacy-doomsday", "vintage-red-prison"] {
             for starting_player in [PlayerId::P0, PlayerId::P1] {
@@ -694,6 +736,19 @@ impl EternalActorSessionV1 {
         // proves its operands public, including when publishing only a header.
         self.require_entry_visibility()?;
         Ok(self.inner.current_response())
+    }
+    pub fn stack_objects(&self) -> u32 {
+        self.inner.stack_objects()
+    }
+    pub fn max_stack_objects(&self) -> Option<u32> {
+        self.inner.max_stack_objects()
+    }
+    pub fn set_max_stack_objects(&mut self, max_stack_objects: Option<u32>) {
+        self.inner.set_max_stack_objects(max_stack_objects);
+    }
+    pub fn with_max_stack_objects(mut self, max_stack_objects: Option<u32>) -> Self {
+        self.set_max_stack_objects(max_stack_objects);
+        self
     }
     pub fn snapshot(&self) -> EternalActorSnapshotV1 {
         EternalActorSnapshotV1 {

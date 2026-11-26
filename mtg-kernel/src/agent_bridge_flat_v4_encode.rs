@@ -455,7 +455,7 @@ mod tests {
             value["feature_encoding_digest"],
             "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de"
         );
-        assert_eq!(value["card_db_hash"], "064a7c989255ab3c");
+        assert_eq!(value["card_db_hash"], "0777a48028de38d7");
         assert_eq!(value["row_candidate_ids"], json!(rows));
         assert_eq!(value["tensor"].as_object().unwrap().len(), 13);
     }
