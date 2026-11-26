@@ -3818,7 +3818,7 @@ impl GameState {
                 let Some(host) = self.objects.try_get(link.object) else {
                     return Err(id);
                 };
-                // CR 301.5c, 301.6, 303.4d forbid even reciprocal self-links.
+                // CR 301.5c, 301.6, 303.4d forbid self-links and attachment cycles.
                 if link.object == id
                     || object.zone != Zone::Battlefield
                     || host.zone != Zone::Battlefield
@@ -3831,6 +3831,20 @@ impl GameState {
                         != 1
                 {
                     return Err(id);
+                }
+                let mut cursor = link.object;
+                let mut steps = 0usize;
+                let limit = self.objects.len();
+                while let Some(next_link) = self
+                    .objects
+                    .try_get(cursor)
+                    .and_then(|current| current.v4.attached_to)
+                {
+                    if next_link.object == id || steps >= limit {
+                        return Err(id);
+                    }
+                    cursor = next_link.object;
+                    steps += 1;
                 }
             }
             for (index, &source) in object.attachments.iter().enumerate() {

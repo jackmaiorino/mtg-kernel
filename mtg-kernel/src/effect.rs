@@ -24306,16 +24306,7 @@ fn execute_in_departure_scope_v1(
                 return;
             }
             let target = ctx.resolve_object(*object);
-            // CR 702.6a allows a creature to target itself with equip. CR 301.5c
-            // and 701.3b make the attachment itself a no-op in that case.
-            if target == ctx.source {
-                return;
-            }
-            let target_live = state.objects.get(target);
-            let target_zone_change_count = target_live.zone_change_count;
-            let target_is_creature = target_live.zone == Zone::Battlefield
-                && crate::engine::object_has_type(state, target, CardType::Creature);
-            let source_is_equipment = state.objects.try_get(ctx.source).is_some_and(|live| {
+            let source_is_live = state.objects.try_get(ctx.source).is_some_and(|live| {
                 live.card_def == source.card_def
                     && live.owner == source.owner
                     && live.zone == Zone::Battlefield
@@ -24324,37 +24315,21 @@ fn execute_in_departure_scope_v1(
                         .equipment
                         .is_some()
             });
-            if !target_is_creature || !source_is_equipment {
-                return;
-            }
-            if !crate::engine::has_effective_subtype(state, ctx.source, Subtype::Equipment) {
-                return;
-            }
-            // CR 301.5c: a creature Equipment can equip only with reconfigure.
-            if crate::engine::object_has_type(state, ctx.source, CardType::Creature) {
-                #[cfg(feature = "eternal-fixtures")]
-                let has_reconfigure =
-                    crate::eternal_legacy_e8a_v1::statics::has_reconfigure(state, ctx.source);
-                #[cfg(not(feature = "eternal-fixtures"))]
-                let has_reconfigure = false;
-                if !has_reconfigure {
-                    return;
-                }
-            }
-            if state
-                .attach_object_exact(
-                    ctx.source,
-                    source.zone_change_count,
-                    target,
-                    target_zone_change_count,
-                )
-                .is_err()
+            // CR 702.6a allows a creature to target itself with equip. CR 301.5c,
+            // 701.3b, 702.151b, and 702.16d make impossible attachments a no-op
+            // without moving any existing attachment.
+            if !source_is_live
+                || !crate::engine::can_attach_equipment_to_host(state, ctx.source, target)
             {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
+                return;
             }
+            let target_zone_change_count = state.objects.get(target).zone_change_count;
+            let _ = state.attach_object_exact(
+                ctx.source,
+                source.zone_change_count,
+                target,
+                target_zone_change_count,
+            );
         }
         EffectOp::AddCountersToTarget {
             target_index,
@@ -24546,11 +24521,16 @@ fn execute_in_departure_scope_v1(
                             source.source,
                             crate::card_def::CardType::Artifact,
                         )
-                        && !crate::engine::object_has_type(
+                        && crate::engine::has_effective_subtype(
+                            state,
+                            source.source,
+                            Subtype::Equipment,
+                        )
+                        && (!crate::engine::object_has_type(
                             state,
                             source.source,
                             crate::card_def::CardType::Creature,
-                        )
+                        ) || crate::engine::equipment_has_reconfigure(state, source.source))
                         && live.zone_change_count == source.zone_change_count
                         && live.owner == source.owner
                         && live.card_def == source.card_def
@@ -24588,19 +24568,10 @@ fn execute_in_departure_scope_v1(
                     })
                     .collect::<Vec<_>>();
                 if creations.iter().all(|(_, candidate)| {
-                    !crate::engine::object_has_type(
-                        state,
-                        candidate.object,
-                        crate::card_def::CardType::Creature,
-                    )
-                }) {
-                    return;
-                }
-                if creations.iter().all(|(_, candidate)| {
-                    crate::engine::damage_is_prevented_by_protection(
+                    !crate::engine::can_attach_equipment_to_host(
                         state,
                         source.source,
-                        Target::Object(candidate.object),
+                        candidate.object,
                     )
                 }) {
                     return;
@@ -24643,12 +24614,13 @@ fn execute_in_departure_scope_v1(
                         _ => None,
                     })
                     .expect("genuine token attachment choice emits its input");
-                // Untargeted attachment still respects protection, but Shroud
-                // and the Equipment's present controller do not target-filter it.
-                if crate::engine::damage_is_prevented_by_protection(
+                // Untargeted attachment still respects CR 301.5c / 702.151b /
+                // 702.16d protection, while Shroud and the Equipment's present
+                // controller do not target-filter it.
+                if !crate::engine::can_attach_equipment_to_host(
                     state,
                     source.source,
-                    Target::Object(selected.object),
+                    selected.object,
                 ) {
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -24714,24 +24686,20 @@ fn execute_in_departure_scope_v1(
                         .equipment
                         .is_some()
             });
-            if !source_is_live {
+            // CR 301.5c / 701.3b / 702.151b / 702.16d: token creation still
+            // completes even when the Equipment cannot legally attach to it.
+            if !source_is_live
+                || !crate::engine::can_attach_equipment_to_host(state, ctx.source, object)
+            {
                 return;
             }
             let token_generation = state.objects.get(object).zone_change_count;
-            if state
-                .attach_object_exact(
-                    ctx.source,
-                    source.zone_change_count,
-                    object,
-                    token_generation,
-                )
-                .is_err()
-            {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
-            }
+            let _ = state.attach_object_exact(
+                ctx.source,
+                source.zone_change_count,
+                object,
+                token_generation,
+            );
         }
         EffectOp::AddMana { player, colors } => {
             let player = ctx.resolve_player(*player, state);

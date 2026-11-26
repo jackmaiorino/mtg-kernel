@@ -288,7 +288,15 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
         let Some(sash) = state.objects.try_get(attached) else {
             continue;
         };
-        if sash.v4.attached_to == Some(host) && active_named(state, attached, LION_SASH) {
+        if sash.v4.attached_to == Some(host)
+            && active_named(state, attached, LION_SASH)
+            && !crate::engine::object_has_type(state, attached, CardType::Creature)
+            && crate::engine::has_effective_subtype(
+                state,
+                attached,
+                crate::card_def::Subtype::Equipment,
+            )
+        {
             let counters = i128::from(sash.counters.plus1_plus1.max(0));
             boost.0 += counters;
             boost.1 += counters;

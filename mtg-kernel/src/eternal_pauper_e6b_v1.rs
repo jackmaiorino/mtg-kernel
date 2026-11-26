@@ -1591,34 +1591,6 @@ pub(crate) fn protection_removes_attachment(
     })
 }
 
-/// The same rule for Equipment: unattaches those Benevolent Blessing's
-/// protection no longer allows. Returns whether any moved.
-pub(crate) fn unattach_protected_equipment(state: &mut GameState) -> bool {
-    let detach = state
-        .objects
-        .iter()
-        .filter_map(|(id, live)| {
-            let definition = CARD_DEFS.get(usize::from(live.card_def))?;
-            let link = live.v4.attached_to?;
-            (live.zone == Zone::Battlefield
-                && definition.equipment.is_some()
-                && definition.subtypes.contains(&Subtype::Equipment)
-                && link_live_in(state, link, Zone::Battlefield)
-                && protection_removes_attachment(state, id, link.object))
-            .then_some((id, link))
-        })
-        .collect::<Vec<_>>();
-    for &(id, link) in &detach {
-        state
-            .objects
-            .get_mut(link.object)
-            .attachments
-            .retain(|attachment| *attachment != id);
-        state.objects.get_mut(id).v4.attached_to = None;
-    }
-    !detach.is_empty()
-}
-
 /// This module's Auras that the Standard Aura entry attaches: Cartouche of
 /// Solidarity ("Enchant creature you control"), Abundant Growth ("Enchant
 /// land") and Utopia Sprawl ("Enchant Forest").
