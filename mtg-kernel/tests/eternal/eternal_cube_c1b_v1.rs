@@ -12,7 +12,9 @@ use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::{ManaColor, Pip};
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{
+    GameObject, GameState, ObjectStateV4, ObservationNoteKindV1, SplitMix64, Step, Target, Zone,
+};
 use serde_json::Value;
 
 const P0: PlayerId = PlayerId::P0;
@@ -731,6 +733,121 @@ fn assert_must_find_a_card(state: &mut GameState) {
         engine::step(state, Action::FinishEffectSelection).is_err(),
         "finishing with nothing found is refused"
     );
+}
+
+fn entomb_search_state() -> (GameState, ObjectId, ObjectId, ObjectId) {
+    let mut state = game(&["Swamp", "Island", "Mountain", "Forest", "Plains"]);
+    let colossus = put(&mut state, P0, "Blightsteel Colossus", Zone::Library);
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Library);
+    let entomb = put(&mut state, P0, "Entomb", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, entomb, &[]);
+    assert_must_find_a_card(&mut state);
+    (state, colossus, ritual, entomb)
+}
+
+fn entomb_expected_shuffle(library: &mut [ObjectId], rng: &mut SplitMix64) {
+    for i in (1..library.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        library.swap(i, j);
+    }
+}
+
+#[test]
+fn entomb_resolves_the_replacement_shuffle_before_the_search_shuffle() {
+    let (mut state, colossus, ritual, entomb) = entomb_search_state();
+    let pending_search = state.snapshot();
+    let initial_rng: SplitMix64 =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()["rng"].clone()).unwrap();
+    for (selected, destination, shuffle_count) in
+        [(colossus, Zone::Library, 2), (ritual, Zone::Graveyard, 1)]
+    {
+        state.restore(&pending_search);
+        let mut expected_library = state.players[0].library.clone();
+        if destination == Zone::Graveyard {
+            expected_library.retain(|&object| object != selected);
+        }
+        let mut expected_rng = initial_rng;
+        for _ in 0..shuffle_count {
+            entomb_expected_shuffle(&mut expected_library, &mut expected_rng);
+        }
+
+        let answer = Action::ChooseEffectTarget(Target::Object(selected));
+        act(&mut state, answer);
+        // The choice has been recorded, and neither shuffle has run yet.
+        let before_resolution = state.snapshot();
+        let notes_before = state.observation_journal.notes().len();
+        settled(&mut state);
+        assert_eq!(zone(&state, selected), destination);
+        assert_eq!(zone(&state, entomb), Zone::Graveyard);
+        assert_eq!(state.players[0].library, expected_library);
+        assert_eq!(
+            serde_json::to_value(&state).unwrap()["rng"],
+            serde_json::to_value(expected_rng).unwrap()
+        );
+        assert_eq!(
+            state.observation_journal.notes()[notes_before..]
+                .iter()
+                .filter(|note| note.kind == ObservationNoteKindV1::LibraryRandomized { owner: P0 })
+                .count(),
+            shuffle_count
+        );
+
+        let resolved = serde_json::to_vec(&state).unwrap();
+        state.restore(&before_resolution);
+        settled(&mut state);
+        assert_eq!(serde_json::to_vec(&state).unwrap(), resolved);
+    }
+}
+
+#[test]
+fn entomb_discards_staged_changes_when_a_shuffle_ordinal_is_exhausted() {
+    use mtg_kernel::environment_randomization_v2::PhysicalOwnerV2;
+
+    let (mut state, colossus, _, _) = entomb_search_state();
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(colossus)),
+    );
+    state.reveal_library_top(P0, P0, 1);
+    // Restore just before the first shuffle for both exhaustion points.
+    for ordinal in [u64::MAX, u64::MAX - 1] {
+        let mut wire = serde_json::to_value(&state).unwrap();
+        let fields = wire.as_object_mut().unwrap();
+        fields.remove("rng");
+        fields.insert(
+            "environment_randomization_v2".into(),
+            serde_json::json!({
+                "pair_environment_seed": 424242,
+                "next_live_shuffle_ordinal": [ordinal, 0],
+            }),
+        );
+        let mut restored: GameState = serde_json::from_value(wire).unwrap();
+        let before = restored.clone();
+        assert!(matches!(
+            engine::advance_until_decision(&mut restored),
+            Decision::Halted { .. }
+        ));
+        assert_eq!(zone(&restored, colossus), Zone::Library);
+        assert_eq!(restored.players[0].library, before.players[0].library);
+        assert_eq!(restored.players[0].graveyard, before.players[0].graveyard);
+        assert_eq!(restored.engine.event_history, before.engine.event_history);
+        assert_eq!(
+            restored.observation_journal.notes(),
+            before.observation_journal.notes()
+        );
+        assert_eq!(
+            restored.known_library_cards(P0, P0),
+            before.known_library_cards(P0, P0)
+        );
+        assert_eq!(
+            restored
+                .environment_randomization_v2()
+                .unwrap()
+                .next_live_shuffle_ordinal(PhysicalOwnerV2::P0),
+            ordinal
+        );
+    }
 }
 
 #[test]
