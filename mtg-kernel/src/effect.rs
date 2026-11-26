@@ -10587,7 +10587,9 @@ fn validate_nonterminal_discard_other_stage(
                     if pending.frames.len() != choice.remaining.len() + 1
                         || pending.frames[..choice.remaining.len()] != choice.remaining[..]
                         || selected.len() > usize::from(choice.max)
-                        || selected.iter().any(|target| !choice.candidates.contains(target))
+                        || selected
+                            .iter()
+                            .any(|target| !choice.candidates.contains(target))
                     {
                         return Err(err());
                     }
