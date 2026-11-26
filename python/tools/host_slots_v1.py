@@ -434,6 +434,15 @@ if os.name == "nt":
         _, listed = struct.unpack_from("<II", buf, 0)
         return list(struct.unpack_from(f"<{listed}Q", buf, 8))
 
+    def _process_exited(pid: int) -> bool:
+        handle = _OpenProcess(SYNCHRONIZE, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == ERROR_INVALID_PARAMETER
+        try:
+            return _WaitForSingleObject(handle, 0) == WAIT_OBJECT_0
+        finally:
+            _CloseHandle(handle)
+
     def _suspend_pid(pid: int, suspend: bool) -> bool:
         handle = _OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
         if not handle:
@@ -1371,10 +1380,11 @@ class Tree:
                 if handle:
                     _CloseHandle(handle)
 
-    def members(self) -> list[int]:
-        """Live processes of the tree other than this runner."""
+    def members(self, *, check_exit: bool = False) -> list[int]:
+        """Other processes in the tree. Windows can still list a PID after its process handle signals."""
         if os.name == "nt":
-            return [pid for pid in _job_members(self.job) if pid != os.getpid()]
+            return [pid for pid in _job_members(self.job)
+                    if pid != os.getpid() and not (check_exit and _process_exited(pid))]
         if self.child is None:
             return []
         try:
@@ -1864,7 +1874,7 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                     code = child.wait(timeout=poll_seconds())
                 except subprocess.TimeoutExpired:
                     pass
-            if code is not None and not tree.members():
+            if code is not None and not tree.members(check_exit=True):
                 break
             if code is not None:
                 time.sleep(poll_seconds())
