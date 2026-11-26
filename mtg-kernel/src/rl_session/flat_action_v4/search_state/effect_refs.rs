@@ -2123,6 +2123,8 @@ fn conflicts_in_scope(
                 s.raw(source.source) || source.attached_to.is_some_and(|link| s.raw(link.object))
             }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
+            // The suspended draw's hand card, which its pending frame binds.
+            MiracleDrawSuspendedV1 { drawn, .. } => s.raw(drawn.object),
             MonarchTrigger { binding } => s.raw(binding.source.source),
             KrenkoPaidV1 { .. }
             | KrenkoPaymentInputV1 { .. }

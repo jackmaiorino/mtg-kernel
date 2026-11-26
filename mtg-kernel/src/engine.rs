@@ -16120,11 +16120,40 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             // A draw may suspend the interpreter before its ordinary
             // collection checkpoint. Capture the draw without performing
             // SBAs or placing any trigger while its owner is resolving.
-            if state.engine.pending_effect.is_some()
+            if (state.engine.pending_effect.is_some()
+                || crate::eternal_vintage_e7b_v1::dredge::draw_step_pending(state))
                 && crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state).is_some()
             {
                 let captured = trigger::capture_triggers_without_sba(state);
                 crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, captured);
+            }
+            // `step` accepts only the reveal's answer, so authenticate the
+            // offer and every input it suspends before presenting it.
+            if let Some(Decision::ChooseEffectOption { source, .. }) =
+                crate::eternal_legacy_e5b_v1::pending_decision(state)
+            {
+                if crate::eternal_legacy_e5b_v1::validate_miracle_offers(state).is_err()
+                    || (state.engine.pending_effect.is_some()
+                        && effect::validate_pending_effect_choice(state).is_err())
+                    || crate::eternal_vintage_e7b_v1::dredge::validate_miracle_draw_step_wait(state)
+                        .is_err()
+                {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+                    return Decision::Halted {
+                        mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                        source,
+                    };
+                }
+            } else if crate::eternal_vintage_e7b_v1::dredge::validate_miracle_draw_step_wait(state)
+                .is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source: ObjectId(0),
+                };
             }
             if let Some(decision) = crate::eternal_cards_v1::e3::entry_choice_decision(state) {
                 return decision;
@@ -29346,7 +29375,10 @@ pub(crate) fn step_without_linked_aura_v1(
         let Action::ChooseEffectOption(option) = action else {
             return Err("only the active miracle reveal may be answered".into());
         };
+        crate::eternal_vintage_e7b_v1::dredge::validate_miracle_draw_step_wait(state)?;
         crate::eternal_legacy_e5b_v1::answer_pending_decision(state, option)?;
+        // A turn-based draw of several cards resumes after the reveal.
+        crate::eternal_vintage_e7b_v1::dredge::resume_draw_step_after_miracle(state);
         collect_and_queue_triggers(state);
         return Ok(());
     }

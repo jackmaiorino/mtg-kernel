@@ -1939,7 +1939,7 @@ fn smugglers_copter_nested_loot_completes_after_each_miracle_card() {
             _ => None,
         });
         assert!(hand_contains(&state, P0, miracle));
-        assert_eq!(library_len(&state, P0), 19, "the nested loot drew");
+        assert_eq!(library_len(&state, P0), 20, "the nested loot drew");
         assert_eq!(state.players[0].graveyard.len(), 1, "and discarded");
         assert!(state.engine.pending_effect.is_none());
         assert!(state.engine.halted.is_none());

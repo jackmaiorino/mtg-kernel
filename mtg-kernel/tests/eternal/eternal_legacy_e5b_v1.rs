@@ -1070,6 +1070,27 @@ fn a_miracle_card_that_is_not_the_first_draw_is_not_offered() {
     settled(&mut state);
 }
 
+/// Answers the pending dredge choice by dredging `card`, then returns the
+/// next decision.
+fn dredge_instead(state: &mut GameState, card: ObjectId) -> Decision {
+    match settle(state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets.contains(&Target::Object(card)) =>
+        {
+            act(state, Action::ChooseEffectTarget(Target::Object(card)));
+        }
+        other => panic!("expected a dredge choice, got {other:?}"),
+    }
+    loop {
+        match next(state) {
+            Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            } => act(state, Action::FinishEffectSelection),
+            other => return other,
+        }
+    }
+}
+
 #[test]
 fn miracle_after_dredge_pauses_before_the_next_draw() {
     let mut state = game(&["Island"]);
@@ -1081,17 +1102,11 @@ fn miracle_after_dredge_pauses_before_the_next_draw() {
     let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
     let recall = put(&mut state, P0, "Ancestral Recall", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 0);
-    cast(&mut state, recall, &[]);
-    match settle(&mut state) {
-        Some(Decision::ChooseEffectTargets { legal_targets, .. })
-            if legal_targets.contains(&Target::Object(imp)) =>
-        {
-            act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
-        }
-        other => panic!("expected the first draw's dredge choice, got {other:?}"),
-    }
+    cast(&mut state, recall, &[Target::Player(P0)]);
+    // The first draw is dredged (702.52a), so Terminus is the first card
+    // drawn and the rest of the draw waits for its reveal (702.94a).
     assert!(matches!(
-        next(&mut state),
+        dredge_instead(&mut state, imp),
         Decision::ChooseEffectOption {
             player: P0,
             source,
@@ -1108,14 +1123,14 @@ fn miracle_after_dredge_pauses_before_the_next_draw() {
 }
 
 #[test]
-fn miracle_pauses_owned_riddler_draws_before_the_next_card() {
+fn miracle_pauses_riddler_draws_before_the_next_card() {
     let mut state = game(&["Island"; 3]);
     let second = state.players[0].library[0];
     let terminus = put(&mut state, P0, "Terminus", Zone::Library);
     put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
     let recall = put(&mut state, P0, "Ancestral Recall", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 0);
-    cast(&mut state, recall, &[]);
+    cast(&mut state, recall, &[Target::Player(P0)]);
     assert!(matches!(
         settle(&mut state),
         Some(Decision::ChooseEffectOption {
@@ -1133,6 +1148,42 @@ fn miracle_pauses_owned_riddler_draws_before_the_next_card() {
     assert_eq!(state.players[0].draws_this_turn, 4);
     assert_eq!(state.players[0].hand.len(), 4);
     assert!(state.players[0].library.is_empty());
+}
+
+#[test]
+fn miracle_pauses_owned_riddler_draws_after_a_dredge() {
+    // Riddler fixes four attempts (121.2b) and a dredger makes the draw an
+    // owned instruction. The first attempt is dredged; Terminus is the
+    // second attempt and the first card drawn this turn.
+    let mut state = game(&["Island"; 3]);
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+    for _ in 0..3 {
+        put(&mut state, P0, "Island", Zone::Library);
+    }
+    let after = state.players[0].library[4];
+    let shell = put(&mut state, P0, "Shambling Shell", Zone::Graveyard);
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    let recall = put(&mut state, P0, "Ancestral Recall", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, recall, &[Target::Player(P0)]);
+    assert!(matches!(
+        dredge_instead(&mut state, shell),
+        Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        } if source == terminus
+    ));
+    assert!(hand_contains(&state, P0, shell));
+    assert!(hand_contains(&state, P0, terminus));
+    assert!(!hand_contains(&state, P0, after));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(state.players[0].library.len(), 3);
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert!(hand_contains(&state, P0, after));
+    assert_eq!(state.players[0].draws_this_turn, 3);
+    assert_eq!(state.players[0].library.len(), 1);
 }
 
 #[test]

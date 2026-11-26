@@ -764,23 +764,90 @@ fn drive_draw_step_draws(state: &mut GameState, player: PlayerId, mut remaining:
         }
         event::propose_draw_attempt(state, player);
         remaining -= 1;
+        if wait_for_miracle(state, remaining) {
+            return;
+        }
     }
+}
+
+/// A miracle card drawn as its owner's first draw this turn is revealed as
+/// it is drawn (702.94a), so the rest of a multi-card turn-based draw (Quantum
+/// Riddler's) waits for that reveal. The wait is the remaining count without
+/// a replacement choice (`dredge_draw` is `None`).
+fn wait_for_miracle(state: &mut GameState, remaining: u32) -> bool {
+    if remaining == 0 || crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state).is_none() {
+        return false;
+    }
+    e7b_state(state).draw_step_remaining = super::OptionalRemainingV1(Some(remaining));
+    true
+}
+
+/// The rest of a turn-based draw waiting for a miracle reveal, if any.
+fn miracle_draw_step_wait(state: &GameState) -> Option<u32> {
+    read_state(state)
+        .filter(|e7b| e7b.dredge_draw.is_none())
+        .and_then(|e7b| e7b.draw_step_remaining.0)
+}
+
+/// Authenticates a turn-based draw waiting for a miracle reveal: only during
+/// the active player's draw step, with nothing resolving, while that
+/// player's first draw this turn is a miracle card whose reveal is pending,
+/// and no more draws remain than its draw-count replacements can add.
+pub(crate) fn validate_miracle_draw_step_wait(state: &GameState) -> Result<(), String> {
+    let Some(remaining) = miracle_draw_step_wait(state) else {
+        return Ok(());
+    };
+    let player = state.active_player;
+    let revealing = crate::eternal_legacy_e5b_v1::pending_decision(state).is_some_and(|decision| {
+        matches!(decision, crate::engine::Decision::ChooseEffectOption { player: owner, source, .. }
+            if owner == player
+                && crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, player)
+                    .is_some_and(|(_, card)| card == source))
+    });
+    if state.step != crate::state::Step::Draw
+        || remaining == 0
+        || remaining > event::draw_instruction_extra_at_hand_size(state, player, 1, 0)
+        || !state.stack.is_empty()
+        || state.engine.pending_effect.is_some()
+        || !revealing
+    {
+        return Err("the draw step's remaining draws lost their miracle reveal".into());
+    }
+    Ok(())
+}
+
+/// Continues a turn-based draw once its miracle reveal is answered.
+pub(crate) fn resume_draw_step_after_miracle(state: &mut GameState) {
+    let Some(remaining) = miracle_draw_step_wait(state) else {
+        return;
+    };
+    if crate::eternal_legacy_e5b_v1::pending_decision(state).is_some() {
+        return;
+    }
+    e7b_state(state).draw_step_remaining = super::OptionalRemainingV1(None);
+    let player = state.active_player;
+    drive_draw_step_draws(state, player, remaining);
 }
 
 /// The draw step's draw: whether `player` has (or will reach across extra
 /// draws such as Quantum Riddler's) a dredge or competing draw-replacement
 /// choice, so the draw runs through the resumable turn-draw driver.
 pub(crate) fn defer_draw_step_draw(state: &mut GameState, player: PlayerId) -> bool {
-    if !owned_draw_needs_choice(state, player, 1) {
+    let total = 1 + event::draw_instruction_extra(state, player, 1);
+    if !owned_draw_needs_choice(state, player, 1)
+        && !(total > 1 && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player))
+    {
         return false;
     }
-    let total = 1 + event::draw_instruction_extra(state, player, 1);
     drive_draw_step_draws(state, player, total);
     true
 }
 
+/// Whether the draw step's draw is waiting for a replacement choice or a
+/// miracle reveal.
 pub(crate) fn draw_step_pending(state: &GameState) -> bool {
-    read_state(state).is_some_and(|e7b| e7b.dredge_draw.is_some())
+    read_state(state)
+        .is_some_and(|e7b| e7b.dredge_draw.is_some() || e7b.draw_step_remaining.0.is_some())
 }
 
 /// The pending draw-step replacement choice (dredge or Jace vs Hullbreacher),
@@ -850,7 +917,7 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
             }
         }
     }
-    if remaining > 1 {
+    if remaining > 1 && !wait_for_miracle(state, remaining - 1) {
         drive_draw_step_draws(state, player, remaining - 1);
     }
     Ok(true)

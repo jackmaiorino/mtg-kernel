@@ -14271,10 +14271,69 @@ mod tests {
                 object: ordinary,
                 zone_change_count: forged_offer.objects.get(ordinary).zone_change_count,
             };
+        assert_eq!(
+            crate::engine::step(
+                &mut forged_offer.clone(),
+                crate::engine::Action::ChooseEffectOption(0)
+            )
+            .unwrap_err(),
+            "miracle offer lost its first-draw receipt",
+        );
         assert!(matches!(
             crate::engine::advance_until_decision(&mut forged_offer),
             crate::engine::Decision::Halted { .. }
         ));
+
+        // The same frame for a first draw this resolution did not stop at,
+        // such as a declined draw-step miracle: its history has no marker.
+        let is_marker = |event: &crate::event::CommittedEvent| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::MiracleDrawSuspendedV1 { .. }
+            )
+        };
+        let mut earlier_draw = snapshot.0.state.clone();
+        assert_eq!(
+            earlier_draw
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| is_marker(event))
+                .count(),
+            1
+        );
+        let unmarked: Vec<_> = earlier_draw
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| !is_marker(event))
+            .cloned()
+            .collect();
+        earlier_draw.engine.event_history = unmarked.into();
+        assert!(crate::effect::validate_pending_effect_choice(&earlier_draw).is_err());
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut earlier_draw),
+            crate::engine::Decision::Halted { .. }
+        ));
+        // A marker of another stack item does not bind this resolution.
+        let mut other_item = snapshot.0.state.clone();
+        let remarked: Vec<_> = other_item
+            .engine
+            .event_history
+            .iter()
+            .cloned()
+            .map(|mut event| {
+                if let crate::event::CommittedEvent::MiracleDrawSuspendedV1 {
+                    stack_item_id, ..
+                } = &mut event
+                {
+                    *stack_item_id = crate::ids::StackItemId(stack_item_id.0 + 1000);
+                }
+                event
+            })
+            .collect();
+        other_item.engine.event_history = remarked.into();
+        assert!(crate::effect::validate_pending_effect_choice(&other_item).is_err());
 
         let mut wrong_zone = snapshot.0.state.clone();
         let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { drawn, .. }) = wrong_zone
@@ -14359,11 +14418,25 @@ mod tests {
             );
             assert_eq!(session.state.stack.len(), 1);
             assert_eq!(session.state.stack[0].source, dack);
+            // Dack's discard is its last instruction: it waits inside the
+            // resolution only while the draw's captures are deferred.
             let mut terminal_without_capture = session.state.clone();
+            let discard = terminal_without_capture
+                .engine
+                .pending_discard
+                .clone()
+                .expect("Dack's terminal discard waits inside its resolution");
+            assert!(crate::effect::validate_resumable_discard(
+                &terminal_without_capture,
+                &discard
+            )
+            .is_ok());
             crate::eternal_vintage_e7b_v1::dredge::stop_deferring(&mut terminal_without_capture);
-            assert!(
-                crate::effect::validate_pending_effect_choice(&terminal_without_capture).is_err()
-            );
+            assert!(crate::effect::validate_resumable_discard(
+                &terminal_without_capture,
+                &discard
+            )
+            .is_err());
             choose(&mut session, |action| {
                 matches!(action, ActionSemanticV1::Discard { cards, .. }
                     if cards.iter().any(|card| card.arena_id == miracle.0))

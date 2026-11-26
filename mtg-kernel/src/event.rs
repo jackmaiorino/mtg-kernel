@@ -2282,6 +2282,17 @@ pub enum CommittedEvent {
         card_def: u16,
         move_history_index: u64,
     },
+    /// A resolving draw instruction stopped after its drawer's first draw
+    /// this turn, a miracle card, with `remaining` attempts still to make
+    /// (CR 702.94a). History-only proof that this stack item reached the
+    /// draw at `path`.
+    MiracleDrawSuspendedV1 {
+        stack_item_id: StackItemId,
+        player: PlayerId,
+        path: Vec<u16>,
+        drawn: crate::state::ObjectLinkV4,
+        remaining: u32,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -1162,25 +1162,48 @@ pub(crate) fn next_draw_may_offer_miracle(state: &GameState, player: PlayerId) -
 /// The event history proves which card was drawn first this turn. The live
 /// offer also binds its hand incarnation independently of this draw receipt.
 pub(crate) fn is_first_miracle_draw(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
+    first_miracle_draw_at(state, player).is_some_and(|(_, first)| first == card)
+}
+
+/// The history position and card of `player`'s first draw this turn, when
+/// that card has miracle and is still in its owner's hand.
+pub(crate) fn first_miracle_draw_at(
+    state: &GameState,
+    player: PlayerId,
+) -> Option<(usize, ObjectId)> {
     let owner = &state.players[player.index()];
-    owner.hand.contains(&card)
-        && miracle_cost(state, card).is_some()
-        && owner.draws_this_turn.checked_sub(1).is_some_and(|later| {
-            state
-                .engine
-                .event_history
-                .iter()
-                .rev()
-                .filter_map(|event| match *event {
-                    CommittedEvent::Draw {
-                        player: drawer,
-                        object: Some(object),
-                    } if drawer == player => Some(object),
-                    _ => None,
-                })
-                .nth(later as usize)
-                == Some(card)
+    let later = owner.draws_this_turn.checked_sub(1)?;
+    let history = &state.engine.event_history;
+    let (at, card) = history
+        .iter()
+        .rev()
+        .zip((0..history.len()).rev())
+        .filter_map(|(event, at)| match *event {
+            CommittedEvent::Draw {
+                player: drawer,
+                object: Some(object),
+            } if drawer == player => Some((at, object)),
+            _ => None,
         })
+        .nth(usize::try_from(later).ok()?)?;
+    (owner.hand.contains(&card) && miracle_cost(state, card).is_some()).then_some((at, card))
+}
+
+/// Every live miracle offer must be its owner's first draw this turn. A
+/// restored offer for any other card cannot be answered, so it is refused
+/// before the reveal is presented.
+pub(crate) fn validate_miracle_offers(state: &GameState) -> Result<(), String> {
+    let Some(e5b) = read_state(state) else {
+        return Ok(());
+    };
+    for &offer in &e5b.miracle_offers {
+        if link_live_in(state, offer, Zone::Hand)
+            && !is_first_miracle_draw(state, state.objects.get(offer.object).owner, offer.object)
+        {
+            return Err("miracle offer lost its first-draw receipt".into());
+        }
+    }
+    Ok(())
 }
 
 /// `player`'s draws this turn up to and including `events[index]`.
