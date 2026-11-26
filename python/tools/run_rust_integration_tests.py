@@ -163,11 +163,12 @@ def report_plan(suite: str, plan: list[list[str]], index: int, recorded: dict[st
           f"each in exactly one shard", flush=True)
 
 
-def listed_tests(executable: str) -> list[str]:
+def listed_tests(executable: str, *selection: str) -> list[str]:
+    """The names of the binary's tests, or of those that `selection` (libtest filters and options) selects."""
     # libtest writes names as UTF-8; the names go back to it as exact filters,
     # so they must not pass through the system's own code page on the way.
     result = subprocess.run(
-        [executable, "--list", "--format=terse"], check=True, capture_output=True, text=True,
+        [executable, "--list", "--format=terse", *selection], check=True, capture_output=True, text=True,
         encoding="utf-8",
     )
     return [line.removesuffix(": test") for line in result.stdout.splitlines()
