@@ -5346,7 +5346,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     validate_effect_target_candidate(state, &legal[position])?;
     // A library search always ends in a shuffle: the shuffle must be
     // authorizable before this selection mutates. The token is discarded;
-    // the SearchLibraryToHand frame preflights again and commits.
+    // the search frame authorizes the shuffle after applying the move.
     if let EffectTargetSelectionPurpose::SearchLibraryToHand {
         player: search_player,
         ..
@@ -13952,6 +13952,24 @@ fn drive_resumable_inner_with_native_row_v1(
     result
 }
 
+/// CR 608.2c and 614.6: finish the replaced move before the search's
+/// trailing shuffle. The move may itself have consumed randomness, so the
+/// shuffle takes its authorization from the staged state. On a move failure,
+/// retain the halt reason while discarding the staged gameplay changes.
+fn shuffle_after_search_move(
+    state: &mut GameState,
+    staged: &mut GameState,
+    player: PlayerId,
+) -> Result<(), String> {
+    if staged.engine.halted.is_some() {
+        state.engine.halted = staged.engine.halted;
+        return Err("library search move halted".into());
+    }
+    staged
+        .shuffle_library(player)
+        .map_err(|error| error.to_string())
+}
+
 fn drive_resumable_in_departure_scope_v1(
     state: &mut GameState,
     supplied_owner: Option<&NativeExecutionOwnerV1>,
@@ -15101,28 +15119,21 @@ fn drive_resumable_in_departure_scope_v1(
                                 .to_string());
                         }
                     }
-                    // The trailing shuffle must be authorized after all of
-                    // the read-only metadata/candidate validation above and
-                    // before the searched card moves or is revealed. The
-                    // token is a nonserialized stack local held across those
-                    // mutations and committed at the shuffle point below.
-                    let shuffle_token = state
-                        .preflight_library_shuffle(player)
-                        .map_err(|error| error.to_string())?;
+                    let mut staged = state.clone();
                     if let Some(binding) = selected {
                         // The search move itself is an ordinary replaceable
                         // zone change. Public reveal follows the successful
                         // move, then the remaining library is shuffled.
                         event::propose_and_commit(
-                            state,
+                            &mut staged,
                             event::ProposedEvent::zone_change(binding.object, Zone::Hand),
                         );
                         if filter.reveals_selected_card()
-                            && state.objects.get(binding.object).zone == Zone::Hand
+                            && staged.objects.get(binding.object).zone == Zone::Hand
                         {
                             // spellbench-public-reveal: hand card revealed by the card rules.
                             for observer in [PlayerId::P0, PlayerId::P1] {
-                                state
+                                staged
                                     .reveal_distinct_hand_card_with_meaning_v3(
                                         observer,
                                         player,
@@ -15133,9 +15144,8 @@ fn drive_resumable_in_departure_scope_v1(
                             }
                         }
                     }
-                    state
-                        .commit_library_shuffle(player, shuffle_token)
-                        .map_err(|error| error.to_string())?;
+                    shuffle_after_search_move(state, &mut staged, player)?;
+                    *state = staged;
                     #[cfg(feature = "eternal-fixtures")]
                     crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
@@ -15178,12 +15188,10 @@ fn drive_resumable_in_departure_scope_v1(
                     }
                     let untapped =
                         search_to_battlefield_untapped(state, &continuation, &canonical_path)?;
-                    let shuffle_token = state
-                        .preflight_library_shuffle(player)
-                        .map_err(|error| error.to_string())?;
+                    let mut staged = state.clone();
                     if let Some(binding) = selected {
                         event::propose_and_commit(
-                            state,
+                            &mut staged,
                             if untapped {
                                 event::ProposedEvent::zone_change(binding.object, Zone::Battlefield)
                             } else {
@@ -15193,9 +15201,8 @@ fn drive_resumable_in_departure_scope_v1(
                             },
                         );
                     }
-                    state
-                        .commit_library_shuffle(player, shuffle_token)
-                        .map_err(|error| error.to_string())?;
+                    shuffle_after_search_move(state, &mut staged, player)?;
+                    *state = staged;
                     #[cfg(feature = "eternal-fixtures")]
                     crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
@@ -15434,9 +15441,7 @@ fn drive_resumable_in_departure_scope_v1(
                         }
                         seen.push(binding.object);
                     }
-                    let shuffle_token = state
-                        .preflight_library_shuffle(player)
-                        .map_err(|error| error.to_string())?;
+                    let mut staged = state.clone();
                     match destination {
                         LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand => {
                             let mut shown = Vec::new();
@@ -15448,11 +15453,11 @@ fn drive_resumable_in_departure_scope_v1(
                                 } else {
                                     event::ProposedEvent::zone_change(binding.object, Zone::Hand)
                                 };
-                                event::propose_and_commit(state, event);
-                                if state.objects.get(binding.object).zone == Zone::Hand {
+                                event::propose_and_commit(&mut staged, event);
+                                if staged.objects.get(binding.object).zone == Zone::Hand {
                                     // spellbench-public-reveal: hand card revealed by the card rules.
                                     for observer in [PlayerId::P0, PlayerId::P1] {
-                                        state
+                                        staged
                                             .reveal_distinct_hand_card_with_meaning_v3(
                                                 observer,
                                                 player,
@@ -15461,19 +15466,16 @@ fn drive_resumable_in_departure_scope_v1(
                                             )
                                             .map_err(|error| error.to_string())?;
                                     }
-                                    if state.reveal_meaning_v3_enabled() {
+                                    if staged.reveal_meaning_v3_enabled() {
                                         shown.push(binding.object);
                                     }
                                 }
                             }
-                            state.note_public_hand_reveal_group_v3(
+                            staged.note_public_hand_reveal_group_v3(
                                 player,
                                 shown,
                                 crate::reveal_meaning_v3::RevealV3::SearchReveal,
                             );
-                            state
-                                .commit_library_shuffle(player, shuffle_token)
-                                .map_err(|error| error.to_string())?;
                         }
                         LibrarySearchDestinationV1::Battlefield { tapped } => {
                             let fiend_owner = (state.fiend_artisan_receipts_v1
@@ -15501,10 +15503,7 @@ fn drive_resumable_in_departure_scope_v1(
                                     )
                                 })
                                 .collect();
-                            event::propose_and_commit_batch(state, events);
-                            state
-                                .commit_library_shuffle(player, shuffle_token)
-                                .map_err(|error| error.to_string())?;
+                            event::propose_and_commit_batch(&mut staged, events);
                         }
                         LibrarySearchDestinationV1::BattlefieldTappedUntapWithFourLandsV1 => {
                             for &binding in &selected {
@@ -15518,33 +15517,7 @@ fn drive_resumable_in_departure_scope_v1(
                                     )
                                 })
                                 .collect();
-                            event::propose_and_commit_batch(state, events);
-                            state
-                                .commit_library_shuffle(player, shuffle_token)
-                                .map_err(|error| error.to_string())?;
-                            // "Then if you control four or more lands, untap
-                            // that land." The land that was sacrificed as a
-                            // cost is already gone; the found land counts.
-                            let lands = state.players[player.index()]
-                                .battlefield
-                                .iter()
-                                .filter(|&&object| {
-                                    state.objects.get(object).controller == player
-                                        && crate::engine::object_has_type(
-                                            state,
-                                            object,
-                                            CardType::Land,
-                                        )
-                                })
-                                .count();
-                            if lands >= 4 {
-                                for binding in &selected {
-                                    let live = state.objects.get(binding.object);
-                                    if live.zone == Zone::Battlefield {
-                                        crate::engine::attempt_untap(state, binding.object);
-                                    }
-                                }
-                            }
+                            event::propose_and_commit_batch(&mut staged, events);
                         }
                         LibrarySearchDestinationV1::GraveyardV1 => {
                             for &binding in &selected {
@@ -15559,18 +15532,41 @@ fn drive_resumable_in_departure_scope_v1(
                                     )
                                 })
                                 .collect();
-                            event::propose_and_commit_batch(state, events);
-                            state
-                                .commit_library_shuffle(player, shuffle_token)
-                                .map_err(|error| error.to_string())?;
+                            event::propose_and_commit_batch(&mut staged, events);
+                        }
+                        LibrarySearchDestinationV1::LibraryTopAfterShuffle => {}
+                    }
+                    shuffle_after_search_move(state, &mut staged, player)?;
+                    match destination {
+                        LibrarySearchDestinationV1::BattlefieldTappedUntapWithFourLandsV1 => {
+                            // "Then if you control four or more lands, untap
+                            // that land." The land that was sacrificed as a
+                            // cost is already gone; the found land counts.
+                            let lands = staged.players[player.index()]
+                                .battlefield
+                                .iter()
+                                .filter(|&&object| {
+                                    staged.objects.get(object).controller == player
+                                        && crate::engine::object_has_type(
+                                            &staged,
+                                            object,
+                                            CardType::Land,
+                                        )
+                                })
+                                .count();
+                            if lands >= 4 {
+                                for binding in &selected {
+                                    let live = staged.objects.get(binding.object);
+                                    if live.zone == Zone::Battlefield {
+                                        crate::engine::attempt_untap(&mut staged, binding.object);
+                                    }
+                                }
+                            }
                         }
                         LibrarySearchDestinationV1::LibraryTopAfterShuffle => {
-                            state
-                                .commit_library_shuffle(player, shuffle_token)
-                                .map_err(|error| error.to_string())?;
                             if let Some(binding) = selected.first() {
-                                validate_effect_object_binding(state, *binding)?;
-                                let library = &mut state.players[player.index()].library;
+                                validate_effect_object_binding(&staged, *binding)?;
+                                let library = &mut staged.players[player.index()].library;
                                 let position = library
                                     .iter()
                                     .position(|id| *id == binding.object)
@@ -15579,11 +15575,13 @@ fn drive_resumable_in_departure_scope_v1(
                                 library.insert(0, card);
                                 // spellbench-public-reveal: public reveal to both players.
                                 for observer in [PlayerId::P0, PlayerId::P1] {
-                                    state.reveal_library_position(observer, player, 0);
+                                    staged.reveal_library_position(observer, player, 0);
                                 }
                             }
                         }
+                        _ => {}
                     }
+                    *state = staged;
                     if fiend_artisan_v1::selected(state, &continuation.resolving_item) {
                         fiend_artisan_v1::finish(state, &continuation.resolving_item);
                     }
@@ -15628,18 +15626,16 @@ fn drive_resumable_in_departure_scope_v1(
                         }
                         seen.push(binding.object);
                     }
-                    let shuffle_token = state
-                        .preflight_library_shuffle(player)
-                        .map_err(|error| error.to_string())?;
-                    commit_zone_change_batch(state, &selected, Zone::Hand, false)?;
+                    let mut staged = state.clone();
+                    commit_zone_change_batch(&mut staged, &selected, Zone::Hand, false)?;
                     let mut shown = Vec::new();
                     for binding in selected {
                         if filter.reveals_selected_card()
-                            && state.objects.get(binding.object).zone == Zone::Hand
+                            && staged.objects.get(binding.object).zone == Zone::Hand
                         {
                             // spellbench-public-reveal: hand card revealed by the card rules.
                             for observer in [PlayerId::P0, PlayerId::P1] {
-                                state
+                                staged
                                     .reveal_distinct_hand_card_with_meaning_v3(
                                         observer,
                                         player,
@@ -15648,19 +15644,18 @@ fn drive_resumable_in_departure_scope_v1(
                                     )
                                     .expect("a successful searched-card move is publicly revealed");
                             }
-                            if state.reveal_meaning_v3_enabled() {
+                            if staged.reveal_meaning_v3_enabled() {
                                 shown.push(binding.object);
                             }
                         }
                     }
-                    state.note_public_hand_reveal_group_v3(
+                    staged.note_public_hand_reveal_group_v3(
                         player,
                         shown,
                         crate::reveal_meaning_v3::RevealV3::SearchReveal,
                     );
-                    state
-                        .commit_library_shuffle(player, shuffle_token)
-                        .map_err(|error| error.to_string())?;
+                    shuffle_after_search_move(state, &mut staged, player)?;
+                    *state = staged;
                     #[cfg(feature = "eternal-fixtures")]
                     crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
