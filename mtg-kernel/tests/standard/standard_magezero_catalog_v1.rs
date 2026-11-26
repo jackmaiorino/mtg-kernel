@@ -602,7 +602,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 #[cfg(not(feature = "eternal-fixtures"))]
 fn standard_catalog_identity_is_frozen() {
     // Observed from the pinned native build, including the shared Aura fixture.
-    const EXPECTED_STANDARD_COMPLETION: u64 = 0xd237_d074_94e5_3952;
+    const EXPECTED_STANDARD_COMPLETION: u64 = 0xf020_df05_b602_58ed;
     assert_eq!(
         mtg_kernel::card_def::KERNEL_CARDDB_HASH,
         EXPECTED_STANDARD_COMPLETION,

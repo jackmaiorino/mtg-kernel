@@ -869,6 +869,8 @@ pub(crate) mod heartfire_v12;
 pub(crate) mod raid_entry_v21;
 mod raid_v9;
 mod soul_shackled_zombie_v13;
+#[cfg(all(test, feature = "eternal-fixtures"))]
+mod stack_size_cap_v1_tests;
 pub(crate) use soul_shackled_zombie_v13::context_for_akroma_v40 as akroma_zombie_context_v40;
 pub mod variable_cast_v1;
 #[cfg(test)]
@@ -5399,6 +5401,7 @@ pub struct RlEpisodeSessionV1 {
     episode_id: u64,
     max_physical_decisions: u64,
     max_policy_steps: u64,
+    max_stack_objects: Option<u32>,
     state: crate::state::GameState,
     surface: PolicySurfaceV5,
     environment_revision: u64,
@@ -5489,6 +5492,7 @@ pub struct FastActorSessionV1 {
     episode_id: u64,
     max_physical_decisions: u64,
     max_policy_steps: u64,
+    max_stack_objects: Option<u32>,
     state: crate::state::GameState,
     surface: PolicySurfaceV5,
     environment_revision: u64,
@@ -5649,6 +5653,7 @@ impl FastActorSessionV1 {
             episode_id: 0,
             max_physical_decisions: template.max_physical_decisions,
             max_policy_steps: template.max_policy_steps,
+            max_stack_objects: template.max_stack_objects,
             state,
             surface,
             environment_revision: 0,
@@ -5727,6 +5732,7 @@ impl RlEpisodeSessionV1 {
             episode_id: fast.episode_id,
             max_physical_decisions: fast.max_physical_decisions,
             max_policy_steps: fast.max_policy_steps,
+            max_stack_objects: fast.max_stack_objects,
             state: fast.state.clone(),
             surface,
             environment_revision: fast.environment_revision,
@@ -5998,7 +6004,7 @@ impl RlEpisodeSessionV1 {
     /// The existing catalog constructors and JSONL V5/V6 remain unchanged.
     /// Callers supply already resolved content identities; the engine still
     /// preflights both arrays before any shuffle or session construction.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn reset_with_custom_decks_v1(
         episode_id: u64,
         env_seed: u64,
@@ -6022,7 +6028,7 @@ impl RlEpisodeSessionV1 {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn reset_with_custom_decks_and_london_v1(
         episode_id: u64,
         env_seed: u64,
@@ -6052,7 +6058,7 @@ impl RlEpisodeSessionV1 {
     /// `reset_with_custom_decks_and_london_v1` with each seat's companion,
     /// put face up in exile before the game begins, and each seat's cards
     /// outside the game (`eternal_outside_game_v1`).
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn reset_with_custom_decks_companions_and_london_v1(
         episode_id: u64,
         env_seed: u64,
@@ -6085,12 +6091,48 @@ impl RlEpisodeSessionV1 {
     /// `reset_with_custom_decks_companions_and_london_v1`, optionally under
     /// the public shroud contract (Limited schema 5,
     /// `rl::enable_public_shroud_v1`).
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn reset_with_custom_decks_companions_london_and_shroud_v1(
         episode_id: u64,
         env_seed: u64,
         max_physical_decisions: u64,
         max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        card_ids: [&[u16]; 2],
+        companions: [Option<u16>; 2],
+        outside_the_game: Option<[Vec<u16>; 2]>,
+        priority_mode: crate::surface_v2::PriorityModeV1,
+        foundations_combat: bool,
+        london_mulligans: bool,
+        public_shroud: bool,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_custom_decks_companions_london_shroud_and_stack_cap_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            None,
+            deck_ids,
+            card_ids,
+            companions,
+            outside_the_game,
+            priority_mode,
+            foundations_combat,
+            london_mulligans,
+            public_shroud,
+        )
+    }
+
+    /// `reset_with_custom_decks_companions_london_and_shroud_v1` with an
+    /// optional session `max_stack_objects` cap applied from the initial
+    /// advance.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_with_custom_decks_companions_london_shroud_and_stack_cap_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        max_stack_objects: Option<u32>,
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
@@ -6152,6 +6194,7 @@ impl RlEpisodeSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects,
             state,
             surface: PolicySurfaceV5::new_with_priority_mode_v1(
                 priority_mode,
@@ -6388,6 +6431,7 @@ impl RlEpisodeSessionV1 {
             &mainboards,
             pair_environment_seed,
             starting_player,
+            None,
         )?;
         let mut session = RlEpisodeSessionV1 {
             deck_ids,
@@ -6395,6 +6439,7 @@ impl RlEpisodeSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects: None,
             state,
             surface: PolicySurfaceV5::new_for_session(),
             scan_menu: ScanMenuV1::LegalAnswersOnly,
@@ -6435,6 +6480,7 @@ impl RlEpisodeSessionV1 {
                 episode_id,
                 max_physical_decisions,
                 max_policy_steps,
+                max_stack_objects: None,
                 state,
                 surface: if suppression_audit_mode == SuppressionAuditMode::Off {
                     PolicySurfaceV5::new_for_session()
@@ -6498,6 +6544,82 @@ impl RlEpisodeSessionV1 {
 
     pub fn physical_decision_count(&self) -> u64 {
         self.physical_decision_count
+    }
+
+    /// Returns the number of items currently on the stack.
+    pub fn stack_objects(&self) -> u32 {
+        u32::try_from(self.state.stack.len()).expect("stack size fits in u32")
+    }
+
+    /// Returns the optional stack-size cap configured on this session.
+    pub fn max_stack_objects(&self) -> Option<u32> {
+        self.max_stack_objects
+    }
+
+    /// Configures the optional stack-size cap (`max_stack_objects`).
+    /// `None` removes the cap. When `Some(cap)` is given on a live
+    /// nonterminal session whose stack already exceeds `cap`, the pending
+    /// decision is immediately replaced by `StackSizeCapExceeded` naming the
+    /// first item beyond the cap (an existing terminal stands).
+    pub fn set_max_stack_objects(&mut self, max_stack_objects: Option<u32>) {
+        self.max_stack_objects = max_stack_objects;
+        self.enforce_stack_size_cap_on_current();
+    }
+
+    /// Builder-style form of [`Self::set_max_stack_objects`].
+    pub fn with_max_stack_objects(mut self, max_stack_objects: Option<u32>) -> Self {
+        self.set_max_stack_objects(max_stack_objects);
+        self
+    }
+
+    fn enforce_stack_size_cap_on_current(&mut self) {
+        if self.terminal.is_some() {
+            return;
+        }
+        let Some(cap) = self.max_stack_objects else {
+            return;
+        };
+        let Some(item) = self.state.stack.get(cap as usize) else {
+            return;
+        };
+        let source = item.source;
+        let mechanic = crate::engine::UnsupportedMechanic::StackSizeCapExceeded;
+        self.state.engine.halted = Some((mechanic, source));
+        let _ = self.surface.discard_unanswered_scan();
+        #[cfg(feature = "limited-fdn-fixtures")]
+        {
+            self.limited_trigger_order = None;
+        }
+        self.current = None;
+        self.terminal = Some(halted_terminal(
+            &self.deck_ids,
+            self.deck_hashes,
+            self.episode_id,
+            format!("engine_halted:{mechanic:?}:source:{}", source.0),
+            self.policy_step_count,
+            self.physical_decision_count,
+        ));
+    }
+
+    #[cfg(all(test, feature = "eternal-fixtures"))]
+    pub(crate) fn install_fixture_state_preserving_limits_for_test(
+        &mut self,
+        state: crate::state::GameState,
+        priority_mode: crate::surface_v2::PriorityModeV1,
+    ) {
+        self.state = state;
+        self.surface =
+            PolicySurfaceV5::new_with_priority_mode_v1(priority_mode, SuppressionAuditMode::Off);
+        self.environment_revision = 0;
+        self.policy_step_count = 0;
+        self.physical_decision_count = 0;
+        self.current = None;
+        self.terminal = None;
+        #[cfg(feature = "limited-fdn-fixtures")]
+        {
+            self.limited_trigger_order = None;
+        }
+        self.advance_to_decision_or_terminal();
     }
 
     pub fn diagnostic_state_hash(&self) -> u64 {
@@ -7028,8 +7150,11 @@ impl RlEpisodeSessionV1 {
             return;
         }
         let surfaced = match measure_optional(&mut profile, RlPhaseV1::Advance, || {
-            self.surface
-                .next_decision_owned(&mut self.state, self.environment_revision)
+            self.surface.next_decision_owned_with_stack_cap(
+                &mut self.state,
+                self.environment_revision,
+                self.max_stack_objects,
+            )
         }) {
             Ok(decision) => decision,
             Err(_) => {
@@ -7593,6 +7718,7 @@ impl FastActorSessionV1 {
             mainboards,
             Some(starting_player),
             windows,
+            None,
         )
     }
 
@@ -7614,9 +7740,12 @@ impl FastActorSessionV1 {
             mainboards,
             starting_player,
             [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+            None,
         )
     }
 
+    /// `deck_format` is the explicit decks' size rule only
+    /// (`resolve_explicit_decks`); None is the exact 60-card reset.
     #[allow(clippy::too_many_arguments)]
     fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
         episode_id: u64,
@@ -7627,11 +7756,13 @@ impl FastActorSessionV1 {
         mainboards: [Vec<u16>; 2],
         starting_player: Option<PlayerId>,
         windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
     ) -> Result<Self, RlSessionError> {
         let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
             starting_player,
+            deck_format,
         )?;
         let mut surface = PolicySurfaceV5::new_for_session();
         surface
@@ -7643,6 +7774,7 @@ impl FastActorSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects: None,
             state,
             surface,
             environment_revision: 0,
@@ -7719,6 +7851,7 @@ impl FastActorSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects: None,
             state,
             surface: PolicySurfaceV5::new_for_session(),
             environment_revision: 0,
@@ -7758,6 +7891,59 @@ impl FastActorSessionV1 {
             legal_action_count: u32::try_from(current.candidates.len())
                 .expect("fast actor candidate count was checked when bound"),
         })
+    }
+
+    /// Returns the number of items currently on the stack.
+    pub fn stack_objects(&self) -> u32 {
+        u32::try_from(self.state.stack.len()).expect("stack size fits in u32")
+    }
+
+    /// Returns the optional stack-size cap configured on this session.
+    pub fn max_stack_objects(&self) -> Option<u32> {
+        self.max_stack_objects
+    }
+
+    /// Configures the optional stack-size cap (`max_stack_objects`).
+    /// `None` removes the cap. When `Some(cap)` is given on a live
+    /// nonterminal session whose stack already exceeds `cap`, the pending
+    /// decision is immediately replaced by `StackSizeCapExceeded` naming the
+    /// first item beyond the cap (an existing terminal stands).
+    pub fn set_max_stack_objects(&mut self, max_stack_objects: Option<u32>) {
+        self.max_stack_objects = max_stack_objects;
+        self.enforce_stack_size_cap_on_current();
+    }
+
+    /// Builder-style form of [`Self::set_max_stack_objects`].
+    pub fn with_max_stack_objects(mut self, max_stack_objects: Option<u32>) -> Self {
+        self.set_max_stack_objects(max_stack_objects);
+        self
+    }
+
+    fn enforce_stack_size_cap_on_current(&mut self) {
+        if self.terminal.is_some() {
+            return;
+        }
+        let Some(cap) = self.max_stack_objects else {
+            return;
+        };
+        let Some(item) = self.state.stack.get(cap as usize) else {
+            return;
+        };
+        let source = item.source;
+        let mechanic = crate::engine::UnsupportedMechanic::StackSizeCapExceeded;
+        self.state.engine.halted = Some((mechanic, source));
+        let _ = self.surface.discard_unanswered_scan();
+        self.flat_action_cache_spare = None;
+        self.flat_action_cache_spare_v2 = None;
+        self.current = None;
+        self.terminal = Some(halted_terminal(
+            &self.deck_ids,
+            self.deck_hashes,
+            self.episode_id,
+            format!("engine_halted:{mechanic:?}:source:{}", source.0),
+            self.policy_step_count,
+            self.physical_decision_count,
+        ));
     }
 
     /// Crate-private immutable provenance needed to seed the native full-
@@ -10625,8 +10811,11 @@ impl FastActorSessionV1 {
         let surface_result = {
             #[cfg(test)]
             let _timing = test_timing_v1::span(test_timing_v1::Phase::NativeSurfaceAdvance);
-            self.surface
-                .next_decision_owned(&mut self.state, self.environment_revision)
+            self.surface.next_decision_owned_with_stack_cap(
+                &mut self.state,
+                self.environment_revision,
+                self.max_stack_objects,
+            )
         };
         let surfaced = match surface_result {
             Ok(decision) => decision,
@@ -12849,16 +13038,18 @@ fn supported_runtime_deck_ids() -> String {
         .join(", ")
 }
 
-fn resolve_explicit_decks(mainboards: &[Vec<u16>; 2]) -> Result<[Vec<u16>; 2], RlSessionError> {
+/// `deck_format` is the size rule (`sideboard::mainboard_size_error_v1`):
+/// None is exactly 60 cards; every other check is the same for every format.
+fn resolve_explicit_decks(
+    mainboards: &[Vec<u16>; 2],
+    deck_format: Option<crate::sideboard::DeckFormatV1>,
+) -> Result<[Vec<u16>; 2], RlSessionError> {
     for (seat, mainboard) in mainboards.iter().enumerate() {
-        if mainboard.len() != crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1 {
+        if let Some(rule) = crate::sideboard::mainboard_size_error_v1(deck_format, mainboard.len())
+        {
             return Err(session_error(
                 RlSessionErrorCode::UnsupportedDeck,
-                &format!(
-                    "explicit deck for seat {seat} must contain exactly {} cards, got {}",
-                    crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1,
-                    mainboard.len()
-                ),
+                &format!("explicit deck for seat {seat} {rule}"),
             ));
         }
         crate::card_def::preflight_fully_supported_deck(mainboard).map_err(|error| {
@@ -12902,8 +13093,9 @@ fn build_session_deck_pair_state_from_explicit_decks(
     mainboards: &[Vec<u16>; 2],
     pair_environment_seed: u64,
     starting_player: Option<PlayerId>,
+    deck_format: Option<crate::sideboard::DeckFormatV1>,
 ) -> Result<(SessionDeckHashesV1, crate::state::GameState), RlSessionError> {
-    let resolved = resolve_explicit_decks(mainboards)?;
+    let resolved = resolve_explicit_decks(mainboards, deck_format)?;
     let deck_hashes = [
         explicit_deck_hash_v1(&resolved[0]),
         explicit_deck_hash_v1(&resolved[1]),
@@ -13842,6 +14034,121 @@ mod tests {
         session.terminal = None;
         session.advance_to_decision_or_terminal();
         session
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn limited_cast_mode_accepts_finished_optional_targets() {
+        use crate::engine::CastMode;
+        use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::mana::ManaColor;
+        use crate::surface_v2::PriorityModeV1;
+
+        fn choose(
+            session: &mut RlEpisodeSessionV1,
+            matches_action: impl Fn(&ActionSemanticV1) -> bool,
+        ) {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected a Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| matches_action(&action.semantic))
+                .expect("expected action in the Limited menu");
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap();
+        }
+
+        let forest = card_id_by_name("Forest").unwrap();
+        let force = card_id_by_name("Force of Vigor").unwrap();
+        let elves = card_id_by_name("Llanowar Elves").unwrap();
+        let mut deck = [forest; 40];
+        deck[..2].copy_from_slice(&[force, elves]);
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            8192,
+            16384,
+            ["custom-test-p0".into(), "custom-test-p1".into()],
+            [&deck, &[forest; 40]],
+            PriorityModeV1::EngineWindowsV1,
+            true,
+        )
+        .unwrap();
+        session.state.step = Step::Main1;
+        session.state.active_player = PlayerId::P1;
+        session.state.priority_player = PlayerId::P0;
+        session.state.players[0].mana_pool[ManaColor::G.pool_index()] = 4;
+        let [spell, pitch] = [force, elves].map(|card_def| {
+            let player = &session.state.players[0];
+            let object = player
+                .hand
+                .iter()
+                .chain(&player.library)
+                .copied()
+                .find(|&id| session.state.objects.get(id).card_def == card_def)
+                .unwrap();
+            if session.state.objects.get(object).zone != Zone::Hand {
+                propose_and_commit(
+                    &mut session.state,
+                    ProposedEvent::zone_change(object, Zone::Hand),
+                );
+            }
+            object
+        });
+        let ring = add_battlefield_object(&mut session.state, PlayerId::P1, "Sol Ring");
+        add_battlefield_object(&mut session.state, PlayerId::P1, "Choke");
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        choose(&mut session, |action| {
+            matches!(action, ActionSemanticV1::CastSpell { source, .. }
+                if flat_ref_matches_object_v1(source, spell))
+        });
+
+        let targeting = session.snapshot_v5();
+        for selected_count in [0, 1] {
+            session.restore_v5(&targeting);
+            let mut targets = Vec::new();
+            if selected_count == 1 {
+                targets.push(Target::Object(ring));
+                choose(&mut session, |action| {
+                    matches!(action, ActionSemanticV1::ChooseTarget { target, .. }
+                        if flat_target_matches_v1(target, Target::Object(ring)))
+                });
+            }
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::FinishTargetSelection { selected_count: count, .. }
+                    if *count == selected_count)
+            });
+            let payment = session.snapshot_v5();
+            for mode in [CastMode::Normal, CastMode::Alternative] {
+                session.restore_v5(&payment);
+                choose(&mut session, |action| {
+                    matches!(action, ActionSemanticV1::ChooseCastMode { mode: offered, .. }
+                        if *offered == mode)
+                });
+                if mode == CastMode::Alternative {
+                    assert_eq!(session.state.objects.get(pitch).zone, Zone::Exile);
+                    assert_eq!(
+                        session.state.players[0].mana_pool[ManaColor::G.pool_index()],
+                        4
+                    );
+                } else {
+                    assert_eq!(session.state.players[0].mana_pool, [0; 6]);
+                    assert_eq!(session.state.objects.get(pitch).zone, Zone::Hand);
+                }
+                assert_eq!(session.state.objects.get(spell).zone, Zone::Stack);
+                assert_eq!(session.state.stack.last().unwrap().targets, targets);
+            }
+        }
     }
 
     #[cfg(feature = "limited-fdn-fixtures")]
@@ -18929,7 +19236,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause
         // as above. Old (wave-1) bytes: [0x45, 0x8c, 0xce, 0x40, 0xb7, 0x14,
         // 0x6d, 0x98, 0x81, 0x18, 0xc5, 0x49, 0x46, 0xeb, 0x92, 0x40]. New
         // value is this test's own live-computed commitment, read directly
@@ -18937,8 +19244,8 @@ mod tests {
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0x57, 0x66, 0x98, 0x62, 0x89, 0xda, 0x70, 0x3d, 0x25, 0xaf, 0x03, 0x20, 0x52, 0x38,
-                0x0c, 0xce,
+                0xeb, 0xa8, 0xdf, 0xae, 0x9d, 0xa5, 0x50, 0x42, 0xd1, 0xe9, 0xd3, 0x10, 0xb8, 0x56,
+                0x59, 0xbb,
             ]
         );
     }
@@ -18994,7 +19301,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
         // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
         // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Old (wave-1) v1
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)). Old (wave-1) v1
         // bytes: [0xc3, 0xa8, 0x8d, 0xde, 0xbc, 0xbc, 0xc3, 0xf3, 0xcb, 0xac,
         // 0x00, 0x74, 0xda, 0xcd, 0x75, 0x5f]. New value is this test's own
         // live-computed commitment, read directly from a failing run (never
@@ -19002,8 +19309,8 @@ mod tests {
         assert_eq!(
             v1,
             [
-                0xf8, 0xca, 0x13, 0xd1, 0xd2, 0x16, 0xb6, 0x5a, 0xd7, 0x4d, 0x38, 0xf7, 0x46, 0x0b,
-                0x59, 0x21,
+                0x70, 0xb7, 0x70, 0x60, 0xf3, 0x7b, 0x13, 0xab, 0xf8, 0x13, 0xa9, 0x46, 0xdd, 0xd4,
+                0x66, 0x5f,
             ]
         );
 
@@ -19039,7 +19346,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
         // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
         // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Old (wave-1)
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)). Old (wave-1)
         // bytes: [0xf4, 0x6a, 0x56, 0x15, 0x52, 0x37, 0x5e, 0xcf, 0xaa, 0x0b,
         // 0x8a, 0xbc, 0x76, 0xa4, 0xcd, 0x05]. New value is this test's own
         // live-computed commitment, read directly from a failing run (never
@@ -19047,8 +19354,8 @@ mod tests {
         assert_eq!(
             common_v2,
             [
-                0xd3, 0x9d, 0x49, 0xbd, 0xdb, 0x9a, 0xef, 0x4a, 0xb9, 0xfb, 0x0f, 0xec, 0xd0, 0x9b,
-                0x5e, 0x74,
+                0xad, 0x01, 0x7b, 0x22, 0x10, 0x6f, 0x50, 0xc8, 0x58, 0x35, 0xae, 0x50, 0xc6, 0xf6,
+                0xd8, 0x78,
             ]
         );
         assert_ne!(common_v2, v1);
@@ -19065,8 +19372,8 @@ mod tests {
         assert_eq!(
             commitment_v2(65_536),
             [
-                0x4f, 0x39, 0xd7, 0xa1, 0xaf, 0xbb, 0x29, 0x35, 0x2b, 0x44, 0x84, 0x9c, 0xf4, 0x20,
-                0xb1, 0xa8,
+                0x37, 0x02, 0x81, 0xa7, 0xe3, 0xe0, 0x64, 0x2a, 0x89, 0xd0, 0xa4, 0x6b, 0x3d, 0xc6,
+                0x69, 0xbb,
             ]
         );
     }
@@ -19710,7 +20017,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Per the cause key
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)). Per the cause key
         // above this table, only the two cause-A (policy) constants embed
         // KERNEL_CARDDB_HASH and move again; the two cause-B (core)
         // constants are `GameState::monarch`-shaped (wave 1 Task 11,
@@ -19735,7 +20042,7 @@ mod tests {
         eprintln!("current environment-v2 policy/core goldens: {v2_policy:#018x} {v2_full_core:#018x} {v2_fast_core:#018x}");
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0x2ad8_a53b_ecdc_221f,
+            0x2c09_127a_331b_5299,
             "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
@@ -19756,7 +20063,7 @@ mod tests {
         // Current merged-rule values observed in CI run 36812673206
         // (Linux job 110211057207); full and fast core paths agree exactly.
         assert_eq!(
-            v2_policy, 0x5c21_da67_5bad_fa2a,
+            v2_policy, 0x0c88_9c3d_6e6f_0b25,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
@@ -19958,7 +20265,8 @@ mod tests {
     fn resolve_explicit_decks_rejects_the_wrong_mainboard_size() {
         let mut mainboards = burn_and_rally_explicit_mainboards();
         mainboards[1].pop();
-        let error = resolve_explicit_decks(&mainboards).expect_err("59 cards must be rejected");
+        let error =
+            resolve_explicit_decks(&mainboards, None).expect_err("59 cards must be rejected");
         assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
         assert!(
             error.message.contains("seat 1") && error.message.contains("59"),
@@ -19967,11 +20275,155 @@ mod tests {
         );
     }
 
+    /// `deck_format` (`sideboard::DeckFormatV1`) changes the explicit decks'
+    /// size rule only: without it 40 cards are refused exactly as before;
+    /// with it 40 or more are admitted and 39 still refused; every other
+    /// check is unchanged.
+    #[test]
+    fn resolve_explicit_decks_deck_format_limited40_admits_forty_cards_only_with_the_format() {
+        let limited = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+        let full = burn_and_rally_explicit_mainboards();
+        let forty = full.clone().map(|mut deck| {
+            deck.truncate(40);
+            deck
+        });
+        let error = resolve_explicit_decks(&forty, None).expect_err("40 cards without the format");
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(
+            error
+                .message
+                .contains("explicit deck for seat 0 must contain exactly 60 cards, got 40"),
+            "{}",
+            error.message
+        );
+        assert_eq!(resolve_explicit_decks(&forty, limited).unwrap(), forty);
+        assert_eq!(resolve_explicit_decks(&full, limited).unwrap(), full);
+        assert_eq!(resolve_explicit_decks(&full, None).unwrap(), full);
+
+        let mut short = forty.clone();
+        short[1].pop();
+        let error = resolve_explicit_decks(&short, limited).expect_err("39 cards with the format");
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(
+            error.message.contains("seat 1") && error.message.contains("got 39"),
+            "{}",
+            error.message
+        );
+
+        let mut unknown = forty.clone();
+        unknown[0][0] = u16::MAX;
+        let error = resolve_explicit_decks(&unknown, limited).expect_err("unknown id");
+        assert!(
+            error.message.contains("full-support preflight"),
+            "{}",
+            error.message
+        );
+    }
+
+    /// The fast session's two deck-format resets (the trainer's plain and
+    /// London resets): 40-card decks are refused without the format and
+    /// reach a first decision with it; the pre-format entry points reach the
+    /// same session as the absent format. Those entry points now delegate to
+    /// the deck-format resets, so this checks their wiring at this head, not
+    /// the parent's behaviour (the node receipt compares with the parent).
+    #[test]
+    fn fast_session_deck_format_resets_admit_forty_card_decks_only_with_the_format() {
+        use crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2;
+        use crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned;
+        let limited = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+        let ids = || ["ExplicitBurn".to_owned(), "ExplicitRally".to_owned()];
+        // 40 cards spread evenly over each 60, so lands keep their share.
+        let forty = burn_and_rally_explicit_mainboards().map(|deck| {
+            (0..40)
+                .map(|i| deck[i * deck.len() / 40])
+                .collect::<Vec<u16>>()
+        });
+        let plain = |mainboards: [Vec<u16>; 2], format| {
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
+                1, 0x40_40, 10_000, 100_000, ids(), mainboards, PlayerId::P1, [HarnessV2; 2], format,
+            )
+        };
+        let london = |mainboards: [Vec<u16>; 2], format| {
+            FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
+                1,
+                0x40_40,
+                10_000,
+                100_000,
+                ids(),
+                mainboards,
+                PlayerId::P1,
+                [Learned; 2],
+                [HarnessV2; 2],
+                format,
+            )
+        };
+        for result in [plain(forty.clone(), None), london(forty.clone(), None)] {
+            let error = result.err().expect("40 cards without the format");
+            assert!(
+                error
+                    .message
+                    .contains("must contain exactly 60 cards, got 40"),
+                "{}",
+                error.message
+            );
+        }
+        for session in [
+            plain(forty.clone(), limited).unwrap(),
+            london(forty.clone(), limited).unwrap(),
+        ] {
+            assert!(matches!(
+                session.current_response(),
+                FastActorResponseV1::Decision(_)
+            ));
+            assert_eq!(
+                session.deck_hashes,
+                [
+                    explicit_deck_hash_v1(&forty[0]),
+                    explicit_deck_hash_v1(&forty[1])
+                ]
+            );
+        }
+        let mut short = forty.clone();
+        short[0].pop();
+        assert!(plain(short.clone(), limited).is_err());
+        assert!(london(short, limited).is_err());
+
+        // The pre-format entry point and the absent format: the same session
+        // (both run this head's implementation).
+        let full = burn_and_rally_explicit_mainboards();
+        let before =
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
+                1, 0x40_40, 10_000, 100_000, ids(), full.clone(), PlayerId::P1, [HarnessV2; 2],
+            )
+            .unwrap();
+        let absent = plain(full.clone(), None).unwrap();
+        assert_eq!(absent.current_response(), before.current_response());
+        assert_eq!(absent.game_state(), before.game_state());
+        let before_london = FastActorSessionV1::reset_pauper_london_windows_v1(
+            1,
+            0x40_40,
+            10_000,
+            100_000,
+            ids(),
+            full.clone(),
+            PlayerId::P1,
+            [Learned; 2],
+            [HarnessV2; 2],
+        )
+        .unwrap();
+        let absent_london = london(full, None).unwrap();
+        assert_eq!(
+            absent_london.current_response(),
+            before_london.current_response()
+        );
+        assert_eq!(absent_london.game_state(), before_london.game_state());
+    }
+
     #[test]
     fn resolve_explicit_decks_rejects_an_unsupported_card_id() {
         let mut mainboards = burn_and_rally_explicit_mainboards();
         mainboards[0][0] = u16::MAX;
-        let error = resolve_explicit_decks(&mainboards)
+        let error = resolve_explicit_decks(&mainboards, None)
             .expect_err("out-of-range card id must fail preflight");
         assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
         assert!(error.message.contains("seat 0"), "{}", error.message);
@@ -20187,7 +20639,7 @@ mod tests {
         // own re-pin comment.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0x2ad8_a53b_ecdc_221f
+            0x2c09_127a_331b_5299
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
@@ -20375,7 +20827,7 @@ mod tests {
         // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x5c21_da67_5bad_fa2a,
+            0x0c88_9c3d_6e6f_0b25,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
@@ -20423,7 +20875,7 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x5c21_da67_5bad_fa2a
+            0x0c88_9c3d_6e6f_0b25
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
@@ -20713,14 +21165,14 @@ mod tests {
     /// Re-captured again for the Phase 1 card lane merge (2026-09): merging
     /// lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
     /// branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
-    /// 0x064a_7c98_9255_ab3c), embedded in the same transcript. Old
+    /// 0x064a_..._ab3c (catalog v34)), embedded in the same transcript. Old
     /// (wave-1) value:
     /// "d0494851dbd7d944dab4cbca34e443ceedaf6a7269a0125cd1a7533c7b38f110". New
     /// value is this test's own live-computed digest, read directly from a
     /// failing run (never hand-typed).
     #[cfg(not(feature = "limited-fdn-fixtures"))]
     const V5_TRANSCRIPT_SHA256: &str =
-        "62208a3deec93510fe8595f23625d6cc4e604965d064350a2c1350955ac5266a";
+        "0fc9037c84941caed781c812749852d74186ae29adfaa6d7181cd701653fa2b2";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(

@@ -24,13 +24,14 @@
 //! - Shifting Woodland's copy is wave E7a's `become_copy`, ended at cleanup.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
-use crate::card_def::{CardDef, CardType, Keywords, TargetSpec, CARD_DEFS};
+use crate::card_def::{CardDef, CardType, CostComponent, Keywords, TargetSpec, CARD_DEFS};
 use crate::effect::{
     EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, PlayerRef,
 };
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
+use crate::mana::Cost;
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{
     AbilitySourceContractV4, GameState, ObjectLinkV4, StackItem, StackItemKind, Step, Target, Zone,
@@ -357,11 +358,196 @@ pub(crate) fn activation_allowed(
     name: &str,
     ability_index: usize,
 ) -> bool {
+    if name == AANGS_ICEBERG {
+        return iceberg_waterbend_payable(state, source, ability_index);
+    }
     if name != SHIFTING_WOODLAND || ability_index != 0 {
         return true;
     }
     let controller = state.objects.get(source).controller;
     crate::eternal_cards_v1::controller_has_delirium(controller, state)
+}
+
+// ---- Aang's Iceberg: waterbend payments -----------------------------------------------
+
+/// Aang's Iceberg's "Waterbend {3}".
+const ICEBERG_WATERBEND_GENERIC: u8 = 3;
+
+/// Whether `source` is an Aang's Iceberg and `components` is the cost of one
+/// of its own four printed waterbend abilities: the very cost slice of the
+/// definition (an activation passes its definition's `cost` through), so a
+/// granted ability, or any other cost an Iceberg pays, is priced as usual.
+fn iceberg_waterbend_components(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && definition(state, source).is_some_and(|def| {
+            def.name == AANGS_ICEBERG
+                && def
+                    .activated_abilities
+                    .iter()
+                    .any(|ability| std::ptr::eq(ability.cost, components))
+        })
+}
+
+/// The printed cost every one of the Iceberg's waterbend payments starts
+/// from, "Waterbend {3}", or `None` for every other ability. The engine's
+/// activation total (601.2f) adds the increases to it and takes the
+/// reductions off (Zirda, the Dawnwaker's floor included), as for Invasion
+/// Submersible (wave S1q); the recipe's split of {3} between taps and mana
+/// is not the total.
+pub(crate) fn waterbend_printed(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+) -> Option<Cost> {
+    iceberg_waterbend_components(state, source, components).then_some(Cost {
+        pips: &[],
+        generic: ICEBERG_WATERBEND_GENERIC,
+        x_count: 0,
+    })
+}
+
+/// The mana one of the Iceberg's waterbend payments still needs once its
+/// taps paid their part of `total` (601.2h). Other abilities keep `total`.
+pub(crate) fn waterbend_taps_paid(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+    total: Cost,
+) -> Cost {
+    if !iceberg_waterbend_components(state, source, components) {
+        return total;
+    }
+    Cost {
+        generic: total
+            .generic
+            .saturating_sub(iceberg_waterbend_taps(components)),
+        ..total
+    }
+}
+
+/// How many permanents an Iceberg waterbend payment may tap: the generic
+/// mana of the printed {3}, and never more than the total there is to pay,
+/// which the all-mana payment shows (Zirda's reduction to {1} leaves one).
+fn iceberg_waterbend_cap(state: &GameState, source: ObjectId) -> usize {
+    let total = state.objects.try_get(source).and_then(|live| {
+        let ability = CARD_DEFS[usize::from(live.card_def)]
+            .activated_abilities
+            .first()?;
+        crate::engine::activation_mana_payment(ability.cost, live.controller, source, state)
+    });
+    usize::from(total.map_or(ICEBERG_WATERBEND_GENERIC, |total| {
+        total.generic.min(ICEBERG_WATERBEND_GENERIC)
+    }))
+}
+
+/// How many artifacts and creatures one of the Iceberg's four waterbend
+/// payments taps to help: its `TapControlled` count, 0 for the all-mana one.
+fn iceberg_waterbend_taps(components: &[CostComponent]) -> u8 {
+    components
+        .iter()
+        .find_map(|component| match component {
+            CostComponent::TapControlled { count, .. } => Some(*count),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+/// Enforce the printed waterbend tap cap in both the activation menu and a
+/// restored pending payment. Granted abilities carry their own cost slices.
+pub(crate) fn waterbend_taps_within_cap(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+) -> bool {
+    !iceberg_waterbend_components(state, source, components)
+        || usize::from(iceberg_waterbend_taps(components)) <= iceberg_waterbend_cap(state, source)
+}
+
+/// The Iceberg's waterbend payment `ability_index` while `source` is an Aang's
+/// Iceberg on the battlefield: its controller, the cost slice of that printed
+/// ability, and the mana it still charges as the engine charges it (the
+/// printed {3} with its increases and reductions, less the taps).
+fn iceberg_waterbend_payment(
+    state: &GameState,
+    source: ObjectId,
+    ability_index: usize,
+) -> Option<(PlayerId, &'static [CostComponent], Cost)> {
+    let live = state.objects.try_get(source)?;
+    if live.zone != Zone::Battlefield || definition(state, source)?.name != AANGS_ICEBERG {
+        return None;
+    }
+    let ability = CARD_DEFS[usize::from(live.card_def)]
+        .activated_abilities
+        .get(ability_index)?;
+    let cost = crate::engine::activation_mana_payment(ability.cost, live.controller, source, state)
+        .unwrap_or_else(Cost::zero);
+    Some((live.controller, ability.cost, cost))
+}
+
+/// Aang's Iceberg's waterbend: a payment is offered only if it is within the
+/// tap cap and some choice of its taps leaves its mana part payable without
+/// the tapped permanents among the mana sources (Invasion Submersible's rule,
+/// wave S1q). Without it a payment whose only tappable artifact is also the
+/// mana it needs was offered and halted the engine at payment.
+fn iceberg_waterbend_payable(state: &GameState, source: ObjectId, ability_index: usize) -> bool {
+    let Some((controller, components, cost)) =
+        iceberg_waterbend_payment(state, source, ability_index)
+    else {
+        return true;
+    };
+    waterbend_taps_within_cap(state, source, components)
+        && crate::eternal_sideboard_s1q_v1::completion_exists(
+            state,
+            controller,
+            source,
+            &cost,
+            &[],
+            usize::from(iceberg_waterbend_taps(components)),
+        )
+}
+
+/// Keeps only the waterbend taps after which the rest of the Iceberg's pending
+/// waterbend payment can still be completed. The pending activation has
+/// already passed the same tap cap as the menu.
+pub(crate) fn retain_payable_waterbend_taps(
+    state: &GameState,
+    source: ObjectId,
+    already_chosen: &[EffectObjectBinding],
+    candidates: &mut Vec<EffectObjectBinding>,
+) {
+    if !cfg!(feature = "eternal-fixtures") {
+        return;
+    }
+    let Some(pending) = state
+        .engine
+        .pending_activation
+        .as_ref()
+        .filter(|pending| pending.source == source)
+    else {
+        return;
+    };
+    let Some((controller, components, cost)) =
+        iceberg_waterbend_payment(state, source, usize::from(pending.ability_index))
+    else {
+        return;
+    };
+    let taps = usize::from(iceberg_waterbend_taps(components));
+    let chosen: Vec<ObjectId> = already_chosen
+        .iter()
+        .map(|binding| binding.object)
+        .collect();
+    let more = taps.saturating_sub(chosen.len() + 1);
+    candidates.retain(|candidate| {
+        let mut with = chosen.clone();
+        with.push(candidate.object);
+        crate::eternal_sideboard_s1q_v1::completion_exists(
+            state, controller, source, &cost, &with, more,
+        )
+    });
 }
 
 /// Necromancy once its entry trigger has resolved: "it becomes an Aura". Read

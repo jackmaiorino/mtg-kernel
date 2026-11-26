@@ -59,11 +59,28 @@ RAM_FLOOR = GIB
 MAX_WALL = 6600
 POLL_SECONDS = 5
 CONTAINER = "mtg-pinned-release-build"
+IDENTIFIER = r"[A-Za-z0-9_][A-Za-z0-9_-]*"
+EXAMPLE_SPEC = re.compile(rf"{IDENTIFIER}(?::{IDENTIFIER}(?:,{IDENTIFIER})*)?")
 
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def validate_examples(examples):
+    require(not isinstance(examples, str), "expected a sequence of example specs")
+    specs = list(examples)
+    used = {"DONE", "SHA256SUMS", "native_expanded_training_run_v1", "checkpoint_container_v1"}
+    for spec in specs:
+        require(isinstance(spec, str) and EXAMPLE_SPEC.fullmatch(spec), "invalid example or feature name")
+        name, _, features = spec.partition(":")
+        require(name not in used, f"example output name already in use: {name}")
+        used.add(name)
+        if features:
+            names = features.split(",")
+            require(len(names) == len(set(names)), f"duplicate feature for example: {name}")
+    return specs
 
 
 def mount_path(path):
@@ -234,7 +251,8 @@ def remove_container(docker, env, log, receipt):
         container_command(docker, env, log, "rm", allow_missing=True)
 
 
-def run(root, source, wall):
+def run(root, source, wall, examples=()):
+    examples = validate_examples(examples)
     resources = Resources(root, wall)
     started = time.monotonic()
     daemon = builder = None
@@ -297,7 +315,7 @@ def run(root, source, wall):
                          "--env", "PINNED_TARGET_CPU=" + TARGET_CPU,
                          "--mount", f"type=bind,src={work},dst=/work",
                          "--mount", f"type=bind,src={helper},dst=/build.sh,readonly",
-                         "--entrypoint", "/bin/bash", IMAGE, "/build.sh", source, "/work/out"],
+                         "--entrypoint", "/bin/bash", IMAGE, "/build.sh", source, "/work/out", *examples],
                         root / "container.log", env)
         while builder.poll() is None:
             resources.check()
@@ -347,7 +365,7 @@ def run(root, source, wall):
                 cleanup_errors.append(f"owned swap verification: {exc}")
         receipt = {"schema": "pinned-release-hosted-build/v1", "pass": error is None and not cleanup_errors,
                    "source_commit": source, "image": IMAGE, "work_root": str(root), "output": str(root / "work/out"),
-                   "target_cpu": TARGET_CPU,
+                   "target_cpu": TARGET_CPU, "examples": examples,
                    "guard_sha256": guard_sha, "build_helper_sha256": helper_sha,
                    "limits": {"minimum_start_free_bytes": FREE_FLOOR + TOTAL_GROWTH, "free_floor_bytes": FREE_FLOOR,
                               "growth_bytes": TOTAL_GROWTH, "build_growth_bytes": GROWTH, "owned_swap_bytes": SWAP,
@@ -375,8 +393,15 @@ def main(argv=None):
     parser.add_argument("--work-root", required=True, type=Path)
     parser.add_argument("--source-commit", required=True, choices=list(SOURCES))
     parser.add_argument("--wall-seconds", type=int, default=MAX_WALL)
+    parser.add_argument("--examples", default="", help="space-separated name[:feature1,feature2] entries")
     args = parser.parse_args(argv)
+    if args.examples == "":
+        # The receipt pins both scripts by content. Execute the original pair for bin-only requests.
+        original = Path(__file__).with_name("bin-only") / "hosted.py"
+        os.execv(sys.executable, [sys.executable, "-B", str(original), "--work-root", str(args.work_root),
+                                 "--source-commit", args.source_commit, "--wall-seconds", str(args.wall_seconds)])
     try:
+        examples = validate_examples(args.examples.split(" "))
         require(0 < args.wall_seconds <= MAX_WALL, f"wall limit must be 1 to {MAX_WALL} seconds")
         require(sys.platform.startswith("linux") and platform.machine() == "x86_64" and os.geteuid() == 0,
                 "run the hosted guard as root on Linux x86-64")
@@ -385,7 +410,7 @@ def main(argv=None):
     except (OSError, ValueError) as exc:
         parser.exit(2, f"{exc}\n")
     signal.signal(signal.SIGTERM, interrupted)
-    receipt = run(args.work_root, args.source_commit, args.wall_seconds)
+    receipt = run(args.work_root, args.source_commit, args.wall_seconds, examples)
     print(json.dumps({"pass": receipt["pass"], "receipt": str(args.work_root / "guard.json"), "error": receipt["error"]}))
     return 0 if receipt["pass"] else 1
 

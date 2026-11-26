@@ -237,6 +237,10 @@ pub enum LimitedRequestV1 {
         env_seed: u64,
         max_physical_decisions: u64,
         max_policy_steps: u64,
+        /// Optional cap on the number of items on the stack when a decision is
+        /// exposed. Absent means no cap.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_stack_objects: Option<u32>,
         /// Each seat's cards outside the game (a best-of-three game's
         /// sideboard without a companion in use), which wish and learn
         /// effects read. They are absent from the public deck identity and
@@ -559,6 +563,7 @@ impl LimitedJsonlServerV1 {
                 env_seed,
                 max_physical_decisions,
                 max_policy_steps,
+                max_stack_objects,
                 outside_the_game,
                 ..
             } => {
@@ -591,11 +596,12 @@ impl LimitedJsonlServerV1 {
                 let deck_ids = [0, 1]
                     .map(|seat| content_identity_with_companion(&ids[seat], companions[seat]));
                 let session = if self.london_mulligans {
-                    RlEpisodeSessionV1::reset_with_custom_decks_companions_london_and_shroud_v1(
+                    RlEpisodeSessionV1::reset_with_custom_decks_companions_london_shroud_and_stack_cap_v1(
                         *episode_id,
                         *env_seed,
                         *max_physical_decisions,
                         *max_policy_steps,
+                        *max_stack_objects,
                         deck_ids,
                         [&ids[0], &ids[1]],
                         companions,
@@ -618,15 +624,20 @@ impl LimitedJsonlServerV1 {
                         "cards outside the game need the London mulligan schema",
                     );
                 } else {
-                    RlEpisodeSessionV1::reset_with_custom_decks_v1(
+                    RlEpisodeSessionV1::reset_with_custom_decks_companions_london_shroud_and_stack_cap_v1(
                         *episode_id,
                         *env_seed,
                         *max_physical_decisions,
                         *max_policy_steps,
+                        *max_stack_objects,
                         deck_ids,
                         [&ids[0], &ids[1]],
+                        [None, None],
+                        None,
                         self.priority_mode,
                         self.foundations_combat,
+                        false,
+                        false,
                     )
                 };
                 match session {
@@ -1527,5 +1538,394 @@ mod tests {
             first
         );
         assert_eq!(session.privileged_environment_hash(), after_hash);
+    }
+
+    #[test]
+    fn limited_reset_max_stack_objects_preserves_legacy_bytes_and_round_trips() {
+        let plain_deck = r#"{"cards":[{"name":"Plains","count":40}]}"#;
+        let companion_deck =
+            r#"{"cards":[{"name":"Plains","count":40}],"companion":"Kaheera, the Orphanguard"}"#;
+        let sideboard = r#","outside_the_game":[[{"name":"Forest","count":1}],[]]"#;
+
+        for schema in [
+            LIMITED_SCHEMA_V1,
+            LIMITED_ENGINE_PRIORITY_SCHEMA_V1,
+            LIMITED_FOUNDATIONS_COMBAT_SCHEMA_V1,
+            LIMITED_LONDON_MULLIGANS_SCHEMA_V1,
+            LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+        ] {
+            let forms = if schema >= LIMITED_LONDON_MULLIGANS_SCHEMA_V1 {
+                &[
+                    (plain_deck, ""),
+                    (plain_deck, sideboard),
+                    (companion_deck, ""),
+                    (companion_deck, sideboard),
+                ][..]
+            } else {
+                &[(plain_deck, "")][..]
+            };
+
+            for &(deck, outside_the_game) in forms {
+                let prefix = format!(
+                    concat!(
+                        r#"{{"request_type":"reset","schema_version":{schema},"request_id":"reset","#,
+                        r#""decks":[{deck},{plain_deck}],"episode_id":7,"env_seed":123,"#,
+                        r#""max_physical_decisions":4096,"max_policy_steps":4096"#
+                    ),
+                    schema = schema,
+                    deck = deck,
+                    plain_deck = plain_deck,
+                );
+                let legacy = format!("{prefix}{outside_the_game}}}");
+                let request: LimitedRequestV1 = serde_json::from_str(&legacy).unwrap();
+                assert!(matches!(
+                    request,
+                    LimitedRequestV1::Reset {
+                        max_stack_objects: None,
+                        ..
+                    }
+                ));
+                assert_eq!(serde_json::to_vec(&request).unwrap(), legacy.as_bytes());
+
+                let capped = format!(r#"{prefix},"max_stack_objects":16{outside_the_game}}}"#);
+                let request: LimitedRequestV1 = serde_json::from_str(&capped).unwrap();
+                assert!(matches!(
+                    request,
+                    LimitedRequestV1::Reset {
+                        max_stack_objects: Some(16),
+                        ..
+                    }
+                ));
+                assert_eq!(serde_json::to_vec(&request).unwrap(), capped.as_bytes());
+            }
+        }
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    fn zirda_monolith_stack_for_limited_jsonl(
+        items: usize,
+    ) -> (crate::state::GameState, crate::ids::ObjectId) {
+        use crate::engine::{Action, Decision};
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::state::{GameObject, GameState, ObjectStateV4, Step, Zone};
+
+        let plains = card_id_by_name("Plains").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[plains; 20],
+            &[plains; 20],
+            |id| CARD_DEFS[id as usize].object_name.into(),
+            0x5354_4143_4b01,
+        );
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.step = Step::Main1;
+        let put = |state: &mut GameState, name: &str| {
+            let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name}"));
+            let object = state.objects.push(GameObject {
+                card_def,
+                name: CARD_DEFS[card_def as usize].object_name.into(),
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Battlefield,
+                tapped: false,
+                summoning_sick: false,
+                damage: 0,
+                counters: Default::default(),
+                attachments: Vec::new(),
+                v4: ObjectStateV4::from_card_def(card_def),
+                spell_copy_origin: None,
+                plotted_turn: None,
+                zone_change_count: 0,
+            });
+            state.players[0].battlefield.push(object);
+            object
+        };
+        put(&mut state, "Zirda, the Dawnwaker");
+        let monolith = put(&mut state, "Basalt Monolith");
+        for _ in 0..items {
+            state.players[0].mana_pool[ManaColor::C.pool_index()] += 1;
+            match crate::engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass {
+                    activatable_abilities,
+                    ..
+                } => assert!(activatable_abilities.contains(&(monolith, 0))),
+                other => panic!("expected priority, got {other:?}"),
+            }
+            crate::engine::step(&mut state, Action::ActivateAbility(monolith, 0)).unwrap();
+        }
+        (state, monolith)
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn tear_asunder_with_only_enchantment_land_skips_kicker_in_limited_session() {
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::rl::ActionSemanticV1;
+        use crate::state::{Target, Zone};
+        use serde_json::json;
+
+        fn submit(server: &mut LimitedJsonlServerV1, select: impl Fn(&ActionSemanticV1) -> bool) {
+            let RlSessionResponseV1::Decision(decision) =
+                server.active.as_ref().unwrap().current_response()
+            else {
+                panic!("expected an active Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| select(&action.semantic))
+                .unwrap_or_else(|| panic!("unexpected menu: {:?}", decision.legal_actions));
+            let step = LimitedRequestV1::Step {
+                schema_version: LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+                request_id: format!("step-{}", decision.step),
+                episode_id: decision.episode_id,
+                expected_step: decision.step,
+                selected_index: action.selected_index,
+                selected_action_id: action.stable_id.clone(),
+            };
+            let reply: LimitedReplyV1 =
+                serde_json::from_str(&server.handle_line(&serde_json::to_string(&step).unwrap()))
+                    .unwrap();
+            assert!(
+                matches!(reply.body, LimitedReplyBodyV1::Decision { .. }),
+                "{:?}",
+                reply.body
+            );
+        }
+
+        let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+        let reset = json!({
+            "request_type": "reset",
+            "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+            "request_id": "reset",
+            "episode_id": 7,
+            "env_seed": 123,
+            "max_physical_decisions": 4096,
+            "max_policy_steps": 4096,
+            "decks": [
+                {"cards": [{"name": "Forest", "count": 40}]},
+                {"cards": [{"name": "Forest", "count": 40}]}
+            ]
+        });
+        let initial: LimitedReplyV1 =
+            serde_json::from_str(&server.handle_line(&reset.to_string())).unwrap();
+        assert!(matches!(initial.body, LimitedReplyBodyV1::Decision { .. }));
+
+        let mut state = ready_state();
+        let spell = put(&mut state, PlayerId::P0, "Tear Asunder", Zone::Hand);
+        let saga = put(&mut state, PlayerId::P1, "Urza's Saga", Zone::Battlefield);
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        server
+            .active
+            .as_mut()
+            .unwrap()
+            .install_fixture_state_preserving_limits_for_test(
+                state,
+                PriorityModeV1::EngineWindowsV1,
+            );
+
+        submit(&mut server, |action| {
+            matches!(action,
+                ActionSemanticV1::CastSpell { source, .. } if source.arena_id == spell.0
+            )
+        });
+        let session = server.active.as_ref().unwrap();
+        let before = session.current_response();
+        let snapshot = session.snapshot_v5();
+        let pick_target = |action: &ActionSemanticV1| {
+            matches!(action,
+                ActionSemanticV1::ChooseTarget { source, .. } if source.arena_id == spell.0
+            )
+        };
+        submit(&mut server, pick_target);
+        let session = server.active.as_mut().unwrap();
+        let after = session.current_response();
+        let after_hash = session.privileged_environment_hash();
+        let item = session.game_state().stack.last().unwrap();
+        assert!(!item.kicked);
+        assert_eq!(item.targets, vec![Target::Object(saga)]);
+        session.restore_v5(&snapshot);
+        assert_eq!(session.current_response(), before);
+        server.last_exchange = None;
+        submit(&mut server, pick_target);
+        let session = server.active.as_ref().unwrap();
+        assert_eq!(session.current_response(), after);
+        assert_eq!(session.privileged_environment_hash(), after_hash);
+        for _ in 0..2 {
+            submit(&mut server, |action| {
+                matches!(action, ActionSemanticV1::Pass { .. })
+            });
+        }
+        assert_eq!(
+            server
+                .active
+                .as_ref()
+                .unwrap()
+                .game_state()
+                .objects
+                .get(saga)
+                .zone,
+            Zone::Exile
+        );
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn limited_jsonl_server_omitted_max_stack_objects_never_halts_past_600_items() {
+        use crate::mana::ManaColor;
+        use crate::rl::ActionSemanticV1;
+        use serde_json::json;
+
+        let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+        let reset = json!({
+            "request_type": "reset",
+            "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+            "request_id": "reset",
+            "episode_id": 7,
+            "env_seed": 123,
+            "max_physical_decisions": 4096,
+            "max_policy_steps": 4096,
+            "decks": [
+                {"cards": [{"name": "Plains", "count": 40}]},
+                {"cards": [{"name": "Plains", "count": 40}]}
+            ]
+        });
+        let initial: LimitedReplyV1 =
+            serde_json::from_str(&server.handle_line(&reset.to_string())).unwrap();
+        assert!(matches!(initial.body, LimitedReplyBodyV1::Decision { .. }));
+
+        let (mut state, monolith) = zirda_monolith_stack_for_limited_jsonl(640);
+        state.players[0].mana_pool[ManaColor::C.pool_index()] += 1;
+        let session = server.active.as_mut().unwrap();
+        assert_eq!(session.max_stack_objects(), None);
+        session.install_fixture_state_preserving_limits_for_test(
+            state,
+            PriorityModeV1::EngineWindowsV1,
+        );
+        let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected uncapped decision at 640 stack items");
+        };
+        let action = decision
+            .legal_actions
+            .iter()
+            .find(|action| {
+                matches!(
+                    &action.semantic,
+                    ActionSemanticV1::ActivateAbility {
+                        source,
+                        ability_index: 0,
+                        ..
+                    } if source.arena_id == monolith.0
+                )
+            })
+            .expect("Basalt Monolith untap ability offered");
+        let step = json!({
+            "request_type": "step",
+            "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+            "request_id": "step-1",
+            "episode_id": decision.episode_id,
+            "expected_step": decision.step,
+            "selected_index": action.selected_index,
+            "selected_action_id": action.stable_id,
+        });
+        let reply: LimitedReplyV1 =
+            serde_json::from_str(&server.handle_line(&step.to_string())).unwrap();
+        assert!(matches!(reply.body, LimitedReplyBodyV1::Decision { .. }));
+        let active = server.active.as_ref().unwrap();
+        assert_eq!(active.game_state().stack.len(), 641);
+        assert_eq!(active.game_state().engine.halted, None);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn limited_jsonl_server_enforces_max_stack_objects_16_and_128() {
+        use crate::engine::UnsupportedMechanic;
+        use crate::mana::ManaColor;
+        use crate::rl::{ActionSemanticV1, TerminalClassificationV1, TerminalOutcomeV1};
+        use serde_json::json;
+
+        for cap in [16u32, 128u32] {
+            let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+            let reset = json!({
+                "request_type": "reset",
+                "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+                "request_id": "reset",
+                "episode_id": 7,
+                "env_seed": 123,
+                "max_physical_decisions": 4096,
+                "max_policy_steps": 4096,
+                "max_stack_objects": cap,
+                "decks": [
+                    {"cards": [{"name": "Plains", "count": 40}]},
+                    {"cards": [{"name": "Plains", "count": 40}]}
+                ]
+            });
+            let initial: LimitedReplyV1 =
+                serde_json::from_str(&server.handle_line(&reset.to_string())).unwrap();
+            assert!(matches!(initial.body, LimitedReplyBodyV1::Decision { .. }));
+
+            let (mut state, monolith) = zirda_monolith_stack_for_limited_jsonl(cap as usize);
+            state.players[0].mana_pool[ManaColor::C.pool_index()] += 1;
+            let session = server.active.as_mut().unwrap();
+            assert_eq!(session.max_stack_objects(), Some(cap));
+            session.install_fixture_state_preserving_limits_for_test(
+                state,
+                PriorityModeV1::EngineWindowsV1,
+            );
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected decision at exact cap {cap}");
+            };
+            assert_eq!(session.game_state().stack.len(), cap as usize);
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| {
+                    matches!(
+                        &action.semantic,
+                        ActionSemanticV1::ActivateAbility {
+                            source,
+                            ability_index: 0,
+                            ..
+                        } if source.arena_id == monolith.0
+                    )
+                })
+                .expect("Basalt Monolith untap ability offered");
+            let step = json!({
+                "request_type": "step",
+                "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+                "request_id": "step-1",
+                "episode_id": decision.episode_id,
+                "expected_step": decision.step,
+                "selected_index": action.selected_index,
+                "selected_action_id": action.stable_id,
+            });
+            let reply: LimitedReplyV1 =
+                serde_json::from_str(&server.handle_line(&step.to_string())).unwrap();
+            match reply.body {
+                LimitedReplyBodyV1::Terminal { terminal } => {
+                    assert_eq!(terminal.terminal_outcome, TerminalOutcomeV1::Halted);
+                    assert_eq!(
+                        terminal.terminal_classification,
+                        TerminalClassificationV1::Halted
+                    );
+                    assert_eq!(
+                        terminal.terminal_reason,
+                        format!("engine_halted:StackSizeCapExceeded:source:{}", monolith.0)
+                    );
+                }
+                other => panic!("expected terminal halt over cap {cap}, got {other:?}"),
+            }
+            let active = server.active.as_ref().unwrap();
+            assert_eq!(active.game_state().stack.len(), cap as usize + 1);
+            assert_eq!(
+                active.game_state().engine.halted,
+                Some((UnsupportedMechanic::StackSizeCapExceeded, monolith))
+            );
+        }
     }
 }

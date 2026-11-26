@@ -114,6 +114,20 @@ class PoolTests(unittest.TestCase):
             self.assertIn("Fixture Fenced Land", land_names)
             self.assertEqual(built["fenced"], [])
 
+    def test_wrapped_fence_record_matches_the_bare_list(self):
+        bare = json.loads((FIXTURES_DIR / "fence.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapped = Path(tmp) / "wrapped_fence.json"
+            wrapped.write_text(
+                json.dumps({"schema": "fence/v1", "cube_list": "fixture", "source": "test", "cards": bare}),
+                encoding="utf-8",
+            )
+            args = (FIXTURES_DIR / "cube_list.json", FIXTURES_DIR / "gaps.json", FIXTURES_DIR / "id_export.json")
+            from_bare = pool.build_pool_from_paths(*args, FIXTURES_DIR / "fence.json")
+            from_wrapped = pool.build_pool_from_paths(*args, wrapped)
+            for key in ("spells", "nonbasic_lands", "basics", "fenced"):
+                self.assertEqual(from_bare[key], from_wrapped[key])
+
     def test_refuses_fenced_name_not_in_cube_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             bad_fence = Path(tmp) / "bad_fence.json"
@@ -196,6 +210,338 @@ class PoolTests(unittest.TestCase):
             written = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertEqual(written["kernel_carddb_hash"], "1234567890abcdef")
             self.assertEqual(len(written["spells"]), 29)
+
+
+class LfOutputTests(unittest.TestCase):
+    """pool.py and deal.py write UTF-8 bytes with LF line endings on every OS (file and stdout)."""
+
+    def _run(self, script: str, args: list[str]) -> bytes:
+        proc = subprocess.run(
+            [sys.executable, str(CUBE_V1_DIR / script), *args],
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        return proc.stdout
+
+    def test_pool_and_deal_write_lf_bytes_to_file_and_stdout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            pool_args = [
+                "--cube-list",
+                str(FIXTURES_DIR / "cube_list.json"),
+                "--gaps",
+                str(FIXTURES_DIR / "gaps.json"),
+                "--id-export",
+                str(FIXTURES_DIR / "id_export.json"),
+                "--fence",
+                str(FIXTURES_DIR / "fence.json"),
+            ]
+            pool_file = tmp_path / "pool.json"
+            self.assertEqual(self._run("pool.py", pool_args + ["--out", str(pool_file)]), b"")
+            pool_stdout = self._run("pool.py", pool_args)
+            pool_bytes = pool_file.read_bytes()
+            for data in (pool_bytes, pool_stdout):
+                self.assertNotIn(b"\r", data)
+                self.assertIn(b"\n", data)
+                data.decode("utf-8")
+            self.assertEqual(pool_bytes, pool_stdout)
+
+            deal_args = [
+                "--pool",
+                str(pool_file),
+                "--constants",
+                str(FIXTURES_DIR / "constants.json"),
+                "--namespace",
+                "train",
+                "--run",
+                "lf",
+                "--update-start",
+                "0",
+                "--update-end",
+                "2",
+            ]
+            deal_file = tmp_path / "deal.json"
+            self.assertEqual(self._run("deal.py", deal_args + ["--out", str(deal_file)]), b"")
+            deal_stdout = self._run("deal.py", deal_args)
+            deal_bytes = deal_file.read_bytes()
+            for data in (deal_bytes, deal_stdout):
+                self.assertNotIn(b"\r", data)
+                self.assertIn(b"\n", data)
+                data.decode("utf-8")
+            self.assertEqual(deal_bytes, deal_stdout)
+
+
+class CanonicalDeckHashTests(unittest.TestCase):
+    def test_refuses_a_bare_string_for_a_deck_or_deck_list(self) -> None:
+        with self.assertRaises(ValueError):
+            deal.canonical_deck_text("Island")
+        with self.assertRaises(ValueError):
+            deal.canonical_decks_sha256("Island")
+
+    def test_canonical_text_is_sorted_name_count_lines_with_lf(self):
+        text = deal.canonical_deck_text(["Island", "Brainstorm", "Island", "Ancestral Recall"])
+        self.assertEqual(text, "Ancestral Recall 1\nBrainstorm 1\nIsland 2\n")
+
+    def test_hash_is_the_sha256_of_the_stated_text(self):
+        decks = [["Island", "Brainstorm", "Island"], ["Mountain", "Lightning Bolt"]]
+        expected_text = "Brainstorm 1\nIsland 2\n\nLightning Bolt 1\nMountain 1\n\n"
+        self.assertEqual(
+            deal.canonical_decks_sha256(decks),
+            hashlib.sha256(expected_text.encode("utf-8")).hexdigest(),
+        )
+        # Non-ASCII names hash as UTF-8.
+        self.assertEqual(
+            deal.canonical_decks_sha256([["Lim-Dûl's Vault"]]),
+            hashlib.sha256("Lim-Dûl's Vault 1\n\n".encode("utf-8")).hexdigest(),
+        )
+
+    def test_hash_ignores_card_order_and_file_formatting(self):
+        deck = ["Island", "Brainstorm", "Island", "Ancestral Recall", "Swamp"]
+        reference = deal.canonical_decks_sha256([deck])
+        self.assertEqual(deal.canonical_decks_sha256([list(reversed(deck))]), reference)
+        self.assertEqual(deal.canonical_decks_sha256([sorted(deck)]), reference)
+        # The same deck stored compact with LF, or indented with CRLF, hashes the same.
+        compact = json.dumps({"cards": deck}, separators=(",", ":")).encode("utf-8")
+        indented = json.dumps({"cards": deck, "pool_sha256": "f" * 64}, indent=4).replace("\n", "\r\n").encode("utf-8")
+        for raw in (compact, indented):
+            self.assertEqual(deal.canonical_decks_sha256([json.loads(raw.decode("utf-8"))["cards"]]), reference)
+
+    def test_hash_depends_on_counts_names_and_deck_order(self):
+        a = ["Island", "Brainstorm"]
+        b = ["Mountain", "Lightning Bolt"]
+        reference = deal.canonical_decks_sha256([a, b])
+        self.assertNotEqual(deal.canonical_decks_sha256([b, a]), reference)
+        self.assertNotEqual(deal.canonical_decks_sha256([a + ["Island"], b]), reference)
+        self.assertNotEqual(deal.canonical_decks_sha256([a + b]), reference)
+        self.assertNotEqual(deal.canonical_decks_sha256([a]), reference)
+
+    def test_refuses_empty_decks_and_bad_names(self):
+        with self.assertRaises(ValueError):
+            deal.canonical_decks_sha256([[]])
+        for bad in ("", "  ", "Island\n", "Is\r\nland", 7, None):
+            with self.assertRaises(ValueError):
+                deal.canonical_deck_text(["Island", bad])
+
+    def test_deck_ids_translate_to_names_through_the_pool(self):
+        pool_doc = pool.build_pool_from_paths(
+            FIXTURES_DIR / "cube_list.json",
+            FIXTURES_DIR / "gaps.json",
+            FIXTURES_DIR / "id_export.json",
+            FIXTURES_DIR / "fence.json",
+        )
+        names_by_id = deal.card_names_by_id(pool_doc)
+        schedule = deal.build_schedule(
+            pool_doc, _read_fixture("constants.json"), namespace="golden", run="hash", update_start=0, update_end=1
+        )
+        deck = schedule["iterations"][0]["episodes"][0]["episode"]["registered"][0]["mainboard"]
+        names = deal.deck_card_names(deck, names_by_id)
+        self.assertEqual(len(names), len(deck))
+        self.assertEqual(names, [names_by_id[cid] for cid in deck])
+        # Basic lands translate too.
+        basic_names = {card["name"] for card in pool_doc["basics"]}
+        self.assertTrue(basic_names & set(names))
+        with self.assertRaisesRegex(ValueError, "not in the pool"):
+            deal.deck_card_names([65535], names_by_id)
+
+
+class ReadBDealerTests(unittest.TestCase):
+    def setUp(self):
+        self.pool_doc = pool.build_pool_from_paths(
+            FIXTURES_DIR / "cube_list.json",
+            FIXTURES_DIR / "gaps.json",
+            FIXTURES_DIR / "id_export.json",
+            FIXTURES_DIR / "fence.json",
+        )
+        self.pool_state = deal.validate_pool(self.pool_doc)
+        self.constants = deal.validate_constants(_read_fixture("constants.json"))
+        self.basic_ids = set(self.pool_state["basic_id_by_color"].values())
+        self.spell_by_id = {c["card_id"]: c for c in self.pool_doc["spells"]}
+        self.land_ids = {c["card_id"] for c in self.pool_doc["nonbasic_lands"]}
+        # A drafted deck D: one dealt deck of the pair dealer stands in for a drafted deck.
+        deck_a, _ = deal.deal_pair(self.pool_state, self.constants, "fixture", "drafted", 0, 0)
+        self.drafted = list(deck_a["mainboard"])
+
+    def _nonbasic(self, ids):
+        return {cid for cid in ids if cid not in self.basic_ids}
+
+    def test_opponent_excludes_drafted_nonbasic_cards(self):
+        drafted_nonbasic = self._nonbasic(self.drafted)
+        self.assertTrue(drafted_nonbasic)
+        for index in range(40):
+            opponent = deal.deal_read_b_opponent(
+                self.pool_state, self.constants, self.drafted, "read-b", "r1", index
+            )["mainboard"]
+            self.assertFalse(self._nonbasic(opponent) & drafted_nonbasic, f"index {index}")
+            # Same constants as the pair dealer: deck size and composition.
+            self.assertEqual(len(opponent), self.constants["deck_size"])
+            self.assertEqual(sum(1 for c in opponent if c in self.spell_by_id), self.constants["nonland_spells"])
+            self.assertEqual(sum(1 for c in opponent if c in self.land_ids), self.constants["nonbasic_lands"])
+
+    def test_exclusion_binds_where_the_unexcluded_deal_would_overlap(self):
+        # With D holding only basics nothing is excluded; that deal's opponent O0 is then put in D.
+        # The new opponent for the same key must avoid every nonbasic card of O0.
+        basics_only = sorted(self.basic_ids)
+        o0 = deal.deal_read_b_opponent(self.pool_state, self.constants, basics_only, "read-b", "r1", 7)
+        o0_nonbasic = self._nonbasic(o0["mainboard"])
+        drafted = basics_only + sorted(o0_nonbasic)
+        o1 = deal.deal_read_b_opponent(self.pool_state, self.constants, drafted, "read-b", "r1", 7)
+        self.assertFalse(self._nonbasic(o1["mainboard"]) & o0_nonbasic)
+        # The colours are drawn before the exclusion applies, so they do not move.
+        self.assertEqual(o0["label"], o1["label"])
+
+    def test_refuses_a_drafted_deck_outside_the_pool_and_an_exhausted_pool(self):
+        with self.assertRaisesRegex(ValueError, "neither a card of the active pool nor a basic land"):
+            deal.build_read_b(self.pool_doc, self.constants, self.drafted + [410], "read-b", "r1", 0)
+        for bad in ([], "1,2", [1.5], [True]):
+            with self.assertRaises(ValueError):
+                deal.build_read_b(self.pool_doc, self.constants, bad, "read-b", "r1", 0)
+        with self.assertRaisesRegex(ValueError, "index"):
+            deal.build_read_b(self.pool_doc, self.constants, self.drafted, "read-b", "r1", -1)
+        everything = sorted(self.spell_by_id) + sorted(self.land_ids)
+        with self.assertRaisesRegex(ValueError, "only 0 remain"):
+            deal.build_read_b(self.pool_doc, self.constants, everything, "read-b", "r1", 0)
+
+    def test_deterministic_and_keyed_by_namespace_run_and_index(self):
+        first = deal.build_read_b(self.pool_doc, self.constants, self.drafted, "read-b", "r1", 3)
+        again = deal.build_read_b(
+            copy.deepcopy(self.pool_doc), dict(self.constants), list(reversed(self.drafted)), "read-b", "r1", 3
+        )
+        self.assertEqual(first, again)
+        self.assertEqual(deal.serialize_json(first), deal.serialize_json(again))
+        keys = [("read-b", "r1", i) for i in range(12)] + [("read-b", "r2", 3), ("golden", "r1", 3)]
+        opponents = {
+            tuple(deal.deal_read_b_opponent(self.pool_state, self.constants, self.drafted, *key)["mainboard"])
+            for key in keys
+        }
+        self.assertGreater(len(opponents), 1)
+
+    def test_four_games_two_on_the_play_two_on_the_draw_with_distinct_seeds(self):
+        doc = deal.build_read_b(self.pool_doc, self.constants, self.drafted, "read-b", "r1", 5)
+        self.assertEqual(doc["schema"], "cube_deal_read_b/v1")
+        self.assertEqual(len(doc["iterations"]), 1)
+        episodes = doc["iterations"][0]["episodes"]
+        self.assertEqual(len(episodes), 4)
+        drafted = doc["drafted_deck"]
+        opponent = doc["opponent_deck"]
+        self.assertEqual(drafted["mainboard"], sorted(self.drafted))
+        on_play = on_draw = 0
+        seeds = set()
+        ids = set()
+        for slot, entry in enumerate(episodes):
+            ep = entry["episode"]
+            self.assertEqual(entry["opponent"], {"kind": "current"})
+            self.assertEqual(ep["starting_player"], 0)
+            seat = ep["learner_seat"]
+            self.assertEqual(ep["registered"][seat], drafted)
+            self.assertEqual(ep["registered"][1 - seat], opponent)
+            self.assertEqual(ep["selected"], ep["registered"])
+            if seat == 0:
+                on_play += 1
+            else:
+                on_draw += 1
+            self.assertEqual(ep["seed"], deal.seed(["cube_deal_b_v1", "read-b", "r1", 5, slot]))
+            self.assertEqual(ep["id"], f"6:read-b/2:r1/b5/j{slot}/s{seat}")
+            seeds.add(ep["seed"])
+            ids.add(ep["id"])
+        self.assertEqual((on_play, on_draw), (2, 2))
+        self.assertEqual(len(seeds), 4)
+        self.assertEqual(len(ids), 4)
+        # The read (b) key prefix and seeds are distinct from the pair dealer's for the same strings.
+        schedule = deal.build_schedule(self.pool_doc, self.constants, "read-b", "r1", 5, 6)
+        pair_seeds = {e["episode"]["seed"] for e in schedule["iterations"][0]["episodes"]}
+        self.assertFalse(seeds & pair_seeds)
+
+    def test_base_config_stamping_follows_the_drafted_deck_seat(self):
+        base = {
+            "schema": "mtg-kernel-native-expanded-training-run/v1",
+            "iterations": [
+                {
+                    "episodes": [
+                        {
+                            "episode": {
+                                "learner_seat": 0,
+                                "max_physical_decisions": 16384,
+                                "max_policy_steps": 32768,
+                                "mulligan_modes": ["learned", "keep_seven"],
+                            }
+                        }
+                    ]
+                }
+            ],
+            "output_directory": "out/read-b",
+        }
+        stamped = deal.build_read_b(self.pool_doc, self.constants, self.drafted, "read-b", "r1", 1, base_config=base)
+        self.assertEqual(set(stamped), set(base))
+        self.assertEqual(stamped["output_directory"], "out/read-b")
+        for entry in stamped["iterations"][0]["episodes"]:
+            ep = entry["episode"]
+            self.assertEqual((ep["max_physical_decisions"], ep["max_policy_steps"]), (16384, 32768))
+            self.assertEqual(ep["mulligan_modes"][ep["learner_seat"]], "learned")
+            self.assertEqual(ep["registered"][ep["learner_seat"]]["mainboard"], sorted(self.drafted))
+
+    def test_cli_read_b_is_byte_deterministic_and_validates_flags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            pool_path = tmp_path / "pool.json"
+            pool_path.write_bytes(pool.serialize_json(self.pool_doc).encode("utf-8"))
+            deck_list = tmp_path / "deck_list.json"
+            deck_list.write_bytes(json.dumps(self.drafted).encode("utf-8"))
+            deck_obj = tmp_path / "deck_obj.json"
+            deck_obj.write_bytes(json.dumps({"label": "x", "mainboard": self.drafted}, indent=1).encode("utf-8"))
+            common = [
+                "--pool",
+                str(pool_path),
+                "--constants",
+                str(FIXTURES_DIR / "constants.json"),
+                "--namespace",
+                "read-b",
+                "--run",
+                "r1",
+                "--index",
+                "2",
+            ]
+            outputs = []
+            raw: list[bytes] = []
+            for deck_path, hash_seed in ((deck_list, "1"), (deck_list, "42"), (deck_obj, "7")):
+                env = os.environ.copy()
+                env["PYTHONHASHSEED"] = hash_seed
+                proc = subprocess.run(
+                    [sys.executable, str(CUBE_V1_DIR / "deal.py"), *common, "--read-b-deck", str(deck_path)],
+                    env=env,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+                self.assertNotIn(b"\r", proc.stdout)
+                raw.append(proc.stdout)
+                outputs.append(json.loads(proc.stdout.decode("utf-8")))
+            self.assertEqual(raw[0], raw[1])
+            # Deck file formatting changes only the recorded file hash.
+            strip = lambda d: {k: v for k, v in d.items() if k != "drafted_deck_sha256"}  # noqa: E731
+            self.assertEqual(strip(outputs[0]), strip(outputs[2]))
+            self.assertEqual(
+                strip(outputs[0]),
+                strip(deal.build_read_b(self.pool_doc, self.constants, self.drafted, "read-b", "r1", 2,
+                                        pool_sha256=outputs[0]["pool_sha256"],
+                                        constants_sha256=outputs[0]["constants_sha256"])),
+            )
+
+            without_index = common[:-2]
+            refused = [
+                # --read-b-deck without --index.
+                without_index + ["--read-b-deck", str(deck_list)],
+                # --read-b-deck with an update range.
+                common + ["--read-b-deck", str(deck_list), "--update-start", "0", "--update-end", "1"],
+                # --index without --read-b-deck.
+                common + ["--update-start", "0", "--update-end", "1"],
+                # Neither mode.
+                without_index,
+            ]
+            for args in refused:
+                with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+                    deal.main(args)
+                self.assertEqual(raised.exception.code, 2, args)
 
 
 class DealGuaranteeTests(unittest.TestCase):
@@ -430,7 +776,7 @@ class DealGuaranteeTests(unittest.TestCase):
                 "nonland_spells": 5,
                 "nonbasic_lands": 2,
                 "basic_split": "even_first_colour_extra",
-                "pairs_per_update": 3,
+                "pairs_per_update": 2,
             },
             {
                 "deck_size": 8,
@@ -438,7 +784,7 @@ class DealGuaranteeTests(unittest.TestCase):
                 "nonland_spells": 4,
                 "nonbasic_lands": 0,
                 "basic_split": "even_first_colour_extra",
-                "pairs_per_update": 3,
+                "pairs_per_update": 2,
             },
         ]
         for idx, constants in enumerate(configs):
@@ -618,6 +964,60 @@ class DealGuaranteeTests(unittest.TestCase):
                 # Seed matches tools/ex1/qual.py::seed bit for bit.
                 self.assertEqual(ep0["seed"], qual.seed(["train", "order-check", update, 2 * p]))
                 self.assertEqual(ep1["seed"], qual.seed(["train", "order-check", update, 2 * p + 1]))
+
+    def test_learner_holds_first_and_second_drawn_decks_equally(self):
+        pool_state = deal.validate_pool(self.pool_doc)
+        constants = deal.validate_constants(self.constants_doc)
+        update_start, update_end = 3, 8
+        schedule = deal.build_schedule(
+            self.pool_doc,
+            self.constants_doc,
+            namespace="train",
+            run="balance",
+            update_start=update_start,
+            update_end=update_end,
+        )
+        held = {"first": 0, "second": 0}
+        for offset, iteration in enumerate(schedule["iterations"]):
+            update = update_start + offset
+            episodes = iteration["episodes"]
+            for p in range(constants["pairs_per_update"]):
+                deck_a, deck_b = deal.deal_pair(pool_state, constants, "train", "balance", update, p)
+                self.assertNotEqual(deck_a, deck_b)
+                ep0 = episodes[2 * p]["episode"]
+                ep1 = episodes[2 * p + 1]["episode"]
+                learner0 = ep0["registered"][ep0["learner_seat"]]
+                learner1 = ep1["registered"][ep1["learner_seat"]]
+                # The learner holds one deck in both slots: deck_a in even pairs, deck_b in odd pairs.
+                self.assertEqual(learner0, learner1)
+                self.assertEqual(learner0, deck_a if p % 2 == 0 else deck_b)
+                held["first" if learner0 == deck_a else "second"] += 1
+                # The opponent holds the other deck in both slots.
+                self.assertEqual(ep0["registered"][1 - ep0["learner_seat"]], deck_b if p % 2 == 0 else deck_a)
+                self.assertEqual(ep1["registered"][1 - ep1["learner_seat"]], deck_b if p % 2 == 0 else deck_a)
+                # Seat 0 starts: each deck is on the play exactly once per pair.
+                self.assertEqual(ep0["starting_player"], 0)
+                self.assertEqual(ep1["starting_player"], 0)
+                on_play = [ep0["registered"][0], ep1["registered"][0]]
+                self.assertIn(deck_a, on_play)
+                self.assertIn(deck_b, on_play)
+        pairs = (update_end - update_start) * constants["pairs_per_update"]
+        self.assertEqual(held, {"first": pairs // 2, "second": pairs // 2})
+
+    def test_refuses_odd_pairs_per_update(self):
+        for odd in (1, 3, 59):
+            with self.assertRaisesRegex(ValueError, "pairs_per_update must be even"):
+                deal.validate_constants(dict(self.constants_doc, pairs_per_update=odd))
+        with self.assertRaisesRegex(ValueError, "pairs_per_update must be even"):
+            deal.build_schedule(
+                self.pool_doc,
+                dict(self.constants_doc, pairs_per_update=3),
+                namespace="train",
+                run="odd",
+                update_start=0,
+                update_end=1,
+            )
+        self.assertEqual(deal.validate_constants(dict(self.constants_doc, pairs_per_update=60))["pairs_per_update"], 60)
 
     def test_refuses_invalid_or_incomplete_constants(self):
         for key in deal.REQUIRED_CONSTANT_KEYS:
