@@ -126,6 +126,29 @@ pub(super) fn sd1_draw_v1(p: &[f64], u: f64) -> usize {
     p.len() - 1
 }
 
+/// The kind of the decision at `session` (the screen's panel rule, collab
+/// LANES/speed-lead/search-screen-exec-20261125 FILLS ruling G3): `pregame`
+/// for a London keep-or-mulligan announcement, a London bottom choice, and
+/// any other decision while the opening is pending or before turn 1;
+/// `game` for every other decision. Read from the engine's own action
+/// semantics and opening state.
+pub(super) fn sd1_decision_kind_v1(session: &FastActorSessionV1) -> Result<&'static str, String> {
+    use crate::rl::ActionSemanticV1;
+    let semantics = session
+        .diagnostic_current_action_semantics()
+        .ok_or("sd1 capture: no current decision to label")?;
+    let any = |f: fn(&ActionSemanticV1) -> bool| semantics.iter().any(f);
+    let pregame = any(|x| {
+        matches!(
+            x,
+            ActionSemanticV1::ChooseLondonMulligan { .. }
+                | ActionSemanticV1::ChooseLondonBottom { .. }
+        )
+    }) || session.pauper_london_pending_v1()
+        || session.game_state().turn < 1;
+    Ok(if pregame { "pregame" } else { "game" })
+}
+
 /// The coverage set (section 3.1), sorted.
 pub(super) fn sd1_coverage_v1(
     width: usize,
@@ -277,6 +300,54 @@ impl Ex1EpisodeHookV1 {
         if sd1.root_value {
             out["root_value"] = json!(f64::from(self.searcher.sd1_root_value_v1(session)?));
         }
+        // Present only when asked for, so existing records are unchanged.
+        if sd1.decision_kind {
+            out["features"]["decision_kind"] = json!(sd1_decision_kind_v1(session)?);
+        }
+        // Present only when asked for, so existing records are unchanged.
+        if let Some(hc) = &sd1.head_compare {
+            // The references' coverage with no arm picks: every action on a
+            // small menu, else the top `coverage_max` by p.
+            let (covered, full) =
+                sd1_coverage_v1(width, &p, &Default::default(), sd1.coverage_max as usize);
+            let key = crate::regret_census_v1::stage4a::HeadCompareKeyV1 {
+                worlds: hc.worlds,
+                seed: hc.seed,
+                hash,
+                step: d.step,
+            };
+            let head_a = self.head_a.as_mut().expect("head comparison head");
+            out["head_compare"] =
+                match crate::expanded_deck_training_v1::ordered_update_preparation::load_opponent_cached_v1(&hc.second_source, true)
+                {
+                    Err(e) => json!({"schema":crate::regret_census_v1::stage4a::HEAD_COMPARE_SCHEMA_V1,
+                        "status":"unmeasured","reason":format!("second head load: {e}"),
+                        "worlds":hc.worlds,"seed":hc.seed}),
+                    Ok((mut loaded, _)) => {
+                        let mut v = self.searcher.sd1_head_compare_v1(
+                            session,
+                            &covered,
+                            full,
+                            &key,
+                            rollout_policy,
+                            head_a,
+                            &mut loaded.policy,
+                        )?;
+                        v["width"] = json!(width);
+                        v["coverage_max"] = json!(sd1.coverage_max);
+                        v["heads"] = json!({
+                            "a":{"role":"collection source",
+                                "feature_contract_digest":head_a.model_feature_contract_digest_v1(),
+                                "training_math":format!("{:?}", head_a.training_math_v1())},
+                            "b":{"role":"second source","source":hc.second_source,
+                                "identity":loaded.behavior.identity,
+                                "feature_contract_digest":
+                                    loaded.policy.model_feature_contract_digest_v1(),
+                                "training_math":format!("{:?}", loaded.policy.training_math_v1())}});
+                        v
+                    }
+                };
+        }
         if sd1.half_rollouts == 0 {
             return Ok(out);
         }
@@ -403,6 +474,75 @@ mod tests {
             sd1_coverage_v1(4, &flat, &Default::default(), 2),
             (vec![0, 1], false)
         );
+    }
+
+    /// A London opening's announcements and bottoms are pregame, and the
+    /// first decision after both seats keep is in game.
+    #[test]
+    fn decision_kind_labels_london_pregame_and_in_game_decisions() {
+        use crate::rl::ActionSemanticV1;
+        use crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned;
+        let deck = |id: &str| {
+            crate::runtime_decks::runtime_deck_by_id(id)
+                .unwrap()
+                .card_ids
+                .to_vec()
+        };
+        let mut s = FastActorSessionV1::reset_pauper_london_v1(
+            7,
+            0x5eed_1a0d,
+            4096,
+            4096 * 128,
+            ["Burn".into(), "Elves".into()],
+            [deck("Burn"), deck("Elves")],
+            crate::ids::PlayerId::P0,
+            [Learned, Learned],
+        )
+        .unwrap();
+        let (mut mulligans, mut bottoms, mut mulliganed) = (0, 0, false);
+        loop {
+            let FastActorResponseV1::Decision(d) = s.current_response() else {
+                panic!("the game ended during the opening");
+            };
+            let semantics = s.diagnostic_current_action_semantics().unwrap();
+            let kind = sd1_decision_kind_v1(&s).unwrap();
+            let mulligan_row = semantics.iter().position(|x| {
+                matches!(
+                    x,
+                    ActionSemanticV1::ChooseLondonMulligan { mulligan: true, .. }
+                )
+            });
+            let keep_row = semantics.iter().position(|x| {
+                matches!(
+                    x,
+                    ActionSemanticV1::ChooseLondonMulligan {
+                        mulligan: false,
+                        ..
+                    }
+                )
+            });
+            let action = if let (Some(m), Some(k)) = (mulligan_row, keep_row) {
+                assert_eq!(kind, "pregame");
+                mulligans += 1;
+                // One mulligan, then keep: a bottom choice follows.
+                let a = if mulliganed { k } else { m };
+                mulliganed = true;
+                a
+            } else if semantics
+                .iter()
+                .any(|x| matches!(x, ActionSemanticV1::ChooseLondonBottom { .. }))
+            {
+                assert_eq!(kind, "pregame");
+                bottoms += 1;
+                0
+            } else {
+                assert!(!s.pauper_london_pending_v1());
+                assert_eq!(kind, "game");
+                break;
+            };
+            s.step(d.episode_id, d.step, action as u32).unwrap();
+        }
+        assert!(mulligans >= 2 && bottoms >= 1, "{mulligans} {bottoms}");
     }
 
     #[test]

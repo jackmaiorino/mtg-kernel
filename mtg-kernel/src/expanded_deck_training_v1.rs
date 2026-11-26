@@ -12028,6 +12028,8 @@ pub(crate) mod tests {
                             half_rollouts,
                             coverage_max: 16,
                             root_value: false,
+                            head_compare: None,
+                            decision_kind: false,
                         }),
                     }),
                 }),
@@ -12156,6 +12158,294 @@ pub(crate) mod tests {
             }
         }
         assert!(reached > 0, "no slot reached its placed decision");
+    }
+
+    /// A synthetic FlatV4 source on disk declaring `declared`'s digests, its
+    /// parameters changed by `mutate`.
+    fn synthetic_v4_source_v1(
+        dir: &std::path::Path,
+        declared: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+        mutate: impl FnOnce(&mut Vec<crate::native_policy_value_net_v1::NativeNamedParameterV1>),
+    ) -> ExpandedModelSourceV1 {
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &dir.join("source"),
+                crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+                mutate,
+            );
+        let descriptor_path = dir.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: declared.feature_contract_digest.into(),
+                expected_feature_encoding_digest: declared.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+            s_learner: None,
+            w_learner: None,
+        }
+    }
+
+    /// SD1 capture options with no 0b fields, from SD1's own JSON.
+    fn sd1_options_from_json_v1(run: &str, sd1: Value) -> ex1_collect_v1::Ex1CollectOptionsV1 {
+        serde_json::from_value(json!({"run":run,"update":0,"budget":600,
+            "w5":{"recipe":crate::w5_xact_v1::W5_XACT_VERSION_V1,"key_memo_mib":64,
+                "capture_0b":{"budgets":[],"search_seeds":[],"rollouts":0,"sd1":sd1}}}))
+        .unwrap()
+    }
+
+    /// The screen's head comparison (collab
+    /// LANES/lead/reviews/search-screen-20261125/DECLARATION-draft2.md
+    /// section 5, T5): a FlatV4 second source declared under the V7 digests
+    /// (the explicit V4-to-V7 transfer, as for b512) loads beside a V7
+    /// collection source; both heads read the same encoded observation at
+    /// every h0 (equal digests), the observer is the root player, the
+    /// coverage is the references' own, the comparison replays exactly, the
+    /// episode and every other capture field are unchanged by it, and a
+    /// second source that does not load records the comparison as unmeasured.
+    #[test]
+    fn sd1_head_compare_scores_a_v4_source_under_v7_digests_on_the_same_observation() {
+        use crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V7;
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("sd1-head-compare");
+        let frozen_source =
+            synthetic_v4_source_v1(&root.join("frozen"), FRESH_FEATURE_IDENTITY_V7, |_| {});
+        let second_source =
+            synthetic_v4_source_v1(&root.join("second"), FRESH_FEATURE_IDENTITY_V7, |ps| {
+                for p in ps.iter_mut() {
+                    for v in &mut p.values {
+                        *v *= 1.5;
+                    }
+                }
+            });
+        let (mut policy, identity) = load_expanded_inference_any_math_v1(&frozen_source).unwrap();
+        // The transferred model keeps its own (V4) contract; it encodes on
+        // the V7 path (shown below by the V4-declared head's mismatch).
+        assert_eq!(
+            policy.model_feature_contract_digest_v1(),
+            FEATURE_CONTRACT_DIGEST_V4
+        );
+        let learner = ExpandedSeatBehaviorV1 {
+            source: frozen_source.clone(),
+            identity,
+        };
+        let episode = fast_self_play_episode_v1("sd1-head-compare", 2_026_112_501, 0);
+        let plain = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        let compare = |second: &ExpandedModelSourceV1| {
+            sd1_options_from_json_v1(
+                "ss1-20261125/test",
+                json!({"version":ex1_collect_v1::SD1_CAPTURE_VERSION_V1,"arms":[],
+                    "half_rollouts":1,"coverage_max":16,"decision_kind":true,
+                    "head_compare":{"second_source":second,"worlds":2,"seed":20_261_125}}),
+            )
+        };
+        let full = compare(&second_source);
+        full.validate_v1().unwrap();
+        let without = sd1_options_from_json_v1(
+            "ss1-20261125/test",
+            json!({"version":ex1_collect_v1::SD1_CAPTURE_VERSION_V1,"arms":[],
+                "half_rollouts":1,"coverage_max":16}),
+        );
+        // The same second model declared under its own V4 digests (no
+        // transfer) encodes on the V4 path: every h0 is a digest mismatch.
+        let v4_source = ExpandedModelSourceV1 {
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+            },
+            ..second_source.clone()
+        };
+        let v4_declared = compare(&v4_source);
+        let mut broken_source = second_source.clone();
+        broken_source.play_import.sha256 = "0".repeat(64);
+        let broken = compare(&broken_source);
+        // Worlds outside 1..=64 are refused.
+        let mut zero = full.clone();
+        zero.w5
+            .as_mut()
+            .unwrap()
+            .capture_0b
+            .as_mut()
+            .unwrap()
+            .sd1
+            .as_mut()
+            .unwrap()
+            .head_compare
+            .as_mut()
+            .unwrap()
+            .worlds = 0;
+        assert!(zero.validate_v1().is_err());
+        let mut reached = 0;
+        for slot in 0..48_usize {
+            let run = |options: &ex1_collect_v1::Ex1CollectOptionsV1,
+                       policy: &mut FrozenPlayPolicyV1| {
+                let mut hook =
+                    ex1_collect_v1::Ex1EpisodeHookV1::new(options, policy, &episode, slot).unwrap();
+                let hooked =
+                    collect_episode_hooked_v1(policy, &learner, None, &episode, Some(&mut hook))
+                        .unwrap();
+                (hooked, hook.finish_v1(&episode, true))
+            };
+            let (hooked, record) = run(&full, &mut policy);
+            assert_eq!(
+                serde_json::to_vec(&plain).unwrap(),
+                serde_json::to_vec(&hooked).unwrap(),
+                "slot {slot}: the head comparison changed the episode"
+            );
+            let capture = record["capture_0b"].clone();
+            if capture["reached"] != true {
+                continue;
+            }
+            reached += 1;
+            // The explicit decision kind: a game without London has only
+            // in-game decisions.
+            assert_eq!(capture["features"]["decision_kind"], "game");
+            let hc = &capture["head_compare"];
+            assert_eq!(hc["status"], "ok", "{hc}");
+            assert_eq!(hc["worlds"], 2);
+            assert_eq!(hc["seed"], 20_261_125);
+            assert_eq!(hc["coverage_max"], 16);
+            assert_eq!(hc["width"], capture["width"]);
+            assert_eq!(
+                hc["schema"],
+                crate::regret_census_v1::stage4a::HEAD_COMPARE_SCHEMA_V1
+            );
+            // The references' coverage.
+            assert_eq!(hc["actions"], capture["references"]["actions"]);
+            assert_eq!(
+                hc["heads"]["b"]["feature_contract_digest"],
+                FEATURE_CONTRACT_DIGEST_V4
+            );
+            let checks = &hc["checks"];
+            assert_eq!(checks["digest_mismatch"], 0, "{checks}");
+            assert_eq!(checks["observer_not_root"], 0, "{checks}");
+            assert_eq!(checks["fault"], 0, "{checks}");
+            assert!(checks["h0"].as_u64().unwrap() > 0, "{checks}");
+            let root_heads = &hc["root"];
+            assert_eq!(root_heads["digests_equal"], true);
+            let mut differ = root_heads["a"]["value"] != root_heads["b"]["value"];
+            let actions = hc["actions"].as_array().unwrap();
+            let per_action = hc["per_action"].as_array().unwrap();
+            assert_eq!(per_action.len(), actions.len());
+            for (row, action) in per_action.iter().zip(actions) {
+                assert_eq!(&row["action"], action);
+                assert_eq!(row["worlds"].as_array().unwrap().len(), 2);
+                for (i, w) in row["worlds"].as_array().unwrap().iter().enumerate() {
+                    assert_eq!(w["w"], i as u64);
+                    if w["end"] == "h0" {
+                        assert_eq!(w["observer"], u64::from(episode.learner_seat));
+                        assert_eq!(w["observer_is_root"], true);
+                        assert_eq!(w["heads"]["digests_equal"], true);
+                        assert_eq!(w["heads"]["a"]["digest"], w["heads"]["b"]["digest"]);
+                        differ |= w["heads"]["a"]["value"] != w["heads"]["b"]["value"];
+                    }
+                }
+                if row["excluded"].as_object().unwrap().is_empty() {
+                    assert!(row["estimate_a"].is_f64() && row["estimate_b"].is_f64());
+                }
+            }
+            assert!(
+                differ,
+                "the two heads never differ: the second head was not read"
+            );
+            // Exact replay.
+            let (_, again) = run(&full, &mut policy);
+            assert_eq!(hc, &again["capture_0b"]["head_compare"]);
+            // Every other field is the capture without the comparison.
+            let (_, plain_capture) = run(&without, &mut policy);
+            assert!(plain_capture["capture_0b"]["features"]
+                .get("decision_kind")
+                .is_none());
+            let strip_new = |v: &Value| {
+                let mut v = v.clone();
+                v.as_object_mut().unwrap().remove("head_compare");
+                v["features"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("decision_kind");
+                v
+            };
+            assert_eq!(strip_new(&capture), plain_capture["capture_0b"]);
+            let (_, v4) = run(&v4_declared, &mut policy);
+            let v4 = &v4["capture_0b"]["head_compare"];
+            assert_eq!(v4["status"], "ok");
+            assert_eq!(v4["checks"]["digest_mismatch"], v4["checks"]["h0"]);
+            assert_eq!(v4["root"]["digests_equal"], false);
+            // A second source that does not load: unmeasured, with the
+            // reason, the episode and the rest of the capture unchanged.
+            let (hooked, bad) = run(&broken, &mut policy);
+            assert_eq!(
+                serde_json::to_vec(&plain).unwrap(),
+                serde_json::to_vec(&hooked).unwrap()
+            );
+            let bad = &bad["capture_0b"];
+            assert_eq!(bad["head_compare"]["status"], "unmeasured");
+            assert!(bad["head_compare"]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("second head load"));
+            assert_eq!(strip_new(bad), plain_capture["capture_0b"]);
+            if reached >= 1 {
+                break;
+            }
+        }
+        assert!(reached > 0, "no slot reached its placed decision");
+    }
+
+    /// `sd1_capture_without_head_compare_keeps_its_bytes`'s first reached slot
+    /// and capture digest, measured on origin/main ccadc6af (before the head
+    /// comparison).
+    const SD1_CAPTURE_FIXTURE_SLOT_V1: usize = 0;
+    const SD1_CAPTURE_FIXTURE_SHA256_V1: &str =
+        "3452692ac195cf136cde20cbb56a006132f9cf4c23201bdb0a005e6f84f57e70";
+
+    /// The head comparison changes no existing capture: the SD1 capture of a
+    /// fixture (rollout and value-leaf arms, both reference halves, the root
+    /// value) hashes, CPU and wall aside, to the value origin/main ccadc6af
+    /// produced before the comparison existed, and its options serialize to
+    /// the same bytes.
+    #[test]
+    fn sd1_capture_without_head_compare_keeps_its_bytes() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-capture", 2_026_110_202, 0);
+        let sd1 = json!({"version":ex1_collect_v1::SD1_CAPTURE_VERSION_V1,
+            "arms":[{"label":"D","world":"fresh","search_seeds":[0],"budget":600},
+                {"label":"FV","world":"fresh","search_seeds":[0,1],"budget":0,
+                 "value_leaf":{"horizon":"h0","sims":12},"flat_root":true}],
+            "half_rollouts":2,"coverage_max":16,"root_value":true});
+        let options = sd1_options_from_json_v1("sd1/panel", sd1.clone());
+        options.validate_v1().unwrap();
+        let round_trip = serde_json::to_value(&options).unwrap();
+        assert_eq!(round_trip["w5"]["capture_0b"]["sd1"], sd1);
+        let mut digest = None;
+        for slot in 0..48_usize {
+            let mut hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::new(&options, &policy, &episode, slot).unwrap();
+            collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
+                .unwrap();
+            let mut capture = hook.finish_v1(&episode, true)["capture_0b"].clone();
+            if capture["reached"] != true {
+                continue;
+            }
+            for a in capture["arms"].as_array_mut().unwrap() {
+                a.as_object_mut().unwrap().remove("cpu_s");
+                a["search"].as_object_mut().unwrap().remove("wall");
+            }
+            digest = Some((slot, sha(&serde_json::to_vec(&capture).unwrap())));
+            break;
+        }
+        assert_eq!(
+            digest,
+            Some((
+                SD1_CAPTURE_FIXTURE_SLOT_V1,
+                SD1_CAPTURE_FIXTURE_SHA256_V1.to_string()
+            ))
+        );
     }
 
     /// W5 Stage 2a capture: adding the value-leaf searches leaves the episode,

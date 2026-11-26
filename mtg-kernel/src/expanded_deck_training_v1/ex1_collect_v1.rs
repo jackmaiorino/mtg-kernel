@@ -132,6 +132,30 @@ pub struct Sd1CaptureOptionsV1 {
     /// Omitted: the record is unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub root_value: bool,
+    /// Opt-in: the paired head comparison at the placed decision (collab
+    /// LANES/lead/reviews/search-screen-20261125/DECLARATION-draft2.md
+    /// section 5), recorded as `head_compare`. Omitted: the record is
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_compare: Option<Sd1HeadCompareV1>,
+    /// Opt-in: label every captured state `features.decision_kind`,
+    /// `pregame` or `game` (`sd1_decision_kind_v1`), so a panel can exclude
+    /// pregame and mulligan decisions. Omitted: the record is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub decision_kind: bool,
+}
+
+/// The paired head comparison: the frozen checkpoint (the collection's own
+/// source) and `second_source` both score the h0 observation of `worlds`
+/// sampled worlds per covered action, seeded from `seed`
+/// (`regret_census_v1::stage4a::head_compare`). A second source that does
+/// not load records the comparison as unmeasured.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sd1HeadCompareV1 {
+    pub second_source: ExpandedModelSourceV1,
+    pub worlds: u64,
+    pub seed: u64,
 }
 
 /// One SD1 arm: a rollout search at `budget` raw selection transitions, or
@@ -173,6 +197,12 @@ impl Sd1CaptureOptionsV1 {
                 && (1..=64).contains(&self.coverage_max),
             "sd1 capture: at most 32 arms, 0 to 4096 rollouts per half, coverage 1 to 64",
         )?;
+        if let Some(hc) = &self.head_compare {
+            ensure(
+                (1..=64).contains(&hc.worlds),
+                "sd1 capture: head comparison with 1 to 64 worlds",
+            )?;
+        }
         let mut labels = std::collections::BTreeSet::new();
         for arm in &self.arms {
             ensure(
@@ -385,6 +415,9 @@ pub(super) struct Ex1EpisodeHookV1 {
     /// Stage 0b capture mode: its options, the rollout policy and the record.
     capture: Option<(W5CaptureOptionsV1, FrozenPlayPolicyV1)>,
     captured: Option<Value>,
+    /// SD1's head comparison: the frozen checkpoint's head (a fork of the
+    /// learner), present only when the capture asks for the comparison.
+    head_a: Option<FrozenPlayPolicyV1>,
 }
 
 impl Ex1EpisodeHookV1 {
@@ -460,6 +493,14 @@ impl Ex1EpisodeHookV1 {
                 .map(|capture| Ok::<_, String>((capture, learner.fork_for_collection_v3()?)))
                 .transpose()?,
             captured: None,
+            head_a: options
+                .w5
+                .as_ref()
+                .and_then(|w5| w5.capture_0b.as_ref())
+                .and_then(|capture| capture.sd1.as_ref())
+                .and_then(|sd1| sd1.head_compare.as_ref())
+                .map(|_| learner.fork_for_collection_v3())
+                .transpose()?,
         })
     }
 
