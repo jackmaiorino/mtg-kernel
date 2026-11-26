@@ -103,7 +103,10 @@ pub(crate) fn pending_division_life(state: &GameState, controller: PlayerId) -> 
     if pending.controller != controller || covenant_forced_x(pending, def).is_none() {
         return None;
     }
-    crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.spell, controller, state)
+    Some(
+        crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.spell, controller, state)
+            .unwrap_or(0),
+    )
 }
 
 const FIRE_COVENANT: &str = "Fire Covenant";

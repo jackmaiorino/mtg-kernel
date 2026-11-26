@@ -3183,4 +3183,513 @@ mod cast_x_routes {
         assert_eq!(zone(&state, ring), Zone::Battlefield);
         assert_eq!(state.players[0].battlefield.len(), 1);
     }
+
+    fn set_final_x(state: &mut GameState, spell: ObjectId, x: u16) {
+        let item = &mut state.stack.last_mut().unwrap().v4;
+        item.x_value = x;
+        item.source_contract
+            .as_mut()
+            .unwrap()
+            .finalized_cast_binding
+            .as_mut()
+            .unwrap()
+            .x_value = x;
+        state
+            .objects
+            .get_mut(spell)
+            .v4
+            .finalized_cast_binding
+            .as_mut()
+            .unwrap()
+            .x_value = x;
+    }
+
+    #[test]
+    fn forged_cast_life_x_rejects_earlier_or_mismatched_life_loss() {
+        let mut state = plains();
+        event::propose_and_commit(&mut state, ProposedEvent::life_loss(P0, 1));
+        let earlier_loss = state
+            .engine
+            .event_history
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    event::CommittedEvent::LifeLoss {
+                        player: P0,
+                        amount: 1
+                    }
+                )
+            })
+            .unwrap() as u64;
+        // Put an unrelated event between the earlier loss and this cast.
+        let dummy = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+        event::propose_and_commit(&mut state, ProposedEvent::tap(dummy));
+        let spell = free_exile(&mut state, "Toxic Deluge");
+        act(&mut state, Action::CastSpell(spell));
+        act(&mut state, Action::ChooseEffectOption(0));
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 19);
+
+        // Forgery A: cite earlier 1-life loss to claim X = 5.
+        let mut forged = restore(&state);
+        set_final_x(&mut forged, spell, 5);
+        let receipt = forged
+            .engine
+            .event_history
+            .iter_mut()
+            .find_map(|e| match e {
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    spell: s,
+                    amount,
+                    loss,
+                    ..
+                } if *s == spell => Some((amount, loss)),
+                _ => None,
+            })
+            .unwrap();
+        *receipt.0 = 5;
+        *receipt.1 = Some((earlier_loss, 1));
+        assert_refused(&forged, spell);
+
+        // Forgery B: cite earlier 1-life loss even with matching amount X = 1.
+        let mut forged = restore(&state);
+        set_final_x(&mut forged, spell, 1);
+        let receipt = forged
+            .engine
+            .event_history
+            .iter_mut()
+            .find_map(|e| match e {
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    spell: s,
+                    amount,
+                    loss,
+                    ..
+                } if *s == spell => Some((amount, loss)),
+                _ => None,
+            })
+            .unwrap();
+        *receipt.0 = 1;
+        *receipt.1 = Some((earlier_loss, 1));
+        assert_refused(&forged, spell);
+
+        // Forgery C: on a genuine X = 1 cast, inflate receipt amount to 5 while
+        // keeping the adjacent 1-life loss event.
+        let mut state_one = plains();
+        let spell_one = free_exile(&mut state_one, "Toxic Deluge");
+        act(&mut state_one, Action::CastSpell(spell_one));
+        act(&mut state_one, Action::ChooseEffectOption(1));
+        cast_finished(&mut state_one);
+        let mut forged = restore(&state_one);
+        set_final_x(&mut forged, spell_one, 5);
+        let receipt_amount = forged
+            .engine
+            .event_history
+            .iter_mut()
+            .find_map(|e| match e {
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    spell: s, amount, ..
+                } if *s == spell_one => Some(amount),
+                _ => None,
+            })
+            .unwrap();
+        *receipt_amount = 5;
+        assert_refused(&forged, spell_one);
+    }
+
+    #[test]
+    fn forged_cast_life_x_rejects_citadel_life_payment_reuse() {
+        let mut state = plains();
+        put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+        let spell = put(&mut state, P0, "Toxic Deluge", Zone::Library);
+        act(&mut state, Action::CastSpell(spell));
+        act(&mut state, Action::ChooseEffectOption(0));
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 17);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 0);
+
+        let receipt_at = state
+            .engine
+            .event_history
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    event::CommittedEvent::CastLifeXPaidV1 { spell: s, .. } if *s == spell
+                )
+            })
+            .unwrap();
+        let citadel_loss_at = state
+            .engine
+            .event_history
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    event::CommittedEvent::LifeLoss {
+                        player: P0,
+                        amount: 3
+                    }
+                )
+            })
+            .unwrap();
+        // Forgery A: point CastLifeXPaidV1 directly at Citadel's LifeLoss.
+        let mut forged = restore(&state);
+        set_final_x(&mut forged, spell, 3);
+        if let event::CommittedEvent::CastLifeXPaidV1 { amount, loss, .. } =
+            &mut forged.engine.event_history[receipt_at]
+        {
+            *amount = 3;
+            *loss = Some((citadel_loss_at as u64, 3));
+        }
+        assert_refused(&forged, spell);
+
+        assert_eq!(citadel_loss_at, receipt_at + 1);
+
+        // Forgery B: swap Citadel's LifeLoss ahead of CastLifeXPaidV1 so it sits
+        // at `at - 1`, leaving no distinct Citadel LifeLoss after the receipt.
+        let mut forged = restore(&state);
+        set_final_x(&mut forged, spell, 3);
+        let citadel_event = forged.engine.event_history[citadel_loss_at].clone();
+        let mut receipt_event = forged.engine.event_history[receipt_at].clone();
+        if let event::CommittedEvent::CastLifeXPaidV1 { amount, loss, .. } = &mut receipt_event {
+            *amount = 3;
+            *loss = Some((receipt_at as u64, 3));
+        }
+        forged.engine.event_history[receipt_at] = citadel_event;
+        forged.engine.event_history[citadel_loss_at] = receipt_event;
+        assert_refused(&forged, spell);
+    }
+
+    #[test]
+    fn forged_cast_life_x_rejects_reusing_already_spent_life_loss() {
+        let mut state = plains();
+        let wall = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let deluge = free_exile(&mut state, "Toxic Deluge");
+        let covenant = free_exile(&mut state, "Fire Covenant");
+        act(&mut state, Action::CastSpell(deluge));
+        act(&mut state, Action::ChooseEffectOption(3));
+        cast_finished(&mut state);
+        let spent_loss = state
+            .engine
+            .event_history
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    event::CommittedEvent::LifeLoss {
+                        player: P0,
+                        amount: 3
+                    }
+                )
+            })
+            .unwrap() as u64;
+
+        // Cast Fire Covenant in response with X = 0 (0 targets, 0 life).
+        act(&mut state, Action::CastSpell(covenant));
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 17);
+
+        let mut forged = restore(&state);
+        set_final_x(&mut forged, covenant, 3);
+        let contract =
+            mtg_kernel::state::StackTargetContractV4::capture(&forged, Target::Object(wall));
+        let top = forged.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(wall); 3];
+        top.v4.target_contracts = vec![contract; 3];
+        let receipt = forged
+            .engine
+            .event_history
+            .iter_mut()
+            .find_map(|e| match e {
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    spell: s,
+                    amount,
+                    loss,
+                    ..
+                } if *s == covenant => Some((amount, loss)),
+                _ => None,
+            })
+            .unwrap();
+        *receipt.0 = 3;
+        *receipt.1 = Some((spent_loss, 3));
+        assert_refused(&forged, covenant);
+    }
+
+    #[test]
+    fn forged_finalized_fire_covenant_rejects_targets_disagreeing_with_x() {
+        let mut state = plains();
+        let wall = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let spell = free_exile(&mut state, "Fire Covenant");
+        act(&mut state, Action::CastSpell(spell));
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 0);
+        assert!(state.stack.last().unwrap().targets.is_empty());
+
+        // Append targets to a finalized X = 0 Fire Covenant without changing X.
+        let mut forged = restore(&state);
+        let contract =
+            mtg_kernel::state::StackTargetContractV4::capture(&forged, Target::Object(wall));
+        let top = forged.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(wall); 3];
+        top.v4.target_contracts = vec![contract; 3];
+        assert_refused(&forged, spell);
+
+        // Also reject appending an extra target to a genuine X = 1 Fire Covenant.
+        let mut state_one = plains();
+        let wall_one = put(&mut state_one, P1, "Wall of Roots", Zone::Battlefield);
+        let spell_one = free_exile(&mut state_one, "Fire Covenant");
+        cast_picking(&mut state_one, spell_one, &[Target::Object(wall_one)]);
+        assert_eq!(state_one.stack.last().unwrap().v4.x_value, 1);
+        let mut forged = restore(&state_one);
+        let contract =
+            mtg_kernel::state::StackTargetContractV4::capture(&forged, Target::Object(wall_one));
+        let top = forged.stack.last_mut().unwrap();
+        top.targets.push(Target::Object(wall_one));
+        top.v4.target_contracts.push(contract);
+        assert_refused(&forged, spell_one);
+    }
+
+    #[test]
+    fn kozileks_command_under_citadel_and_free_exile_enforces_zero_x_targets() {
+        for citadel in [true, false] {
+            // Part A: Only an MV > 0 creature and a graveyard card exist.
+            let mut state = plains();
+            let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+            let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Graveyard);
+            let spell = if citadel {
+                put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+                put(&mut state, P0, "Kozilek's Command", Zone::Library)
+            } else {
+                free_exile(&mut state, "Kozilek's Command")
+            };
+            act(&mut state, Action::CastSpell(spell));
+            match next(&mut state) {
+                Decision::ChooseSpellMode { legal_modes, .. } => {
+                    // Modes 1, 3, and 5 require a creature with MV <= 0.
+                    assert_eq!(legal_modes, vec![0, 2, 4]);
+                }
+                other => panic!("expected mode choice, got {other:?}"),
+            }
+
+            // Forged PendingCast forcing Mode 1 targeting the MV 3 creature at X = 0.
+            let mut forged = restore(&state);
+            let p0_contract =
+                mtg_kernel::state::StackTargetContractV4::capture(&forged, Target::Player(P0));
+            let creature_contract = mtg_kernel::state::StackTargetContractV4::capture(
+                &forged,
+                Target::Object(fleshraker),
+            );
+            let pending = forged.engine.pending_cast.as_mut().unwrap();
+            pending.mode_chosen = Some(1);
+            pending.targets_chosen = vec![Target::Player(P0), Target::Object(fleshraker)];
+            pending.target_contracts = vec![p0_contract, creature_contract];
+            assert_refused(&forged, spell);
+
+            // Live unforged Mode 2 ("exile up to X graveyard cards"): after
+            // picking the player, no graveyard card may be offered at X = 0.
+            act(&mut state, Action::ChooseSpellMode(2));
+            choose_target(&mut state, Target::Player(P0));
+            match next(&mut state) {
+                Decision::ChooseTargets {
+                    legal_targets,
+                    can_finish,
+                    ..
+                } => {
+                    assert!(
+                        legal_targets.is_empty() && can_finish,
+                        "expected no graveyard target at forced X = 0, got {legal_targets:?}"
+                    );
+                    act(&mut state, Action::FinishEffectSelection);
+                }
+                other => panic!("expected empty optional graveyard target menu, got {other:?}"),
+            }
+            cast_finished(&mut state);
+            assert_eq!(state.stack.last().unwrap().v4.x_value, 0);
+            assert_eq!(
+                state.stack.last().unwrap().targets,
+                vec![Target::Player(P0)]
+            );
+            settled(&mut state);
+            assert_eq!(zone(&state, bolt), Zone::Graveyard);
+
+            // Part B: With an MV 0 creature alongside the MV 3 creature, creature
+            // modes are legal and offer ONLY the MV 0 creature.
+            let mut state = plains();
+            let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+            let ballista = put(&mut state, P1, "Walking Ballista", Zone::Battlefield);
+            state.objects.get_mut(ballista).counters.plus1_plus1 = 1;
+            let spell = if citadel {
+                put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+                put(&mut state, P0, "Kozilek's Command", Zone::Library)
+            } else {
+                free_exile(&mut state, "Kozilek's Command")
+            };
+            act(&mut state, Action::CastSpell(spell));
+            match next(&mut state) {
+                Decision::ChooseSpellMode { legal_modes, .. } => {
+                    assert_eq!(legal_modes, vec![0, 1, 2, 3, 4, 5]);
+                    act(&mut state, Action::ChooseSpellMode(1));
+                }
+                other => panic!("expected all six modes, got {other:?}"),
+            }
+            choose_target(&mut state, Target::Player(P0));
+            match next(&mut state) {
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert_eq!(legal_targets, vec![Target::Object(ballista)]);
+                    assert!(!legal_targets.contains(&Target::Object(fleshraker)));
+                    act(&mut state, Action::ChooseTarget(Target::Object(ballista)));
+                }
+                other => panic!("expected creature target choice, got {other:?}"),
+            }
+            cast_finished(&mut state);
+            settled(&mut state);
+            assert_eq!(zone(&state, ballista), Zone::Exile);
+            assert_eq!(zone(&state, fleshraker), Zone::Battlefield);
+        }
+    }
+
+    #[test]
+    fn forged_zero_x_targets_rejected_for_pest_infestation_and_dominate() {
+        // Pest Infestation under Bolas's Citadel: reject forged PendingCast AND
+        // forged finalized StackItem targeting Sol Ring at X = 0.
+        let mut state = plains();
+        put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+        let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+        let pest = put(&mut state, P0, "Pest Infestation", Zone::Library);
+        act(&mut state, Action::CastSpell(pest));
+        let _ = next(&mut state);
+
+        let mut forged_pending = restore(&state);
+        let ring_contract = mtg_kernel::state::StackTargetContractV4::capture(
+            &forged_pending,
+            Target::Object(ring),
+        );
+        let pending = forged_pending.engine.pending_cast.as_mut().unwrap();
+        pending.targets_chosen = vec![Target::Object(ring)];
+        pending.target_contracts = vec![ring_contract];
+        pending.target_selection_finished = true;
+        assert_refused(&forged_pending, pest);
+
+        // Finish legitimate X = 0 cast, then forge targets onto the stack item.
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        let mut forged_stack = restore(&state);
+        let ring_contract =
+            mtg_kernel::state::StackTargetContractV4::capture(&forged_stack, Target::Object(ring));
+        let top = forged_stack.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(ring)];
+        top.v4.target_contracts = vec![ring_contract];
+        assert_refused(&forged_stack, pest);
+
+        // Dominate (same X-bounded creature target path as Blue Sun's Twilight)
+        // under free exile: only MV 0 creatures are offered, and forging an
+        // MV > 0 target at X = 0 is rejected.
+        let mut state = plains();
+        let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+        let ballista = put(&mut state, P1, "Walking Ballista", Zone::Battlefield);
+        state.objects.get_mut(ballista).counters.plus1_plus1 = 1;
+        let dominate = free_exile(&mut state, "Dominate");
+        act(&mut state, Action::CastSpell(dominate));
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Object(ballista)]);
+            }
+            other => panic!("expected Dominate target choice, got {other:?}"),
+        }
+        let mut forged = restore(&state);
+        let fleshraker_contract =
+            mtg_kernel::state::StackTargetContractV4::capture(&forged, Target::Object(fleshraker));
+        let pending = forged.engine.pending_cast.as_mut().unwrap();
+        pending.targets_chosen = vec![Target::Object(fleshraker)];
+        pending.target_contracts = vec![fleshraker_contract];
+        assert_refused(&forged, dominate);
+    }
+
+    #[test]
+    fn citadel_life_x_rejects_when_life_is_below_route_cost() {
+        // Toxic Deluge (MV 3) under Bolas's Citadel: if life drops below 3,
+        // life_x_cap returns None rather than clamping to 0.
+        let mut state = plains();
+        state.players[0].life = 4;
+        put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+        let deluge = put(&mut state, P0, "Toxic Deluge", Zone::Library);
+        act(&mut state, Action::CastSpell(deluge));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        ));
+        // Forged PendingCast with X = 0 when life < route_cost (3) must be refused.
+        let mut forged = restore(&state);
+        forged.players[0].life = 2;
+        forged.engine.pending_cast.as_mut().unwrap().x_value = Some(0);
+        assert_refused(&forged, deluge);
+
+        // Unselected X with life < route_cost aborts the cast cleanly instead of
+        // paying life below 0.
+        let mut starved = restore(&state);
+        starved.players[0].life = 2;
+        let _ = engine::advance_until_decision(&mut starved);
+        assert!(starved.stack.is_empty());
+        assert_eq!(life(&starved, P0), 2);
+        assert_eq!(zone(&starved, deluge), Zone::Library);
+
+        // Fire Covenant (MV 3) under Bolas's Citadel: when life drops below 3,
+        // pending_division_life must NOT treat None as unlimited picks, and
+        // finishing with 0 picks must abort rather than drop life below 0.
+        let mut state = plains();
+        state.players[0].life = 4;
+        put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+        put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let covenant = put(&mut state, P0, "Fire Covenant", Zone::Library);
+        act(&mut state, Action::CastSpell(covenant));
+        let _ = next(&mut state);
+        let mut starved = restore(&state);
+        starved.players[0].life = 2;
+        if let Decision::ChooseTargets {
+            legal_targets,
+            can_finish: true,
+            ..
+        } = engine::advance_until_decision(&mut starved)
+        {
+            assert!(
+                legal_targets.is_empty(),
+                "starved Citadel Fire Covenant must not offer damage picks: {legal_targets:?}"
+            );
+            act(&mut starved, Action::FinishEffectSelection);
+            let _ = engine::advance_until_decision(&mut starved);
+        }
+        assert!(starved.stack.is_empty());
+        assert_eq!(life(&starved, P0), 2);
+        assert_eq!(zone(&starved, covenant), Zone::Library);
+    }
+
+    #[test]
+    fn vicious_rivalry_free_exile_pays_life_x_and_destroys_up_to_x() {
+        let mut state = plains();
+        let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+        let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+        let spell = free_exile(&mut state, "Vicious Rivalry");
+        assert!(castable(&mut state, spell));
+        act(&mut state, Action::CastSpell(spell));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 21,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(2));
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 18);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 2);
+        settled(&mut state);
+        assert_eq!(zone(&state, ring), Zone::Graveyard);
+        assert_eq!(zone(&state, fleshraker), Zone::Battlefield);
+    }
 }

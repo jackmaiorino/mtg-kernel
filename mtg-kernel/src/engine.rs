@@ -2452,12 +2452,39 @@ fn spell_copy_origin_chain(
     Ok(())
 }
 
+/// Checks that a committed life loss matches a positive nominal payment,
+/// accounting for Bloodletter of Aclazotz's opponent-turn doubling (CR 118.11).
+fn life_loss_matches_nominal(state: &GameState, player: PlayerId, lost: i32, nominal: i32) -> bool {
+    if nominal <= 0 || lost <= 0 {
+        return false;
+    }
+    if lost == nominal {
+        return true;
+    }
+    if !cfg!(feature = "standard-magezero-fixtures") || player == state.active_player {
+        return false;
+    }
+    let mut doubled = nominal;
+    while doubled < lost {
+        let next = doubled.saturating_mul(2);
+        if next == doubled {
+            return false;
+        }
+        doubled = next;
+    }
+    doubled == lost
+}
+
 /// The receipt identifies the nominal cost and the committed loss after
-/// replacements. Later life changes cannot authenticate a different cast.
+/// replacements (CR 118.11, 601.2h). It must sit immediately after its own
+/// life-loss event (when positive), immediately before any Bolas's Citadel
+/// life-loss event, and strictly inside this stack item's cast-publication
+/// window so unrelated, earlier, or Citadel life losses cannot authenticate X.
 fn validate_cast_life_x(
     state: &GameState,
     item: &StackItem,
     caster: PlayerId,
+    require_publication: bool,
 ) -> Result<(), String> {
     let history = &state.engine.event_history;
     let mut payments = history
@@ -2481,13 +2508,25 @@ fn validate_cast_life_x(
         None => amount == 0,
         Some((index, lost)) => {
             amount > 0
-                && index < at as u64
-                && usize::try_from(index)
-                    .ok()
-                    .and_then(|index| history.get(index))
+                && at > 0
+                && u64::try_from(at - 1).ok() == Some(index)
+                && history.get(at - 1)
                     == Some(&CommittedEvent::LifeLoss {
                         player,
                         amount: lost,
+                    })
+                && life_loss_matches_nominal(state, player, lost, i32::from(amount))
+                && !history
+                    .of_kinds_v2(&[EventKindV1::CastLifeXPaidV1])
+                    .any(|(other_at, event)| {
+                        other_at != at
+                            && matches!(
+                                event,
+                                CommittedEvent::CastLifeXPaidV1 {
+                                    loss: Some((other_index, _)),
+                                    ..
+                                } if *other_index == index
+                            )
                     })
         }
     };
@@ -2496,6 +2535,85 @@ fn validate_cast_life_x(
         || payments.next().is_some()
     {
         return Err("spell X disagrees with its additional life payment".into());
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    let citadel_mv = if crate::eternal_e5a_v1::permissions::citadel_cast(state, item.source, caster)
+    {
+        i32::from(object_mana_value(state, item.source))
+    } else {
+        0
+    };
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let citadel_mv = 0;
+    let tail_start = if citadel_mv > 0 {
+        let Some(CommittedEvent::LifeLoss {
+            player: citadel_player,
+            amount: citadel_lost,
+        }) = history.get(at + 1)
+        else {
+            return Err("Citadel life payment missing after additional life X receipt".into());
+        };
+        if *citadel_player != caster
+            || !life_loss_matches_nominal(state, caster, *citadel_lost, citadel_mv)
+        {
+            return Err("Citadel life payment disagrees with spell mana value".into());
+        }
+        at + 2
+    } else {
+        at + 1
+    };
+    let mut publications = history
+        .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
+        .filter_map(|(pub_at, event)| match event {
+            CommittedEvent::PublishedCastIdentityV1 { receipt }
+                if receipt.stack_item_id == item.v4.stack_item_id =>
+            {
+                Some((pub_at, receipt))
+            }
+            _ => None,
+        });
+    let tail_end = match publications.next() {
+        Some((pub_at, receipt)) => {
+            if publications.next().is_some()
+                || receipt.spell != item.source
+                || receipt.controller != caster
+                || history.get(pub_at + 1)
+                    != Some(&CommittedEvent::SpellCast {
+                        spell: item.source,
+                        controller: caster,
+                    })
+                || tail_start > pub_at
+            {
+                return Err("additional life payment lies outside this spell's cast window".into());
+            }
+            pub_at
+        }
+        None if !require_publication && tail_start <= history.len() => history.len(),
+        None => return Err("spell lost its cast publication identity".into()),
+    };
+    for event in history.range_v2(tail_start..tail_end) {
+        let own_publication_event = match event {
+            CommittedEvent::Targeted {
+                targeting_stack_item,
+                ..
+            }
+            | CommittedEvent::CrimeCommitted {
+                targeting_stack_item,
+                ..
+            } => *targeting_stack_item == item.v4.stack_item_id,
+            CommittedEvent::TinybonesV72 { journal } => matches!(
+                journal.as_ref(),
+                tinybones_v72::JournalV72::Paid { stack_item_id, .. }
+                    if *stack_item_id == item.v4.stack_item_id
+            ),
+            CommittedEvent::MandatoryCastPaymentV1 { item: paid, .. } => {
+                paid.v4.stack_item_id == item.v4.stack_item_id
+            }
+            _ => false,
+        };
+        if !own_publication_event {
+            return Err("unrelated event separates life X payment from cast publication".into());
+        }
     }
     Ok(())
 }
@@ -2509,6 +2627,7 @@ fn validate_physical_spell_cast_origin(
     item: &StackItem,
     contract: StackSourceContractV4,
     cast_method: CastMethodV4,
+    require_publication: bool,
 ) -> Result<(), String> {
     // Commandeer (eternal wave E7b) changes a spell's controller; its cast
     // route still belongs to the player who cast it.
@@ -2663,7 +2782,7 @@ fn validate_physical_spell_cast_origin(
         return Err("spell claims mana X under a fixed alternative cost".into());
     }
     if !is_pending_placeholder && x_cost == CastXCost::Life {
-        validate_cast_life_x(state, item, caster)?;
+        validate_cast_life_x(state, item, caster, require_publication)?;
     }
     let route_supports_method = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
@@ -2921,6 +3040,7 @@ fn validate_physical_spell_cast_origin(
             origin.origin_zone == Zone::Exile
                 && source.owner == caster
                 && cast_method == CastMethodV4::Plotted
+                && free_x_valid
                 && def.plot_cost.is_some()
                 && source.plotted_turn == Some(plotted_turn)
                 && plotted_turn < state.turn_key_v1()
@@ -2969,6 +3089,14 @@ fn validate_physical_spell_cast_origin(
 fn validate_spell_source_contract_fields(
     state: &GameState,
     item: &StackItem,
+) -> Result<(), String> {
+    validate_spell_source_contract_fields_inner(state, item, true)
+}
+
+fn validate_spell_source_contract_fields_inner(
+    state: &GameState,
+    item: &StackItem,
+    require_publication: bool,
 ) -> Result<(), String> {
     if item.kind != StackItemKind::Spell {
         if let Some(contract) = item.v4.source_contract {
@@ -3147,7 +3275,13 @@ fn validate_spell_source_contract_fields(
         if item.is_flashback != (cast_method == CastMethodV4::Flashback) {
             return Err("physical spell flashback flag disagrees with its cast method".to_string());
         }
-        validate_physical_spell_cast_origin(state, item, contract, cast_method)?;
+        validate_physical_spell_cast_origin(
+            state,
+            item,
+            contract,
+            cast_method,
+            require_publication,
+        )?;
     }
     Ok(())
 }
@@ -4147,7 +4281,15 @@ pub(crate) fn validate_spell_stack_source(
     state: &GameState,
     item: &StackItem,
 ) -> Result<(), String> {
-    validate_spell_source_contract_fields(state, item)?;
+    validate_spell_stack_source_inner(state, item, true)
+}
+
+fn validate_spell_stack_source_inner(
+    state: &GameState,
+    item: &StackItem,
+    require_publication: bool,
+) -> Result<(), String> {
+    validate_spell_source_contract_fields_inner(state, item, require_publication)?;
     if item.kind != StackItemKind::Spell {
         return Ok(());
     }
@@ -11547,6 +11689,21 @@ fn ordinary_next_cast_targets(
     } else {
         candidates
     };
+    // CR 107.3b, 601.2c: when mana X is already fixed (e.g., Bolas's Citadel
+    // or a free-cast route), reject any target whose minimum X exceeds it.
+    let candidates =
+        if let Some(fixed_x) = pending.selected_x_v59().filter(|_| def.cost.x_count > 0) {
+            candidates
+                .into_iter()
+                .filter(|&target| {
+                    let mut extended = chosen.to_vec();
+                    extended.push(target);
+                    u16::from(crate::standard_cards_v1::minimum_x(def, &extended, state)) <= fixed_x
+                })
+                .collect()
+        } else {
+            candidates
+        };
     if !normal_cast_cost_depends_on_targets(def) {
         return candidates;
     }
@@ -11566,6 +11723,39 @@ fn ordinary_next_cast_targets(
             )
         })
         .collect()
+}
+
+/// Whether `chosen` can reach `spec`'s minimum target count while keeping
+/// every step's `minimum_x` within a pre-fixed mana X (CR 107.3b, 601.2b-c).
+fn fixed_x_target_prefix_can_complete(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    spec: TargetSpec,
+    chosen: &[Target],
+    state: &GameState,
+) -> bool {
+    if def.cost.x_count == 0 {
+        return true;
+    }
+    let Some(fixed_x) = pending.selected_x_v59() else {
+        return true;
+    };
+    if u16::from(crate::standard_cards_v1::minimum_x(def, chosen, state)) > fixed_x {
+        return false;
+    }
+    let (min_targets, _) = cast_target_bounds(spec, pending.kicked == Some(true));
+    if chosen.len() >= min_targets {
+        return true;
+    }
+    let mut prefix = chosen.to_vec();
+    for target in ordinary_next_cast_targets(def, pending, spec, &prefix, state) {
+        prefix.push(target);
+        if fixed_x_target_prefix_can_complete(def, pending, spec, &prefix, state) {
+            return true;
+        }
+        prefix.pop();
+    }
+    false
 }
 
 /// Kaervek's Torch (Pauper field wave Pf1c): whether `pending` stays payable
@@ -12110,15 +12300,20 @@ fn viable_pending_spell_forms(
         modes.retain(|&mode| {
             let mut selected = pending.clone();
             selected.mode_chosen = Some(mode);
-            pending_cast_quote_v1(
-                def,
-                &selected,
-                CastMethodV4::Normal,
-                pending.kicked == Some(true),
-                0,
-                state,
-            )
-            .is_some()
+            let fixed_x_targets_ok =
+                selected_spell_target_spec(def, mode, pending.kicked == Some(true)).is_some_and(
+                    |spec| fixed_x_target_prefix_can_complete(def, &selected, spec, &[], state),
+                );
+            fixed_x_targets_ok
+                && pending_cast_quote_v1(
+                    def,
+                    &selected,
+                    CastMethodV4::Normal,
+                    pending.kicked == Some(true),
+                    0,
+                    state,
+                )
+                .is_some()
         });
     }
     modes.retain(|_| resolution_cast_v1::form_allowed(state, pending.spell, CastMethodV4::Normal));
@@ -12452,15 +12647,12 @@ fn free_cast_projection_quote(
 ) -> bool {
     let mut projected = state.clone();
     projected.engine.pending_cast = Some(pending.clone());
-    let x = if cfg!(feature = "eternal-fixtures")
-        && def.target_spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
-    {
-        u16::from(
-            crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&pending.targets_chosen),
-        )
-    } else {
-        kicker_min_x(def, kicked)
-    };
+    let x = u16::from(crate::standard_cards_v1::minimum_x(
+        def,
+        &pending.targets_chosen,
+        &projected,
+    ))
+    .max(kicker_min_x(def, kicked));
     pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, x, &projected).is_some()
 }
 
@@ -12609,7 +12801,8 @@ fn maximum_payable_x(
                     state,
                 )
             })
-            // Toxic Deluge: at most the life its caster has (wave S1b).
+            // Toxic Deluge / Fire Covenant / Vicious Rivalry: at most the life
+            // remaining after the route's own life payment (CR 118.9d, 119.4).
             .or_else(|| {
                 crate::eternal_sideboard_s1b_v1::life_x_cap(
                     def,
@@ -12617,8 +12810,12 @@ fn maximum_payable_x(
                     pending.controller,
                     state,
                 )
-            })
-            .unwrap_or(u8::MAX);
+            });
+    let cap = if crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
+        cap?
+    } else {
+        cap.unwrap_or(u8::MAX)
+    };
     // Serra Paragon: X-cost permanent spells cast from graveyard via Serra
     // Paragon must keep spell mana value <= 3 (Vintage Cube wave C9b).
     #[cfg(feature = "eternal-fixtures")]
@@ -18438,6 +18635,28 @@ pub(crate) fn validate_pending_cast(
                     return Err("pending cast carries an illegal target prefix".to_string());
                 }
                 prefix.push(target);
+                if let Some(x_value) = pending.selected_x_v59() {
+                    if u16::from(crate::standard_cards_v1::minimum_x(def, &prefix, state)) > x_value
+                    {
+                        return Err(
+                            "pending cast target requires a larger X than selected".to_string()
+                        );
+                    }
+                }
+            }
+            if def.cost.x_count > 0
+                && pending.selected_x_v59().is_some()
+                && !fixed_x_target_prefix_can_complete(
+                    def,
+                    pending,
+                    spec,
+                    &pending.targets_chosen,
+                    state,
+                )
+            {
+                return Err(
+                    "pending cast target selection cannot complete with its fixed X".to_string(),
+                );
             }
         }
         #[cfg(feature = "eternal-fixtures")]
@@ -18629,6 +18848,9 @@ pub(crate) fn validate_pending_cast(
             if pending.selected_x_v59() != Some(0) {
                 return Err("non-X cast carries a noncanonical X stage".to_string());
             }
+            if crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state) > 0 {
+                return Err("pending cast targets require X greater than zero".to_string());
+            }
         } else if cost.x_count > max_supported_x_symbols()
             || ((additional_x || kicker_x_active) && cost.x_count != 0)
         {
@@ -18638,6 +18860,14 @@ pub(crate) fn validate_pending_cast(
                 return Err("pending cast chose X before choosing kicker".to_string());
             }
         } else if let Some(x_value) = pending.selected_x_v59() {
+            if u16::from(crate::standard_cards_v1::minimum_x(
+                def,
+                &pending.targets_chosen,
+                state,
+            )) > x_value
+            {
+                return Err("pending cast chose X below its targets' minimum".to_string());
+            }
             if additional_x
                 && forced_cast_x(pending, def, state).is_some_and(|forced| forced != x_value)
             {
@@ -19122,6 +19352,13 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     state,
                 );
                 legal_completion
+                    && fixed_x_target_prefix_can_complete(
+                        def,
+                        &pending,
+                        spec,
+                        &pending.targets_chosen,
+                        state,
+                    )
                     && (!normal_cast_cost_depends_on_targets(def)
                         || cast_target_prefix_is_payable(
                             def,
@@ -19306,6 +19543,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             free_cast_projection_quote(def, &paying, kicked, state)
         };
         let free = !overload
+            && (CastXCost::of(def, kicked) != CastXCost::Mana
+                || crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state) == 0)
             && pending_cast_quote_v1(
                 def,
                 &pending,
@@ -21170,7 +21409,7 @@ fn log_final_targeting_events(
             matches.len()
         ));
     };
-    validated_stack_item_target_spec(item, state)?;
+    validated_stack_item_target_spec_inner(item, state, false)?;
     if item.targets.len() != item.v4.target_contracts.len() {
         return Err("final targeting vectors no longer have parallel contracts".to_string());
     }
@@ -22655,7 +22894,15 @@ pub(crate) fn validated_stack_item_target_spec(
     item: &StackItem,
     state: &GameState,
 ) -> Result<Option<TargetSpec>, String> {
-    validate_spell_stack_source(state, item)?;
+    validated_stack_item_target_spec_inner(item, state, true)
+}
+
+fn validated_stack_item_target_spec_inner(
+    item: &StackItem,
+    state: &GameState,
+    require_publication: bool,
+) -> Result<Option<TargetSpec>, String> {
+    validate_spell_stack_source_inner(state, item, require_publication)?;
     crate::lathril_receipts_v1::validate_live(state, item)?;
     if crate::event::lathril_item_selected_v1(state, item) {
         crate::event::validate_published_lathril_v1(state, item)?;
@@ -22897,6 +23144,33 @@ fn validated_stack_item_target_metadata(
     };
     if !cardinality_complete || item.v4.target_contracts.len() != item.targets.len() {
         return Err("stack target and contract cardinalities are malformed".to_string());
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if item.kind == StackItemKind::Spell {
+        // CR 107.3b, 601.2d, 601.2f: finalized X-bounded target counts cannot
+        // exceed (or, for Fire Covenant's life-per-damage division, differ from)
+        // the spell's announced X.
+        let x_cardinality_ok = match spec {
+            TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::C1cV1(
+                crate::eternal_cube_c1c_v1::targets::C1cTargetV1::CreaturePicksPerLifeV1,
+            )) => item.targets.len() == usize::from(item.v4.x_value),
+            TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::C1bV1(
+                crate::eternal_cube_c1b_v1::targets::C1bTargetV1::ArtifactsAndEnchantmentsV1,
+            )) => item.targets.len() <= usize::from(item.v4.x_value),
+            TargetSpec::StandardV1(
+                crate::standard_cards_v1::StandardTargetV1::PlayerThenGraveyardCardsV1
+                | crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+            ) => item.targets.len().saturating_sub(1) <= usize::from(item.v4.x_value),
+            spec if spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC => {
+                u16::from(
+                    crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&item.targets),
+                ) <= item.v4.x_value
+            }
+            _ => true,
+        };
+        if !x_cardinality_ok {
+            return Err("stack target count disagrees with announced X".to_string());
+        }
     }
     for (target_index, (&target, &contract)) in item
         .targets
@@ -33850,6 +34124,54 @@ fn finalize_owned_cast(
         u16::try_from(mana_spent).unwrap_or(u16::MAX),
         colored_mana_spent,
     );
+    // CR 601.2f-h: pay the nominal additional life cost and record its receipt
+    // directly before any Bolas's Citadel life payment so the two LifeLoss
+    // events can never alias. Life-loss replacements may change the committed
+    // loss (CR 118.11).
+    let stack_item_id = state
+        .stack
+        .last()
+        .expect("begin_cast pushed this spell's StackItem and nothing can push another item while a cast is pending")
+        .v4
+        .stack_item_id;
+    if CastXCost::of(def, was_kicked) == CastXCost::Life {
+        let loss = if x_value > 0 {
+            let start = state.engine.event_history.len();
+            event::propose_and_commit(
+                state,
+                ProposedEvent::life_payment(pending.controller, i32::from(x_value)),
+            );
+            Some(
+                state
+                    .engine
+                    .event_history
+                    .range_v2(start..)
+                    .iter()
+                    .enumerate()
+                    .find_map(|(offset, event)| match event {
+                        CommittedEvent::LifeLoss { player, amount }
+                            if *player == pending.controller =>
+                        {
+                            Some(((start + offset) as u64, *amount))
+                        }
+                        _ => None,
+                    })
+                    .ok_or("additional life payment did not commit")?,
+            )
+        } else {
+            None
+        };
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::CastLifeXPaidV1 {
+                spell: pending.spell,
+                stack_item: stack_item_id,
+                player: pending.controller,
+                amount: x_value,
+                loss,
+            });
+    }
     #[cfg(feature = "eternal-fixtures")]
     if cast_method != CastMethodV4::Omen
         || !crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
@@ -33985,47 +34307,7 @@ fn finalize_owned_cast(
     }
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);
-    let stack_item_id = item.v4.stack_item_id;
-    // CR 601.2f-h: pay the nominal additional cost before publishing the cast.
-    // Life-loss replacements may change the resulting loss (CR 118.11).
-    if CastXCost::of(def, was_kicked) == CastXCost::Life {
-        let loss = if x_value > 0 {
-            let start = state.engine.event_history.len();
-            event::propose_and_commit(
-                state,
-                ProposedEvent::life_payment(pending.controller, i32::from(x_value)),
-            );
-            Some(
-                state
-                    .engine
-                    .event_history
-                    .range_v2(start..)
-                    .iter()
-                    .enumerate()
-                    .find_map(|(offset, event)| match event {
-                        CommittedEvent::LifeLoss { player, amount }
-                            if *player == pending.controller =>
-                        {
-                            Some(((start + offset) as u64, *amount))
-                        }
-                        _ => None,
-                    })
-                    .ok_or("additional life payment did not commit")?,
-            )
-        } else {
-            None
-        };
-        state
-            .engine
-            .event_history
-            .push(CommittedEvent::CastLifeXPaidV1 {
-                spell: pending.spell,
-                stack_item: stack_item_id,
-                player: pending.controller,
-                amount: x_value,
-                loss,
-            });
-    }
+    debug_assert_eq!(item.v4.stack_item_id, stack_item_id);
     mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
     tinybones_v72::paid(state, finalized_source_contract, stack_item_id);
     // Targeting validation re-authenticates a targeted spell's Storm
