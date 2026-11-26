@@ -232,6 +232,11 @@ impl PilotSchedule {
 }
 
 pub trait PilotProvider {
+    /// A launcher can supervise the same uniform policy in a worker process.
+    fn uniform_pilot(&self) -> Arc<dyn GamePilot + Sync> {
+        Arc::new(UniformPilot)
+    }
+
     fn load_checkpoint(
         &self,
         pin: &PilotPin,
@@ -323,9 +328,19 @@ struct BoundaryRecord {
     checkpoint: Checkpoint,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpenIntent {
+    #[default]
+    Run,
+    PrepareFresh,
+    ReadCompletedBuilder,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunConfig {
+    #[serde(skip)]
+    pub open_intent: OpenIntent,
     #[serde(skip)]
     pub root: PathBuf,
     pub schema: String,
@@ -348,6 +363,17 @@ pub struct RunConfig {
     #[serde(default)]
     pub tripwire_window_games: Vec<u64>,
     pub pins: PodPins,
+    /// Immutable launcher input identities which have no field in the pod wire format.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub launch_pins: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_prefix_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_profile: Option<String>,
     pub metadata: CheckpointMetadata,
     pub caps: crate::cube_pod_runner_v1::PodCaps,
     pub workers: usize,
@@ -357,9 +383,54 @@ pub struct RunConfig {
 }
 
 impl RunConfig {
+    /// Read-only launcher preflight. The open intent is rechecked under runner.lock.
+    pub fn preflight_open(&self) -> Result<(), TrainingDriverError> {
+        self.check_open_intent(false)
+    }
+    /// A prepare never recovers, consumes a resume entry or records a death.
+    fn check_open_intent(&self, locked: bool) -> Result<(), TrainingDriverError> {
+        match self.open_intent {
+            OpenIntent::PrepareFresh if self.root.try_exists()? => {
+                for entry in fs::read_dir(&self.root)? {
+                    if !locked || entry?.file_name() != "runner.lock" {
+                        return Err(invalid("prepare requires a fresh segment directory"));
+                    }
+                }
+            }
+            OpenIntent::ReadCompletedBuilder => {
+                if !self.root.join("run.json").is_file()
+                    || !self.root.join("runner.lock").is_file()
+                    || self.root.join("runner-active.json").try_exists()?
+                    || !update_directories(&self.root.join("pending"))?.is_empty()
+                {
+                    return Err(invalid("builder is missing, active or interrupted"));
+                }
+                check_stop_ledger(&self.root)?;
+                // D6 validates every commit once the clean predecessor is open.
+                let end = self
+                    .total_updates()
+                    .checked_sub(1)
+                    .ok_or_else(|| invalid("empty builder segment"))?;
+                if !self
+                    .root
+                    .join("updates")
+                    .join(update_name(end))
+                    .join("commit.json")
+                    .is_file()
+                {
+                    return Err(invalid(
+                        "the pick phase requires a completed builder segment",
+                    ));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
     pub fn shakedown(root: impl Into<PathBuf>, run: impl Into<String>, segment: Segment) -> Self {
         let train_sets = segment.train_sets();
         Self {
+            open_intent: OpenIntent::Run,
             root: root.into(),
             schema: RUN_SCHEMA.to_owned(),
             interfaces: M4_INTERFACES_VERSION.to_owned(),
@@ -376,6 +447,11 @@ impl RunConfig {
             resume: None,
             tripwire_window_games: Vec::new(),
             pins: PodPins::default(),
+            launch_pins: BTreeMap::new(),
+            manifest_prefix_sha256: None,
+            platform: None,
+            host: None,
+            build_profile: None,
             metadata: CheckpointMetadata::default(),
             caps: crate::cube_pod_runner_v1::PodCaps::training_a2(),
             workers: 1,
@@ -957,6 +1033,12 @@ fn check_run_plan(saved: &RunConfig, proposed: &RunConfig) -> Result<(), Trainin
         || saved.pods_per_update != proposed.pods_per_update
         || saved.caps != proposed.caps
         || saved.pins != proposed.pins
+        || saved.launch_pins != proposed.launch_pins
+        || saved.manifest_prefix_sha256 != proposed.manifest_prefix_sha256
+        || saved.platform != proposed.platform
+        || saved.host != proposed.host
+        || saved.build_profile != proposed.build_profile
+        || (proposed.host.is_some() && saved.workers != proposed.workers)
         || saved.metadata != proposed.metadata
         || saved.tripwire_window_games != proposed.tripwire_window_games
         || saved.tripwire != proposed.tripwire
@@ -1233,18 +1315,27 @@ fn update_directories(directory: &Path) -> Result<Vec<PathBuf>, TrainingDriverEr
     Ok(directories)
 }
 
-fn record_process_death(
-    config: &RunConfig,
+fn death_evidence(
     last_committed_batch: Option<u64>,
-    abandoned: Option<(u64, PathBuf)>,
-) -> Result<(), TrainingDriverError> {
-    let root = &config.root;
+) -> Result<ProcessDeathEvidence, TrainingDriverError> {
     let found_unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(io_error)?
         .as_millis()
         .try_into()
         .map_err(io_error)?;
+    Ok(ProcessDeathEvidence {
+        last_committed_batch,
+        found_unix_ms,
+    })
+}
+
+fn record_process_death(
+    config: &RunConfig,
+    last_committed_batch: Option<u64>,
+    abandoned: Option<(u64, PathBuf)>,
+) -> Result<(), TrainingDriverError> {
+    let root = &config.root;
     let (batch_index, batch) = if let Some((update, directory)) = abandoned {
         let mut batch = read_partial_pods(&directory)?;
         if batch.is_empty() && directory.join("pods.json").exists() {
@@ -1273,10 +1364,7 @@ fn record_process_death(
         second_watchdog_pod: None,
         second_watchdog_game: None,
         firing: Some(TripwireFiring::immediate(TripwireRule::ProcessDeath)),
-        process_death: Some(ProcessDeathEvidence {
-            last_committed_batch,
-            found_unix_ms,
-        }),
+        process_death: Some(death_evidence(last_committed_batch)?),
         batch,
         error: None,
     };
@@ -1604,6 +1692,55 @@ pub struct TrainingDriver {
 }
 
 impl TrainingDriver {
+    /// Derive the builder's checkpoint zero including its initial league entry, without IO.
+    pub fn initial_state_sha256(
+        config: &RunConfig,
+        rows: &ModelCardRowsV1,
+        init_seed: u64,
+    ) -> Result<String, TrainingDriverError> {
+        if config.segment != Segment::BuilderOnly {
+            return Err(invalid("initial state requires a builder configuration"));
+        }
+        let mut config = config.clone();
+        let model = Self::initial_model(rows, init_seed)?;
+        let layout = model_layout_pin(&model);
+        if !config.metadata.parameter_layout_sha256.is_empty()
+            && config.metadata.parameter_layout_sha256 != layout
+        {
+            return Err(invalid(
+                "configured parameter layout differs from the model",
+            ));
+        }
+        config.metadata.parameter_layout_sha256 = layout;
+        let optimizer = Optimizer::new(&model);
+        let mut checkpoint = Checkpoint::new(
+            &config,
+            CubeModelState::from_model(&model, &optimizer),
+            Vec::new(),
+            0,
+            Vec::new(),
+            pin_reasons(&config, 0),
+            optimizer.head_updates,
+        )?;
+        checkpoint
+            .league
+            .push(league_entry(&config.root, &checkpoint)?);
+        checkpoint.refresh_pin()?;
+        Ok(checkpoint.state_sha256)
+    }
+
+    fn initial_model(
+        rows: &ModelCardRowsV1,
+        init_seed: u64,
+    ) -> Result<ModelV1, TrainingDriverError> {
+        ModelV1::initialise_v1(
+            rows.rows(),
+            rows.table_width(),
+            rows.dense_width(),
+            init_seed,
+        )
+        .map_err(|error| TrainingDriverError::Update(error.to_string()))
+    }
     pub fn open(
         config: RunConfig,
         rows: Arc<ModelCardRowsV1>,
@@ -1618,13 +1755,7 @@ impl TrainingDriver {
         init_seed: u64,
         lineage: Vec<LineageSegment>,
     ) -> Result<Self, TrainingDriverError> {
-        let model = ModelV1::initialise_v1(
-            rows.rows(),
-            rows.table_width(),
-            rows.dense_width(),
-            init_seed,
-        )
-        .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
+        let model = Self::initial_model(&rows, init_seed)?;
         let optimizer = Optimizer::new(&model);
         Self::open_from_state(config, rows, model, optimizer, lineage, Vec::new(), None)
     }
@@ -1679,7 +1810,9 @@ impl TrainingDriver {
                 "a non-shakedown run cannot start from a uniform-pilot lineage",
             ));
         }
+        config.check_open_intent(false)?;
         let run_lock = RunLock::acquire(&config)?;
+        config.check_open_intent(true)?;
         let resume_receipt = check_resume(&config, &run_lock)?;
         let run_path = config.root.join("run.json");
         let mut runner = None;
@@ -1959,7 +2092,11 @@ impl TrainingDriver {
             config.metadata.parameter_layout_sha256 =
                 previous.config.metadata.parameter_layout_sha256.clone();
         }
-        if config.pins != previous.config.pins || config.metadata != previous.config.metadata {
+        if config.pins != previous.config.pins
+            || config.platform != previous.config.platform
+            || config.metadata != previous.config.metadata
+            || config.launch_pins != previous.config.launch_pins
+        {
             return Err(invalid("the segment boundary changed model or input pins"));
         }
         let mut model = previous.model.model.as_ref().clone();
@@ -2009,6 +2146,11 @@ impl TrainingDriver {
 
     pub fn next_update(&self) -> u64 {
         self.next_update
+    }
+
+    /// Pin of the currently published state, also available after an abandoned batch.
+    pub fn checkpoint_state_sha256(&self) -> &str {
+        &self.current_pin
     }
 
     pub fn set_gate_pin(&mut self, pin: PilotPin) -> Result<(), TrainingDriverError> {
@@ -2163,6 +2305,7 @@ impl TrainingDriver {
         pods: Option<&[PodRecord]>,
     ) -> Result<(), TrainingDriverError> {
         let kind = match error {
+            TrainingDriverError::Pod(PodRunnerError::ProcessDeath { .. }) => "process_death",
             TrainingDriverError::Update(_) => "update_failed",
             TrainingDriverError::Pod(PodRunnerError::Seat(_)) => "seat_error",
             TrainingDriverError::Io(_) => "io_error",
@@ -2207,6 +2350,12 @@ impl TrainingDriver {
             error: Some(error.to_string()),
             batch,
         };
+        if let TrainingDriverError::Pod(PodRunnerError::ProcessDeath { pod, game, .. }) = error {
+            stop.pod = Some(*pod);
+            stop.game = Some(*game);
+            stop.firing = Some(TripwireFiring::immediate(TripwireRule::ProcessDeath));
+            stop.process_death = Some(death_evidence(update.checked_sub(1))?);
+        }
         apply_first_watchdog(&mut stop, first);
         ledger_stop(&self.config.root, &stop)?;
         // A fully staged commit can still be published by recovery if the
@@ -2241,7 +2390,7 @@ impl TrainingDriver {
             fs::remove_file(pause)?;
         }
         let pilot: Arc<dyn GamePilot + Sync> = match &selection {
-            PilotSelection::Uniform => Arc::new(UniformPilot),
+            PilotSelection::Uniform => pilots.uniform_pilot(),
             PilotSelection::Checkpoint { pin } => pilots.load_checkpoint(pin)?,
         };
         for entry in &self.league {
@@ -2300,6 +2449,15 @@ impl TrainingDriver {
                 Ok(pods) => break pods,
                 Err(CollectFailure::Error(error)) => {
                     self.abandon_error(update, pending, first_watchdog, &error, None)?;
+                    if matches!(
+                        error,
+                        TrainingDriverError::Pod(PodRunnerError::ProcessDeath { .. })
+                    ) {
+                        return Ok(RunOutcome::Stopped {
+                            update,
+                            kind: "process_death".into(),
+                        });
+                    }
                     return Err(error);
                 }
                 Err(CollectFailure::Stop(failure)) => {

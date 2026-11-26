@@ -798,6 +798,10 @@ pub fn unreferenced(repo: &Path) -> Vec<String> {
     let owner_view_dir = repo.join("mtg-kernel/src/cube_owner_view_v1");
     // M4 D16 owner view command-line example under D0.21.
     let owner_view_example = repo.join("mtg-kernel/examples/cube_owner_view_v1.rs");
+    // M4 D8 launcher fixtures check the table through D1's pinned loader.
+    let launcher_dir = repo.join("mtg-kernel/examples/cube_training_launcher");
+    // M4 D8 shakedown launcher loads the table under D0.3 to D0.5.
+    let launcher_example = repo.join("mtg-kernel/examples/cube_training_launcher_v1.rs");
     let mut hits = Vec::new();
     let mut stack: Vec<std::path::PathBuf> = roots.iter().map(|r| repo.join(r)).collect();
     while let Some(path) = stack.pop() {
@@ -806,6 +810,8 @@ pub fn unreferenced(repo: &Path) -> Vec<String> {
             || (path.components().eq(declared_consumer_test.components()) && path.is_file())
             || path.starts_with(&owner_view_dir)
             || (path.components().eq(owner_view_example.components()) && path.is_file())
+            || path.starts_with(&launcher_dir)
+            || (path.components().eq(launcher_example.components()) && path.is_file())
         {
             continue;
         }
