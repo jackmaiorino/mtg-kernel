@@ -2201,6 +2201,37 @@ fn karn_animated_attached_lion_sash_and_copy_detach_and_lose_buff() {
     );
     assert!(state.objects.get(host).attachments.is_empty());
     assert_eq!(power_toughness(&state, host), (1, 1));
+
+    // 3. Liquimetal Coating + Karn +1 animating Lurking Skirge, followed by an
+    //    opponent's creature dying: Skirge's later type-setting effect makes it
+    //    a creature and nothing else (no longer an Artifact or Enchantment).
+    let mut state = plains();
+    let skirge = put(&mut state, P0, "Lurking Skirge", Zone::Battlefield);
+    let coating = put(&mut state, P0, "Liquimetal Coating", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let victim = put(&mut state, P1, "Elvish Mystic", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::R], 4);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, coating, 0, &[Target::Object(skirge)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, skirge, CardType::Artifact));
+    activate(&mut state, karn, 0, &[Target::Object(skirge)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, skirge, CardType::Creature));
+    assert!(engine::object_has_type(&state, skirge, CardType::Artifact));
+    cast(&mut state, bolt, &[Target::Object(victim)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, skirge, CardType::Creature));
+    assert!(
+        !engine::object_has_type(&state, skirge, CardType::Artifact),
+        "Lurking Skirge's later type-setting override must clear Artifact"
+    );
+    assert!(
+        !engine::object_has_type(&state, skirge, CardType::Enchantment),
+        "Lurking Skirge's later type-setting override must clear Enchantment"
+    );
 }
 
 #[test]

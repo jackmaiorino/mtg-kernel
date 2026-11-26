@@ -1291,8 +1291,9 @@ pub(crate) fn has_type_override(
     // CR 613.4 / 613.7 / 702.151b: Karn and Tezzeret Robot animation effects
     // apply after Reconfigure's attached noncreature static ability so an
     // animated attached Lion Sash (or copy) becomes a creature and detaches
-    // via CR 704.5n.
-    if matches!(card_type, CardType::Creature | CardType::Artifact) {
+    // via CR 704.5n. Keep CardType::Artifact in the later match below so
+    // later type-setting effects such as Lurking Skirge still override it.
+    if card_type == CardType::Creature {
         if let Some(eternal) = state.eternal_v1.as_ref() {
             let vintage = &eternal.vintage;
             if (!vintage.karn_animated.is_empty() || !vintage.robots.is_empty())
