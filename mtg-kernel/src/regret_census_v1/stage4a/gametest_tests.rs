@@ -19,7 +19,7 @@ use crate::ids::PlayerId;
 use crate::priority_action_windows_v1::SeatPriorityWindowsV1::{ActionWindowsV1, HarnessV2};
 use crate::rl::ActionSemanticV1;
 use crate::rl_session::pauper_london_v1::PauperMulliganModeV1::{KeepSeven, Learned};
-use crate::rl_session::FastActorSessionV1;
+use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::state::Zone;
 use std::env::VarError::NotPresent;
 
@@ -111,15 +111,19 @@ fn game_test_switches_are_strict_and_budget_only() {
     }
     for name in GAME_TEST_ENVS {
         let set = |n: &str| n == name;
-        assert!(validate_game_test_mode("s4a-budget", set).is_ok());
+        assert!(validate_executor_mode("s4a-budget", set, Err(NotPresent)).is_ok());
         for mode in [
             "s4a-budget-replay",
             "s4a-root-rebuild",
             "s4a-run",
             "decisions",
         ] {
-            assert!(validate_game_test_mode(mode, set).is_err(), "{name} {mode}");
-            assert!(validate_game_test_mode(mode, |_| false).is_ok());
+            assert_eq!(
+                validate_executor_mode(mode, set, Err(NotPresent)),
+                Err(format!("{name} is supported only for s4a-budget")),
+                "{mode}"
+            );
+            assert!(validate_executor_mode(mode, |_| false, Err(NotPresent)).is_ok());
         }
     }
     let replays =
@@ -131,6 +135,56 @@ fn game_test_switches_are_strict_and_budget_only() {
             .is_err()
     );
     assert!(parse_replay_actions("{\"id\":\"a\",\"actions\":[],\"seed\":1}").is_err());
+}
+
+#[test]
+fn budget_arms_refuse_incompatible_settings() {
+    let arm = |name, total| parse_budget_arm(Ok(name), total, false, None);
+    assert_eq!(
+        arm("replay-v1", 1),
+        Err("BUDGET_ARM=replay-v1 requires BUDGET_TOTAL=0, mean backup and no interchange".into())
+    );
+    let path = |name, max, replay_path| {
+        let (plain, replay) = arm(name, 0).unwrap();
+        budget_replay_path(plain, replay, max, replay_path)
+    };
+    assert_eq!(
+        path("plain-v1", Some(128), Err(NotPresent)),
+        Err("S4A_MAX_SEARCHES requires BUDGET_ARM=search-v1".into())
+    );
+    let replay_requirement =
+        "BUDGET_REPLAY_ACTIONS is required by, and only by, BUDGET_ARM=replay-v1";
+    for arm in ["plain-v1", "search-v1"] {
+        assert_eq!(
+            path(arm, None, ok("actions.jsonl")),
+            Err(replay_requirement.into())
+        );
+    }
+    assert_eq!(
+        path("replay-v1", None, Err(NotPresent)),
+        Err(replay_requirement.into())
+    );
+    assert_eq!(
+        path("replay-v1", None, ok("actions.jsonl")),
+        Ok(Some("actions.jsonl".into()))
+    );
+    assert_eq!(path("search-v1", Some(128), Err(NotPresent)), Ok(None));
+}
+
+#[test]
+fn legacy_budget_replay_refuses_london_records() {
+    for row in [
+        json!({"opening":"london-v1"}),
+        json!({"game":{"opening_record":{"seats":[]}}}),
+        json!({"opening_record":{"seats":[]}}),
+    ] {
+        assert_eq!(
+            validate_budget_replay_row(&row, None),
+            Err("s4a-budget-replay refuses London opening records".into())
+        );
+    }
+    assert!(validate_budget_replay_row(&json!({"game":{"actions":[0]}}), None).is_ok());
+    assert!(validate_budget_replay_row(&json!({"opening_record":null}), None).is_ok());
 }
 
 /// With London set, a policy without the FlatV7 (or FlatV8) identity is
@@ -181,7 +235,7 @@ fn search_ceiling_allows_128_full_searches_and_no_partial_one() {
                     allocation.refresh,
                 )
             };
-            if let Step::Refresh(b) = search_ceiling(step, max, budgets.len(), full) {
+            if let (Step::Refresh(b), _) = search_ceiling(step, max, budgets.len(), full) {
                 budgets.push(b);
                 used += spend(b);
             }
@@ -206,6 +260,12 @@ fn search_ceiling_allows_128_full_searches_and_no_partial_one() {
     assert_eq!(capped.len(), 128);
     assert!(capped.iter().all(|&b| b == T));
     assert_eq!(play(b1, Some(128), |b| b).len(), 128);
+    let spare = Allocation {
+        total: 130 * T,
+        ..b1
+    };
+    assert_eq!(play(spare, None, |b| b), [T; 130]);
+    assert_eq!(play(spare, Some(128), |b| b), [T; 128]);
     let tight = Allocation {
         total: 5 * T / 2,
         ..b1
@@ -213,11 +273,37 @@ fn search_ceiling_allows_128_full_searches_and_no_partial_one() {
     assert_eq!(play(tight, Some(128), |b| b), [T, T]);
     assert_eq!(
         search_ceiling(Step::Execute(3), Some(0), 9, T),
-        Step::Execute(3)
+        (Step::Execute(3), false)
     );
     assert_eq!(
         search_ceiling(Step::Refresh(1), None, 9, T),
-        Step::Refresh(1)
+        (Step::Refresh(1), false)
+    );
+}
+
+#[test]
+fn search_ceiling_marks_a_decision_at_the_signed_budget_limit() {
+    const T: u64 = 2;
+    const MAX: u64 = 128;
+    let allocation = Allocation {
+        anchor: T,
+        refresh: T,
+        total: MAX * T,
+    };
+    let before = rule(Lookup::Miss, allocation, (MAX - 1) * T, false);
+    assert_eq!(
+        search_ceiling(before, Some(MAX), (MAX - 1) as usize, T),
+        (Step::Refresh(T), false)
+    );
+    let exhausted = rule(Lookup::Miss, allocation, MAX * T, false);
+    assert_eq!(exhausted, Step::Plain);
+    assert_eq!(
+        search_ceiling(exhausted, Some(MAX), MAX as usize, T),
+        (Step::Plain, true)
+    );
+    assert_eq!(
+        search_ceiling(exhausted, None, MAX as usize, T),
+        (Step::Plain, false)
     );
 }
 
@@ -265,6 +351,17 @@ fn london_opening_is_the_trainers_episode_session() {
             "priority_windows": ["action-windows-v1", "action-windows-v1"],
         }))
         .unwrap();
+        for modes in [[Learned, KeepSeven], [KeepSeven, Learned], [KeepSeven; 2]] {
+            let asymmetric = ExpandedEpisodeV1 {
+                mulligan_modes: Some(modes),
+                ..episode.clone()
+            };
+            assert_eq!(
+                opening_session(&sh.spec, &src, Some(LondonOpening { modes, ..LONDON })).err(),
+                asymmetric.validate_opening_v1().err(),
+                "learner seat {seat}, modes {modes:?}"
+            );
+        }
         let mut trainer = episode_session_for_test_v1(&episode).unwrap();
         let mut adapter = opening_session(&sh.spec, &src, Some(LONDON)).unwrap();
         assert!(adapter.pauper_london_pending_v1());
@@ -656,6 +753,131 @@ fn on_big_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     })
 }
 
+#[test]
+fn parity_replay_errors_keep_the_recorded_decisions() {
+    on_big_stack(|| {
+        let (policy, sh, src) = london_fixture(0, (12, 40));
+        let mut session = opening_session(&sh.spec, &src, Some(LONDON)).unwrap();
+        let mut actions = Vec::new();
+        while let Some(d) = decision(&session) {
+            actions.push(0);
+            session.step(d.episode_id, d.step, 0).unwrap();
+        }
+        let replay = |actions: &[u32]| {
+            budget_parity_replay(&sh, &policy, &src, actions, "fixture", Some(LONDON)).unwrap()
+        };
+        let complete = replay(&actions);
+        let decisions = complete["decisions"].as_array().unwrap();
+        assert!(complete.get("error").is_none());
+        assert!(complete["terminal"].is_object());
+        assert_eq!(decisions.len(), actions.len());
+        assert!(decisions.len() > 2);
+
+        let short = replay(&actions[..actions.len() - 1]);
+        assert_eq!(
+            short["error"],
+            "the replayed actions end before the terminal"
+        );
+        assert_eq!(short["decisions"], json!(decisions[..decisions.len() - 1]));
+        assert!(short.get("terminal").is_none());
+
+        let mut overlong_actions = actions.clone();
+        overlong_actions.push(0);
+        let overlong = replay(&overlong_actions);
+        assert_eq!(
+            overlong["error"],
+            format!("action {} follows the terminal", actions.len())
+        );
+        assert_eq!(overlong["decisions"], complete["decisions"]);
+        assert_eq!(overlong["terminal"], complete["terminal"]);
+        assert_eq!(overlong["end"], complete["end"]);
+
+        let invalid_index = 1;
+        let mut invalid_actions = actions;
+        invalid_actions[invalid_index] = u32::MAX;
+        let invalid = replay(&invalid_actions);
+        let message = invalid["error"].as_str().unwrap();
+        assert!(
+            message.starts_with(&format!("action {invalid_index} ({}) at step ", u32::MAX)),
+            "{message}"
+        );
+        let mut expected = decisions[..=invalid_index].to_vec();
+        expected[invalid_index]["action"] = json!(u32::MAX);
+        assert_eq!(invalid["decisions"], json!(expected));
+        assert!(invalid.get("terminal").is_none());
+    });
+}
+
+#[test]
+fn parity_replay_matches_both_seats_direct_scores_and_terminal() {
+    on_big_stack(|| {
+        // The focal policy plays physical seat 1. Change both final-layer
+        // biases on the opponent so either score detects a seat mix-up.
+        let (mut policy, mut sh, src) = london_fixture(1, (12, 40));
+        let mut parameters = sh.opponents[0].training_parameters_v3();
+        for name in ["scorer.2.bias", "value_head.2.bias"] {
+            let parameter = parameters.iter_mut().find(|p| p.name == name).unwrap();
+            parameter.values[0] += 2.0;
+        }
+        sh.opponents[0]
+            .replace_training_parameters_v3(&parameters)
+            .unwrap();
+        let mut opponent = sh.opponents[0].fork_for_collection_v3().unwrap();
+        let mut s = opening_session(&sh.spec, &src, Some(LONDON)).unwrap();
+        let mut scored = [false; 2];
+        let mut actions = Vec::new();
+        let mut expected = Vec::new();
+        while let Some(d) = decision(&s) {
+            let seat = usize::from(acting(&d).0);
+            let a = d.legal_action_count - 1;
+            let (obs, menu) = decision_replay_key(&s, d).unwrap();
+            let mut record = json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+                "substep":d.substep_index,"acting":seat,"k":d.legal_action_count,
+                "action":a,"pregame":s.pauper_london_pending_v1(),"obs_hash":obs,"menu_hash":menu});
+            if d.legal_action_count >= 2 {
+                let focal_scores = policy.score_fast_session_v1(&s).unwrap();
+                let opponent_scores = opponent.score_fast_session_v1(&s).unwrap();
+                assert_ne!(focal_scores.logits, opponent_scores.logits);
+                assert_ne!(
+                    focal_scores.value.to_bits(),
+                    opponent_scores.value.to_bits()
+                );
+                let scores = if seat == 1 {
+                    focal_scores
+                } else {
+                    opponent_scores
+                };
+                record["logit_bits"] = json!(scores
+                    .logits
+                    .iter()
+                    .map(|x| x.to_bits())
+                    .collect::<Vec<_>>());
+                record["value_bits"] = json!(scores.value.to_bits());
+                scored[seat] = true;
+            }
+            expected.push(record);
+            actions.push(a);
+            s.step(d.episode_id, d.step, a).unwrap();
+        }
+        assert_eq!(scored, [true, true]);
+        let FastActorResponseV1::Terminal(terminal) = s.current_response() else {
+            panic!("fixture did not reach terminal");
+        };
+        let row =
+            budget_parity_replay(&sh, &policy, &src, &actions, "fixture", Some(LONDON)).unwrap();
+        assert!(row.get("error").is_none(), "{}", row["error"]);
+        assert_eq!(row["decisions"], json!(expected));
+        assert_eq!(
+            row["terminal"],
+            json!({
+                "winner":terminal.winner,
+                "classification":terminal.terminal_classification
+            })
+        );
+        assert_eq!(row["end"], json!(bank::outcome(&s, PlayerId(src.seat))));
+    });
+}
+
 const T: u64 = 2_000;
 
 fn search_extras(max: u64) -> BudgetExtras {
@@ -666,6 +888,55 @@ fn search_extras(max: u64) -> BudgetExtras {
         max_searches: Some(max),
         ..Default::default()
     }
+}
+
+#[test]
+#[ignore = "native qualification: a fixture game with 128 two-transition searches; run with cargo test --release"]
+fn signed_budget_game_records_the_search_ceiling_after_spending_all_transitions() {
+    const T: u64 = 2;
+    const MAX: u64 = 128;
+    let (policy, sh, mut src) = london_fixture(0, (1_000, 2_000));
+    // An Elves mirror supplies enough action choices to exhaust both limits.
+    let elves = sh
+        .spec
+        .decks
+        .iter()
+        .position(|d| d.label == "Elves")
+        .unwrap();
+    src.own = elves;
+    src.other = elves;
+    let extras = BudgetExtras {
+        per_decision: Some((T, T)),
+        ..search_extras(MAX)
+    };
+    let row = on_big_stack(|| {
+        budget_case_with_executor(
+            &sh,
+            &policy,
+            &src,
+            MAX * T,
+            KeyMode::Repaired,
+            false,
+            None,
+            Recording::Disabled,
+            "fixture",
+            ExecutionMode::Persistent,
+            extras,
+        )
+        .unwrap()
+    });
+    let game = &row["game"];
+    let searches = game["searches"].as_array().unwrap();
+    assert_eq!(searches.len() as u64, MAX, "{}", game["invalid_reason"]);
+    assert!(searches.iter().all(|s| s["transitions"] == T));
+    assert_eq!(game["transitions_used"], MAX * T);
+    let exhausted = game["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["remaining_before"] == 0 && d["lookup"] != "supported")
+        .expect("a search-eligible focal decision after both budgets run out");
+    assert_eq!(exhausted["search_ceiling"], true, "{exhausted}");
 }
 
 /// Replays `row`'s actions with fresh live policies seeded from the guide
@@ -733,6 +1004,12 @@ fn assert_streams(
     assert!(decision(&s).is_none());
     assert!(drawn > 0);
     assert_eq!(skipped, tree_executed);
+    if row["arm"] != "plain-v1" {
+        assert!(
+            tree_executed > 0,
+            "the search arm must execute a tree action"
+        );
+    }
 }
 
 /// London pregame decisions are plain draws, never searched: every pregame
@@ -768,6 +1045,10 @@ fn london_pregame_is_played_plain_and_never_searched() {
         assert_eq!(searches.len(), 2);
         let first = searches[0]["step"].as_u64().unwrap();
         let decisions = row["game"]["decisions"].as_array().unwrap();
+        assert_eq!(row["game"]["transitions_used"], 2 * T);
+        assert!(decisions
+            .iter()
+            .any(|d| { d["remaining_before"] == 0 && d["search_ceiling"] == true }));
         let pregame: Vec<_> = decisions
             .iter()
             .filter(|d| d["chooser"] == PREGAME_CHOOSER)
@@ -820,21 +1101,28 @@ fn london_pregame_is_played_plain_and_never_searched() {
 #[test]
 #[ignore = "native qualification: four fixture games with small flat-root searches; run with cargo test --release"]
 fn seat_streams_match_across_plain_search_and_replay() {
+    // Give the roots enough work to gather natural backups and execute a
+    // tree action, so the focal stream's skipped draws are observable.
+    const STREAM_T: u64 = 32_000;
     let (policy, sh, src) = london_fixture(1, (100_000, 200_000));
     let (plain, search, again) = on_big_stack(|| {
+        let extras = BudgetExtras {
+            per_decision: Some((STREAM_T, STREAM_T)),
+            ..search_extras(3)
+        };
         let play = || {
             budget_case_with_executor(
                 &sh,
                 &policy,
                 &src,
-                10 * T,
+                10 * STREAM_T,
                 KeyMode::Repaired,
                 false,
                 None,
                 Recording::Disabled,
                 "fixture",
                 ExecutionMode::Persistent,
-                search_extras(3),
+                extras,
             )
             .unwrap()
         };
@@ -871,20 +1159,11 @@ fn seat_streams_match_across_plain_search_and_replay() {
         assert!(decisions
             .iter()
             .all(|d| d["logit_bits"].is_array() == (d["k"].as_u64().unwrap() >= 2)));
-        assert!(budget_parity_replay(
-            &sh,
-            &policy,
-            &src,
-            &actions[..actions.len() - 1],
-            "fixture",
-            Some(LONDON)
-        )
-        .is_err());
     }
     assert_eq!(scientific(search.clone()), scientific(again));
     let searches = search["game"]["searches"].as_array().unwrap();
     assert_eq!(searches.len(), 3);
-    assert!(searches.iter().all(|x| x["budget"] == T));
+    assert!(searches.iter().all(|x| x["budget"] == STREAM_T));
     assert!(search["game"]["decisions"]
         .as_array()
         .unwrap()

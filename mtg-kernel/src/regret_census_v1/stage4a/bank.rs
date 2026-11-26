@@ -170,6 +170,7 @@ pub(super) fn opening_session(
     let Some(london) = london else {
         return source_session(spec, src);
     };
+    crate::expanded_deck_training_v1::validate_opening_v1(src.seat, london.modes)?;
     let (focal, other) = (&spec.decks[src.own], &spec.decks[src.other]);
     let seats = if src.seat == 0 {
         [focal, other]

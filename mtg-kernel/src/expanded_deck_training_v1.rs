@@ -1809,6 +1809,18 @@ pub struct ExpandedResetStartV1 {
     pub cut_state_hash: String,
 }
 
+/// London requires learned mulligans on the learner seat. The trainer and
+/// Stage 4a's London opening use the same rule for their focal seat.
+pub(crate) fn validate_opening_v1(
+    learner_seat: u8,
+    modes: [PauperMulliganModeV1; 2],
+) -> Result<(), String> {
+    ensure(
+        modes.get(learner_seat as usize) == Some(&PauperMulliganModeV1::Learned),
+        "the learner seat's mulligans are learned; keep_seven is for declared frozen opponents",
+    )
+}
+
 impl ExpandedEpisodeV1 {
     /// Each seat's priority-window rule; both `HarnessV2` when the field is
     /// absent. Refused with a reset start (its recorded prefix was played on
@@ -1863,10 +1875,7 @@ impl ExpandedEpisodeV1 {
             ),
             "an opening is refused with a Legacy opponent kind",
         )?;
-        ensure(
-            modes.get(self.learner_seat as usize) == Some(&PauperMulliganModeV1::Learned),
-            "the learner seat's mulligans are learned; keep_seven is for declared frozen opponents",
-        )
+        validate_opening_v1(self.learner_seat, modes)
     }
 
     /// Policy steps and physical decisions the starting history already

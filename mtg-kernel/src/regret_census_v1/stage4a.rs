@@ -1436,8 +1436,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             };
             let actions: Vec<u32> = serde_json::from_value(row["game"]["actions"].clone())
                 .map_err(|e| e.to_string())?;
-            // A record of another rollout model is refused, not replayed.
-            let rep = refresh::check_rollout(&row, rollout_label.as_deref())
+            let rep = validate_budget_replay_row(&row, rollout_label.as_deref())
                 .and_then(|()| {
                     std::thread::scope(|scope| {
                         std::thread::Builder::new()
@@ -1516,18 +1515,8 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         let interchange = parse_interchange(std::env::var("S4A_INTERCHANGE"))?;
         let bestline = parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
         let reuse_witnesses = reuse_witness::Recording::parse(std::env::var("S4A_REUSE_WITNESS"))?;
-        let (plain, replay) = match std::env::var("BUDGET_ARM").as_deref() {
-            Ok(arm @ ("plain-v1" | "replay-v1")) => {
-                if total != 0 || interchange || bestline.is_some() {
-                    return Err(format!(
-                        "BUDGET_ARM={arm} requires BUDGET_TOTAL=0, mean backup and no interchange"
-                    ));
-                }
-                (true, arm == "replay-v1")
-            }
-            Ok("search-v1") | Err(std::env::VarError::NotPresent) => (false, false),
-            _ => return Err("BUDGET_ARM must be plain-v1, search-v1 or replay-v1".into()),
-        };
+        let arm = std::env::var("BUDGET_ARM");
+        let (plain, replay) = parse_budget_arm(arm.as_deref(), total, interchange, bestline)?;
         // The game test's opt-in switches (bank::LondonOpening); unset, every
         // row keeps its bytes.
         let london = parse_london(
@@ -1537,20 +1526,16 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         )?;
         require_london_identity(london, policy, &sh.opponents)?;
         let max_searches = parse_max_searches(std::env::var(MAX_SEARCHES_ENV))?;
-        if plain && max_searches.is_some() {
-            return Err(format!("{MAX_SEARCHES_ENV} requires BUDGET_ARM=search-v1"));
-        }
-        let replay_actions = match std::env::var(REPLAY_ACTIONS_ENV) {
-            Ok(p) if replay => Some(parse_replay_actions(
-                &std::fs::read_to_string(&p).map_err(|e| format!("{p}: {e}"))?,
-            )?),
-            Err(std::env::VarError::NotPresent) if !replay => None,
-            _ => {
-                return Err(format!(
-                    "{REPLAY_ACTIONS_ENV} is required by, and only by, BUDGET_ARM=replay-v1"
-                ))
-            }
-        };
+        let replay_actions = budget_replay_path(
+            plain,
+            replay,
+            max_searches,
+            std::env::var(REPLAY_ACTIONS_ENV),
+        )?
+        .map(|p| {
+            parse_replay_actions(&std::fs::read_to_string(&p).map_err(|e| format!("{p}: {e}"))?)
+        })
+        .transpose()?;
         if plain && reuse_witnesses == reuse_witness::Recording::Enabled {
             return Err("S4A_REUSE_WITNESS=1 requires BUDGET_ARM=search-v1".into());
         }
@@ -1639,7 +1624,13 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                     .join()
                     .map_err(|_| "budget worker panicked".to_owned())?
             })
-            .unwrap_or_else(|e| json!({"kind":"error","id":src.id,"error":e}));
+            .unwrap_or_else(|e| {
+                let mut row = json!({"kind":"error","id":src.id,"error":e});
+                if replay {
+                    row["decisions"] = json!([]);
+                }
+                row
+            });
             out.push_str(&format!(
                 "{row}
 "
@@ -1822,15 +1813,29 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 }
 
 /// Validate even non-Stage4a modes before loading their source policy.
-pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
-    if mode != policy_ensemble::MODE && std::env::var_os("POLICY_ENSEMBLE_MEMBERS").is_some() {
+pub(super) fn validate_executor_mode(
+    mode: &str,
+    set: impl Fn(&str) -> bool,
+    executor: Result<String, std::env::VarError>,
+) -> Result<(), String> {
+    if mode != policy_ensemble::MODE && set("POLICY_ENSEMBLE_MEMBERS") {
         return Err("POLICY_ENSEMBLE_MEMBERS is supported only for s4a-policy-ensemble".into());
     }
-    validate_rollout_mode(mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
-    validate_world_mode(mode, std::env::var_os(world::WORLD_ENV).is_some())?;
-    validate_flat_root_mode(mode, std::env::var_os(FLAT_ROOT_ENV).is_some())?;
-    validate_game_test_mode(mode, |name| std::env::var_os(name).is_some())?;
-    refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
+    validate_rollout_mode(mode, set(ROLLOUT_OPPONENT))?;
+    validate_world_mode(mode, set(world::WORLD_ENV))?;
+    validate_flat_root_mode(mode, set(FLAT_ROOT_ENV))?;
+    validate_game_test_mode(mode, set)?;
+    refresh::ExecutionMode::parse(mode, executor).map(|_| ())
+}
+
+fn validate_budget_replay_row(row: &Value, rollout: Option<&str>) -> Result<(), String> {
+    if row["opening"] == "london-v1"
+        || !row["game"]["opening_record"].is_null()
+        || !row["opening_record"].is_null()
+    {
+        return Err("s4a-budget-replay refuses London opening records".into());
+    }
+    refresh::check_rollout(row, rollout)
 }
 
 /// The game test's switches (collab LANES/speed-lead/gametest-20261125,
@@ -1856,6 +1861,44 @@ fn validate_game_test_mode(mode: &str, set: impl Fn(&str) -> bool) -> Result<(),
             Err(format!("{name} is supported only for s4a-budget"))
         }
         _ => Ok(()),
+    }
+}
+
+fn parse_budget_arm(
+    arm: Result<&str, &std::env::VarError>,
+    total: u64,
+    interchange: bool,
+    bestline: Option<u64>,
+) -> Result<(bool, bool), String> {
+    match arm {
+        Ok(arm @ ("plain-v1" | "replay-v1")) => {
+            if total != 0 || interchange || bestline.is_some() {
+                return Err(format!(
+                    "BUDGET_ARM={arm} requires BUDGET_TOTAL=0, mean backup and no interchange"
+                ));
+            }
+            Ok((true, arm == "replay-v1"))
+        }
+        Ok("search-v1") | Err(std::env::VarError::NotPresent) => Ok((false, false)),
+        _ => Err("BUDGET_ARM must be plain-v1, search-v1 or replay-v1".into()),
+    }
+}
+
+fn budget_replay_path(
+    plain: bool,
+    replay: bool,
+    max_searches: Option<u64>,
+    path: Result<String, std::env::VarError>,
+) -> Result<Option<String>, String> {
+    if plain && max_searches.is_some() {
+        return Err(format!("{MAX_SEARCHES_ENV} requires BUDGET_ARM=search-v1"));
+    }
+    match path {
+        Ok(path) if replay => Ok(Some(path)),
+        Err(std::env::VarError::NotPresent) if !replay => Ok(None),
+        _ => Err(format!(
+            "{REPLAY_ACTIONS_ENV} is required by, and only by, BUDGET_ARM=replay-v1"
+        )),
     }
 }
 

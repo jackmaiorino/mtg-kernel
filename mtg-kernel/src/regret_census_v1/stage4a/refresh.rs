@@ -330,12 +330,14 @@ pub(super) fn rule(
 /// The explicit search-count ceiling (`S4A_MAX_SEARCHES`, EXECUTOR-SUPPORT.md
 /// 5.1 item 6): with `max` set, a decision starts no search once `run`
 /// searches have run, nor one granted less than its `full` allocation, so a
-/// game has at most `max` searches and no partial last one. None leaves
-/// `step` as it is.
-pub(super) fn search_ceiling(step: Step, max: Option<u64>, run: usize, full: u64) -> Step {
+/// game has at most `max` searches and no partial last one. The second
+/// result marks a refusal even if the transition budget is also exhausted.
+pub(super) fn search_ceiling(step: Step, max: Option<u64>, run: usize, full: u64) -> (Step, bool) {
     match (step, max) {
-        (Step::Refresh(budget), Some(max)) if run as u64 >= max || budget < full => Step::Plain,
-        _ => step,
+        (Step::Execute(_), _) | (_, None) => (step, false),
+        (_, Some(max)) if run as u64 >= max => (Step::Plain, true),
+        (Step::Refresh(budget), Some(_)) if budget < full => (Step::Plain, true),
+        _ => (step, false),
     }
 }
 
@@ -861,9 +863,8 @@ fn guide_inner(
                 } else {
                     allocation.refresh
                 };
-                let capped = search_ceiling(step, run.max_searches, searches.records.len(), full);
-                let ceiling_hit = capped != step;
-                let step = capped;
+                let (step, ceiling_hit) =
+                    search_ceiling(step, run.max_searches, searches.records.len(), full);
                 if let Step::Refresh(budget) = step {
                     let reason = if searches.records.is_empty() {
                         "initial"
@@ -1404,8 +1405,8 @@ pub(super) fn budget_replay_opening(
 /// at every decision the acting seat, the observation and menu digests
 /// (`decision_replay_key`) and, with two or more legal actions, the acting
 /// seat's frozen policy's logit and value bits; then the terminal. Nothing
-/// is sampled or searched. Actions that leave the game before or after its
-/// terminal are an error.
+/// is sampled or searched. A failed replay keeps the decisions recorded
+/// before the error and the terminal if reached.
 pub(super) fn budget_parity_replay(
     sh: &BankShared,
     policy: &FrozenPlayPolicyV1,
@@ -1426,36 +1427,45 @@ pub(super) fn budget_parity_replay(
     ];
     let mut s = opening_session(&sh.spec, src, london)?;
     let mut decisions = Vec::with_capacity(actions.len());
-    for (i, &a) in actions.iter().enumerate() {
-        let d = decision(&s).ok_or_else(|| format!("action {i} follows the terminal"))?;
-        let (obs, menu) = super::decision_replay_key(&s, d)?;
-        let mut record = json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
-            "substep":d.substep_index,"acting":acting(&d).0,"k":d.legal_action_count,
-            "action":a,"pregame":s.pauper_london_pending_v1(),"obs_hash":obs,"menu_hash":menu});
-        if d.legal_action_count >= 2 {
-            let scorer = &mut scorers[usize::from(acting(&d) != focal)];
-            let scores = scorer.score_fast_session_v1(&s)?;
-            record["logit_bits"] = json!(scores
-                .logits
-                .iter()
-                .map(|x| x.to_bits())
-                .collect::<Vec<u32>>());
-            record["value_bits"] = json!(scores.value.to_bits());
+    let execution = (|| -> Result<(), String> {
+        for (i, &a) in actions.iter().enumerate() {
+            let d = decision(&s).ok_or_else(|| format!("action {i} follows the terminal"))?;
+            let (obs, menu) = super::decision_replay_key(&s, d)?;
+            let mut record = json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+                "substep":d.substep_index,"acting":acting(&d).0,"k":d.legal_action_count,
+                "action":a,"pregame":s.pauper_london_pending_v1(),"obs_hash":obs,"menu_hash":menu});
+            if d.legal_action_count >= 2 {
+                let scorer = &mut scorers[usize::from(acting(&d) != focal)];
+                let scores = scorer.score_fast_session_v1(&s)?;
+                record["logit_bits"] = json!(scores
+                    .logits
+                    .iter()
+                    .map(|x| x.to_bits())
+                    .collect::<Vec<u32>>());
+                record["value_bits"] = json!(scores.value.to_bits());
+            }
+            decisions.push(record);
+            s.step(d.episode_id, d.step, a)
+                .map_err(|e| format!("action {i} ({a}) at step {}: {e:?}", d.step))?;
         }
-        decisions.push(record);
-        s.step(d.episode_id, d.step, a)
-            .map_err(|e| format!("action {i} ({a}) at step {}: {e:?}", d.step))?;
-    }
-    let crate::rl_session::FastActorResponseV1::Terminal(t) = s.current_response() else {
-        return Err("the replayed actions end before the terminal".into());
-    };
+        if decision(&s).is_some() {
+            return Err("the replayed actions end before the terminal".into());
+        }
+        Ok(())
+    })();
     let mut row = json!({"kind":"budget_parity_replay","schema":"s4a-budget-parity-replay-v1/game",
         "arm":"replay-v1","id":src.id,"lineage":sh.spec.lineage,"own":src.own,"other":src.other,
         "seat":src.seat,"opp":src.opp,"seed":src.seed,"starting_player":src.starting_player,
         "bank_binding_sha256":binding,"actions":actions.len(),"decisions":decisions,
-        "end":outcome(&s, focal),"terminal":{"winner":t.winner,
-            "classification":t.terminal_classification},
         "opening_record":s.pauper_opening_record_v1()});
+    if let crate::rl_session::FastActorResponseV1::Terminal(t) = s.current_response() {
+        row["end"] = json!(outcome(&s, focal));
+        row["terminal"] = json!({"winner":t.winner,"classification":t.terminal_classification});
+    }
+    if let Err(error) = execution {
+        row["kind"] = json!("error");
+        row["error"] = json!(error);
+    }
     if let Some(london) = london {
         london.annotate(&mut row);
     }
