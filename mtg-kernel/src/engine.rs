@@ -209,7 +209,10 @@ pub struct EngineState {
     /// Immediate captures created during placement, due at the next SBA
     /// and APNAP checkpoint after the entire current batch is placed.
     /// Empty contributes no `Hash` input and no serialized field.
-    #[serde(default, skip_serializing_if = "waiting_placement_v1::QueueV1::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "waiting_placement_v1::QueueV1::is_empty"
+    )]
     waiting_placement_triggers: waiting_placement_v1::QueueV1,
     /// This turn's combat, reset fresh at every `Step::BeginCombat`.
     pub combat: CombatState,
