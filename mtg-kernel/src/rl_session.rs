@@ -14391,13 +14391,17 @@ mod tests {
                 .unwrap();
         }
 
+        /// A named edit that forges a restored state.
+        #[cfg(feature = "eternal-fixtures")]
+        type Forgery<'a> = (&'a str, fn(&mut GameState));
+
         /// Each forgery must be refused by `step` with the state untouched,
         /// including after a JSON restore, and halt `advance_until_decision`.
         #[cfg(feature = "eternal-fixtures")]
         fn assert_forgeries_refused(
             legit: &GameState,
             action: &crate::engine::Action,
-            forgeries: &[(&str, fn(&mut GameState))],
+            forgeries: &[Forgery<'_>],
         ) {
             use crate::engine::{self, Decision};
             for (name, forge) in forgeries {
