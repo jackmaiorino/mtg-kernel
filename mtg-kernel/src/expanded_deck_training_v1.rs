@@ -15967,4 +15967,56 @@ pub(crate) mod tests {
     mod reset_start_tests;
     mod v8_inclusion_tests;
     mod widening_b512_tests;
+
+    /// `sd1_capture_without_head_compare_keeps_its_bytes`'s first reached slot
+    /// and capture digest, measured on origin/main ccadc6af (before the head
+    /// comparison).
+    const SD1_CAPTURE_FIXTURE_SLOT_V1: usize = 0;
+    const SD1_CAPTURE_FIXTURE_SHA256_V1: &str =
+        "3452692ac195cf136cde20cbb56a006132f9cf4c23201bdb0a005e6f84f57e70";
+
+    /// The head comparison changes no existing capture: the SD1 capture of a
+    /// fixture (rollout and value-leaf arms, both reference halves, the root
+    /// value) hashes, CPU and wall aside, to the value origin/main ccadc6af
+    /// produced before the comparison existed, and its options serialize to
+    /// the same bytes.
+    #[test]
+    fn probe_sd1_capture_digest_on_main() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("w5-capture", 2_026_110_202, 0);
+        let sd1 = json!({"version":ex1_collect_v1::SD1_CAPTURE_VERSION_V1,
+            "arms":[{"label":"D","world":"fresh","search_seeds":[0],"budget":600},
+                {"label":"FV","world":"fresh","search_seeds":[0,1],"budget":0,
+                 "value_leaf":{"horizon":"h0","sims":12},"flat_root":true}],
+            "half_rollouts":2,"coverage_max":16,"root_value":true});
+        let options = sd1_options_from_json_v1("sd1/panel", sd1.clone());
+        options.validate_v1().unwrap();
+        let round_trip = serde_json::to_value(&options).unwrap();
+        assert_eq!(round_trip["w5"]["capture_0b"]["sd1"], sd1);
+        let mut digest = None;
+        for slot in 0..48_usize {
+            let mut hook =
+                ex1_collect_v1::Ex1EpisodeHookV1::new(&options, &policy, &episode, slot).unwrap();
+            collect_episode_hooked_v1(&mut policy, &learner, None, &episode, Some(&mut hook))
+                .unwrap();
+            let mut capture = hook.finish_v1(&episode, true)["capture_0b"].clone();
+            if capture["reached"] != true {
+                continue;
+            }
+            for a in capture["arms"].as_array_mut().unwrap() {
+                a.as_object_mut().unwrap().remove("cpu_s");
+                a["search"].as_object_mut().unwrap().remove("wall");
+            }
+            digest = Some((slot, sha(&serde_json::to_vec(&capture).unwrap())));
+            break;
+        }
+        assert_eq!(
+            digest,
+            Some((
+                SD1_CAPTURE_FIXTURE_SLOT_V1,
+                SD1_CAPTURE_FIXTURE_SHA256_V1.to_string()
+            ))
+        );
+    }
 }
