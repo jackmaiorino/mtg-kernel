@@ -2014,7 +2014,12 @@ fn smugglers_copter_refuses_a_restored_loot_discard_its_resolution_never_reached
         .frames
         .clone();
     forged.engine.pending_effect = Some(continuation);
-    forged.eternal_v1.as_mut().unwrap().e7b.dredge_deferring = true;
+    // The snapshot predates the draw, so it may hold no Eternal state yet.
+    forged
+        .eternal_v1
+        .get_or_insert_with(Default::default)
+        .e7b
+        .dredge_deferring = true;
     forged.engine.pending_discard = Some(engine::PendingDiscard {
         player: P0,
         count: reached.count,

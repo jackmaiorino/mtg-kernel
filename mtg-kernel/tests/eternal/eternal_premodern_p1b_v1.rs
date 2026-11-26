@@ -802,6 +802,9 @@ fn frantic_search_refuses_a_restored_discard_that_skips_its_draw_and_untap() {
         .collect();
     let terminus = put(&mut state, P0, "Terminus", Zone::Library);
     let search = put(&mut state, P0, "Frantic Search", Zone::Hand);
+    // A third card in hand makes the discard of two a real choice, so it
+    // waits for its Discard decision instead of taking the whole hand.
+    put(&mut state, P0, "Island", Zone::Hand);
     next(&mut state);
     for &land in &lands {
         act(&mut state, Action::ActivateManaAbility(land));
@@ -834,12 +837,12 @@ fn frantic_search_refuses_a_restored_discard_that_skips_its_draw_and_untap() {
             first_answer(other)
         }
     });
-    assert_eq!(state.players[0].hand.len(), 0, "drew two, discarded two");
+    assert_eq!(state.players[0].hand.len(), 1, "drew two, discarded two");
     let revealing = revealing.expect("the first draw is a miracle reveal");
     let discarding = discarding.expect("the discard waits inside the resolution");
     assert_eq!(
         revealing.players[0].hand.len(),
-        1,
+        2,
         "one card drawn at the reveal"
     );
     let reached = discarding.engine.pending_discard.clone().unwrap();

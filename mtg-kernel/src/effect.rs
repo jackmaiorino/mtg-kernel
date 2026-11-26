@@ -10566,8 +10566,34 @@ fn validate_nonterminal_discard_other_stage(
             use crate::{
                 eternal_cards_v1::{e3::E3ChoiceKindV1, EternalOpV1 as E},
                 eternal_legacy_e7a_v1::{E7aChoiceV1, E7aOpV1},
+                eternal_vintage_e7b_v1::E7bChoiceV1,
                 standard_cards_v1::StandardOpV1 as S,
             };
+            // A draw's replacement choice (a dredge, or Jace's empty-library
+            // replacement) at a printed draw of this program holds exactly
+            // the rest of the program below that draw, as at any other draw:
+            // the discard was made before it or is among the frames to come.
+            if matches!(
+                choice.kind,
+                E3ChoiceKindV1::E7bV1(E7bChoiceV1::DredgeV1 | E7bChoiceV1::JaceOrHullbreacherV1)
+            ) && jace_draw_replacement_origin(
+                state,
+                pending,
+                choice.player,
+                &choice.path,
+                &choice.remaining,
+            ) {
+                if let Some(selected) = answered_selected {
+                    if pending.frames.len() != choice.remaining.len() + 1
+                        || pending.frames[..choice.remaining.len()] != choice.remaining[..]
+                        || selected.len() > usize::from(choice.max)
+                        || selected.iter().any(|target| !choice.candidates.contains(target))
+                    {
+                        return Err(err());
+                    }
+                }
+                return Ok(());
+            }
             if choice.kind == E3ChoiceKindV1::E7aV1(E7aChoiceV1::ArchonSacrificeV1) {
                 let root = validated_definition_owned_root_effect(state, pending)?;
                 let EffectOp::Sequence(ops) = root.as_ref() else {
