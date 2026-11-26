@@ -323,6 +323,7 @@ pub(super) fn execute(
             node_stats: false,
             world: super::super::world::WorldMode::Fresh,
             flat_root: false,
+            max_searches: None,
         },
         Some(&mut control),
         #[cfg(feature = "viewer-recording-v1")]

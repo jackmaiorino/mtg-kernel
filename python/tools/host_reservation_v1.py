@@ -116,6 +116,7 @@ import json
 import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -134,7 +135,6 @@ elif sys.platform.startswith("linux"):
     import ctypes
     import fcntl
     import shlex
-    import signal
 else:
     raise SystemExit("host_reservation_v1 supports Windows and Linux only")
 
@@ -800,19 +800,23 @@ else:
         for each in STOP_SIGNALS:
             signal.signal(each, stop)
         atexit.register(_kill_job, job)
-        child = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
-        job.sid, job.start = child.pid, creation_time(child.pid)
+        # The launcher closes this pipe on exec or reports a startup error.
+        read_fd, write_fd = os.pipe()
+        with os.fdopen(read_fd, "rb") as errors:
+            try:
+                child = subprocess.Popen(
+                    [sys.executable, "-I", "-S", os.path.abspath(__file__),
+                     "_exec-recorded-work", str(write_fd), *command],
+                    cwd=cwd, env=env, start_new_session=True, pass_fds=(write_fd,),
+                )
+            finally:
+                os.close(write_fd)
+            job.sid, job.start = child.pid, creation_time(child.pid)
+            failure = errors.read()
+        if failure:
+            child.wait()
+            raise OSError(failure.decode())
         return child
-
-    def _child_creation(child) -> int | None:
-        """The work child's start time; an exited child stays readable until
-        Popen reaps it."""
-        return creation_time(child.pid)
-
-
-    def _child_exit(child) -> None:
-        return None  # Linux reparenting/session semantics use no FILETIME bounds.
-
 
     def _exit_upper_bound() -> None:
         return None
@@ -1253,6 +1257,23 @@ def record_descendant(token: str, pid: int, creation: int | None = None) -> dict
     return _change(token, "descendant", pid=pid, creation_time=creation)
 
 
+def _exec_recorded_work(error_fd: int, command: list[str], token: str) -> int:
+    # SIGKILL can orphan a Linux session before its supervisor records it.
+    # Publish the session leader under the reservation before executing the payload.
+    os.set_inheritable(error_fd, False)
+    try:
+        record_descendant(token, os.getpid())
+        # Restore the signals Popen resets before the Python launcher inherits them.
+        for name in ("SIGPIPE", "SIGXFZ", "SIGXFSZ"):
+            sig = getattr(signal, name, None)
+            if sig is not None:
+                signal.signal(sig, signal.SIG_DFL)
+        os.execvpe(command[0], command, os.environ)
+    except (OSError, Refused) as exc:
+        os.write(error_fd, f"{type(exc).__name__}: {exc}".encode(errors="backslashreplace"))
+        return 127
+
+
 def note(token: str, kind: str, detail: str = "") -> dict:
     if kind in ("handoff", "handoff-unverified", "adopt", "descendant", "child-exited", "members", "nested-done", "release", "reclaim"):
         raise ValueError(f"{kind} is not a note")
@@ -1417,14 +1438,16 @@ def supervise(token: str, command: list[str], cwd: str | None = None, nested: bo
     except OSError as exc:
         _finish(token, nested, "spawn-failed", f"{type(exc).__name__}: {exc}")
         return 127
-    # Read through the child's own handle, so an exited child is readable too.
-    child_creation = _child_creation(child)
-    record_descendant(token, child.pid, child_creation)
+    if os.name == "nt":
+        # Read through the child's own handle, so an exited child is readable too.
+        child_creation = _child_creation(child)
+        record_descendant(token, child.pid, child_creation)
     code = child.wait()
-    child_exit = _child_exit(child)
-    if child_exit is not None:
-        _validate_exit((child.pid, child_creation), child_exit)
-        _change(token, "child-exited", pid=child.pid, creation_time=child_creation, exit_time=child_exit)
+    if os.name == "nt":
+        child_exit = _child_exit(child)
+        if child_exit is not None:
+            _validate_exit((child.pid, child_creation), child_exit)
+            _change(token, "child-exited", pid=child.pid, creation_time=child_creation, exit_time=child_exit)
     outcome, detail = ("success" if code == 0 else "failure"), f"exit code {code}"
     me, listed = os.getpid(), False
     while True:
@@ -1596,6 +1619,8 @@ def _descendant_identity(value: str) -> tuple[int, int]:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if sys.platform.startswith("linux") and argv[:1] == ["_exec-recorded-work"]:
+        return _exec_recorded_work(int(argv[1]), argv[2:], os.environ[TOKEN_ENV])
     command = []
     if "--" in argv:
         split = argv.index("--")

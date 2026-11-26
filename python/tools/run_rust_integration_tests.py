@@ -27,9 +27,15 @@ EXECUTED_ENV = "MTG_CI_RUST_INTEGRATION_EXECUTED"
 # A line libtest prints when a test ends: "test <name> ... ok", also with
 # "- should panic" after the name, FAILED, or ignored (with or without a reason).
 TEST_LINE = re.compile(r"^test (\S+)(?: - should panic)? \.\.\. (ok|FAILED|ignored)\b")
-# Longest command line for one test process. Windows refuses more than 32,767
-# characters; a unit that needs more must be split in the plan.
+# Longest command line for one test process, in UTF-16 units with its
+# terminator, as Windows counts it (CreateProcess refuses more than 32,767).
+# A unit that needs more must be split in the plan.
 MAX_COMMAND = 30000
+
+
+def command_length(command: list[str]) -> int:
+    """The length Windows sees: the quoted command line in UTF-16 units, plus the terminator."""
+    return len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 + 1
 
 
 def suite_modules(root: Path, suite: str) -> list[str]:
@@ -157,9 +163,13 @@ def report_plan(suite: str, plan: list[list[str]], index: int, recorded: dict[st
           f"each in exactly one shard", flush=True)
 
 
-def listed_tests(executable: str) -> list[str]:
+def listed_tests(executable: str, *selection: str) -> list[str]:
+    """The names of the binary's tests, or of those that `selection` (libtest filters and options) selects."""
+    # libtest writes names as UTF-8; the names go back to it as exact filters,
+    # so they must not pass through the system's own code page on the way.
     result = subprocess.run(
-        [executable, "--list", "--format=terse"], check=True, capture_output=True, text=True,
+        [executable, "--list", "--format=terse", *selection], check=True, capture_output=True, text=True,
+        encoding="utf-8",
     )
     return [line.removesuffix(": test") for line in result.stdout.splitlines()
             if line.endswith(": test")]
@@ -248,11 +258,11 @@ def run_suite(executable: str, *, allow_empty: bool = False, selection: dict | N
             command = [executable, module + "::"]
         else:
             command = [executable, "--exact", *selected_tests]
-            if sum(map(len, command)) + len(command) > MAX_COMMAND:
-                raise ValueError(f"The tests of {unit} are too long for one command: isolate some in the plan")
         # Keep the replay hashes from passing Eternal games and matches in CI.
         if module in {"eternal_catalog_v1", "eternal_bo3_v1"}:
             command.append("--show-output")
+        if command_length(command) > MAX_COMMAND:
+            raise ValueError(f"The tests of {unit} are too long for one command: isolate some in the plan")
         if executed_path:
             returncode, reported = run_recorded(command)
             # A passing process must have reported each of its tests (more

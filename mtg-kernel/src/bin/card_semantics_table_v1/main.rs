@@ -1455,6 +1455,40 @@ mod tests {
         std::fs::remove_dir_all(temp).unwrap();
     }
 
+    #[test]
+    fn cube_table_references_outside_declared_consumers_are_flagged() {
+        let temp = scratch_repo("cube-declared-consumers");
+        // Exercise the separator mix emitted by the Windows directory walk.
+        let integration_test = if cfg!(windows) {
+            r"mtg-kernel/tests\eternal\cube_draft_build_v1.rs"
+        } else {
+            "mtg-kernel/tests/eternal/cube_draft_build_v1.rs"
+        };
+        let allowed = [
+            "mtg-kernel/src/cube_draft_build_v1/nested/loader.rs",
+            integration_test,
+        ];
+        let denied = [
+            "mtg-kernel/src/cube_draft_build_v1_extra/loader.rs",
+            "mtg-kernel/tests/eternal/cube_draft_build_v1.rs.bak",
+        ];
+        for path in allowed.into_iter().chain(denied) {
+            let path = temp.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, table::CUBE_TABLE_PATH).unwrap();
+        }
+
+        let mut expected = denied.map(|path| temp.join(path));
+        expected.sort();
+        let mut hits: Vec<_> = checks::unreferenced(&temp)
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        hits.sort();
+        std::fs::remove_dir_all(temp).unwrap();
+        assert_eq!(hits, expected);
+    }
+
     #[cfg(not(feature = "limited-fdn-fixtures"))]
     #[test]
     fn committed_table_is_current_and_checks_hold() {
