@@ -301,6 +301,46 @@ impl Ex1SearcherV1 {
         Ok((record, root))
     }
 
+    /// The paired head comparison at the live decision `s`
+    /// (`head_compare::head_compare_v1`): worlds from this searcher's sampler
+    /// and deck prior for its focal player, `play` for both seats, heads `a`
+    /// and `b`. Measurement only: it retains no tree and touches no search
+    /// role. Runs on its own thread with the search's stack.
+    #[allow(clippy::too_many_arguments, reason = "explicit roles")]
+    pub(crate) fn sd1_head_compare_v1(
+        &self,
+        s: &FastActorSessionV1,
+        covered: &[usize],
+        full_coverage: bool,
+        key: &super::head_compare::HeadCompareKeyV1,
+        play: &mut FrozenPlayPolicyV1,
+        a: &mut FrozenPlayPolicyV1,
+        b: &mut FrozenPlayPolicyV1,
+    ) -> Result<Value, String> {
+        let (prior, focal) = (&self.prior, self.focal);
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .name("sd1-head-compare".into())
+                .stack_size(EX1_SEARCH_STACK_BYTES_V1)
+                .spawn_scoped(scope, || {
+                    super::head_compare::head_compare_v1(
+                        s,
+                        prior,
+                        focal,
+                        covered,
+                        full_coverage,
+                        key,
+                        play,
+                        a,
+                        b,
+                    )
+                })
+                .map_err(|e| format!("head compare thread: {e}"))?
+                .join()
+                .map_err(|_| "head compare thread panicked".to_string())
+        })
+    }
+
     /// The searching network's raw value-head output at `s` (a decision), the
     /// same call a value leaf makes. Measurement only.
     pub(crate) fn sd1_root_value_v1(&mut self, s: &FastActorSessionV1) -> Result<f32, String> {
