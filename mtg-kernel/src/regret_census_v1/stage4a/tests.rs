@@ -2391,11 +2391,19 @@ fn flat_root_search(
 /// The flat root (collab LANES/searchpm-20261116): the tree is the root
 /// alone, every completed simulation is one root backup, the search repeats
 /// exactly, and with the option off the search is E unchanged (it grows
-/// nodes below the root).
+/// nodes below the root). FV-h0 and FV-t0 (collab
+/// LANES/lead/reviews/search-screen-20261125, section 4) are the same flat
+/// root with a different horizon: both take value leaves, back up every
+/// simulation as a leaf or a natural ending, and record their own horizon.
 #[test]
 fn flat_root_keeps_only_the_root_and_repeats() {
     let (session, prior) = value_leaf_root();
-    for leaf in [None, Some(value_leaf::Horizon::H0)] {
+    let mut censuses = Vec::new();
+    for leaf in [
+        None,
+        Some(value_leaf::Horizon::H0),
+        Some(value_leaf::Horizon::T0),
+    ] {
         let (a, ta) = flat_root_search(&session, &prior, true, leaf, 40);
         let (b, tb) = flat_root_search(&session, &prior, true, leaf, 40);
         assert!(!a.incomplete && a.faults.is_empty(), "{:?}", a.faults);
@@ -2405,10 +2413,24 @@ fn flat_root_keeps_only_the_root_and_repeats() {
         assert_eq!(root.n.iter().sum::<u64>(), root.visits);
         assert_eq!(root.visits, a.completed);
         assert_eq!(root.vsum.is_empty(), leaf.is_none());
+        if let Some(horizon) = leaf {
+            // The value leaf ran at this horizon (not vacuously: at least
+            // one simulation stopped at a leaf rather than a natural end).
+            let vl = &a.extra["value_leaf"];
+            assert_eq!(vl["horizon"], horizon.label());
+            let leaves = vl["census"]["leaves"].as_u64().unwrap();
+            let natural = vl["census"]["natural"].as_u64().unwrap();
+            assert!(leaves > 0, "{horizon:?}: no value leaf under the flat root");
+            assert_eq!(leaves + natural, a.completed, "{horizon:?}");
+            censuses.push(vl["census"].clone());
+        }
         let (e, te) = flat_root_search(&session, &prior, false, leaf, 40);
         assert!(!e.incomplete && e.faults.is_empty(), "{:?}", e.faults);
         assert!(te.nodes.len() > 1, "{leaf:?}");
     }
+    // The horizon changes where the leaves are taken: t0's leaves are not
+    // h0's (a t0 that fell back to h0 would repeat its census exactly).
+    assert_ne!(censuses[0], censuses[1]);
 }
 
 /// The flat-root switch is honoured by the searched budget player only and
