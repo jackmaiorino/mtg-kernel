@@ -17,7 +17,7 @@ use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::planeswalker_v1::loyalty;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectLinkV4, ObjectStateV4, Step, Target, Zone};
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -1604,6 +1604,120 @@ fn zirda_activated_ability_prevents_blocking_this_turn_only() {
 }
 
 // ---- Absorbing Man -------------------------------------------------------------
+
+fn copied_equipment() -> (GameState, ObjectId, ObjectId) {
+    let mut state = plains();
+    let copy = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+    let greaves = put(&mut state, P0, "Lightning Greaves", Zone::Battlefield);
+    let starting_turn = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > starting_turn
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(greaves))),
+            _ => None,
+        },
+    );
+    assert_eq!(state.objects.get(copy).card_def, id("Lightning Greaves"));
+    assert!(engine::object_has_type(&state, copy, CardType::Creature));
+    assert!(engine::has_effective_subtype(
+        &state,
+        copy,
+        Subtype::Equipment
+    ));
+    (state, copy, greaves)
+}
+
+#[test]
+fn equipment_creature_can_target_itself_with_equip_and_resolves_after_restore() {
+    let (mut state, copy, _) = copied_equipment();
+    activate(&mut state, copy, 0, &[Target::Object(copy)]);
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.stack[0].targets, [Target::Object(copy)]);
+    let snapshot = state.snapshot();
+    settled(&mut state);
+    assert_eq!(state.objects.get(copy).v4.attached_to, None);
+    assert!(state.objects.get(copy).attachments.is_empty());
+    let resolved = state.snapshot();
+
+    state.restore(&snapshot);
+    settled(&mut state);
+    assert_eq!(state.snapshot(), resolved);
+}
+
+#[test]
+fn equipment_creature_snapshot_rejects_a_forged_self_attachment() {
+    let (mut state, copy, _) = copied_equipment();
+    let live = state.objects.get_mut(copy);
+    live.v4.attached_to = Some(ObjectLinkV4 {
+        object: copy,
+        zone_change_count: live.zone_change_count,
+    });
+    live.attachments.push(copy);
+    let forged = state.snapshot();
+    state.restore(&forged);
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::Halted {
+            mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        } if source == copy
+    ));
+}
+
+#[test]
+fn equipment_creature_cannot_attach_to_another_creature_but_ordinary_equip_can() {
+    let (mut state, copy, greaves) = copied_equipment();
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    activate(&mut state, copy, 0, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(copy).v4.attached_to, None);
+    assert!(state.objects.get(host).attachments.is_empty());
+
+    activate(&mut state, greaves, 0, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(greaves)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host)
+    );
+    assert_eq!(state.objects.get(host).attachments, [greaves]);
+}
+
+#[test]
+fn equipment_creature_losing_equipment_subtype_in_response_cannot_attach() {
+    let (mut state, copy, _) = copied_equipment();
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let reconfiguration = put(&mut state, P1, "Swift Reconfiguration", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::W], 0);
+    activate(&mut state, copy, 0, &[Target::Object(host)]);
+    act(&mut state, Action::Pass);
+    cast(&mut state, reconfiguration, &[Target::Object(copy)]);
+    settled(&mut state);
+
+    assert!(engine::has_effective_subtype(
+        &state,
+        copy,
+        Subtype::Vehicle
+    ));
+    assert!(!engine::has_effective_subtype(
+        &state,
+        copy,
+        Subtype::Equipment
+    ));
+    assert_eq!(state.objects.get(copy).v4.attached_to, None);
+    assert!(state.objects.get(host).attachments.is_empty());
+}
 
 #[test]
 fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts() {

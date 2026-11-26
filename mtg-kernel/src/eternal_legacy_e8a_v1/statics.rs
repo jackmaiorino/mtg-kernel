@@ -297,6 +297,16 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     boost
 }
 
+/// CR 702.151a: recognize the supported reconfigure keyword by its unattach
+/// ability's program, including when that definition was copied.
+pub(crate) fn has_reconfigure(state: &GameState, object: ObjectId) -> bool {
+    crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+        && CARD_DEFS[usize::from(state.objects.get(object).card_def)]
+            .activated_abilities
+            .iter()
+            .any(|ability| (ability.effect)() == super::lion_sash_unattach())
+}
+
 /// Lion Sash's reconfigure: "While attached, this isn't a creature."
 pub(crate) fn has_type_override(
     state: &GameState,

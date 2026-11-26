@@ -23680,6 +23680,11 @@ fn execute_in_departure_scope_v1(
                 return;
             }
             let target = ctx.resolve_object(*object);
+            // CR 702.6a allows a creature to target itself with equip. CR 301.5c
+            // and 701.3b make the attachment itself a no-op in that case.
+            if target == ctx.source {
+                return;
+            }
             let target_live = state.objects.get(target);
             let target_zone_change_count = target_live.zone_change_count;
             let target_is_creature = target_live.zone == Zone::Battlefield
@@ -23695,6 +23700,20 @@ fn execute_in_departure_scope_v1(
             });
             if !target_is_creature || !source_is_equipment {
                 return;
+            }
+            if !crate::engine::has_effective_subtype(state, ctx.source, Subtype::Equipment) {
+                return;
+            }
+            // CR 301.5c: a creature Equipment can equip only with reconfigure.
+            if crate::engine::object_has_type(state, ctx.source, CardType::Creature) {
+                #[cfg(feature = "eternal-fixtures")]
+                let has_reconfigure =
+                    crate::eternal_legacy_e8a_v1::statics::has_reconfigure(state, ctx.source);
+                #[cfg(not(feature = "eternal-fixtures"))]
+                let has_reconfigure = false;
+                if !has_reconfigure {
+                    return;
+                }
             }
             if state
                 .attach_object_exact(

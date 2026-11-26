@@ -3806,7 +3806,7 @@ impl GameState {
     }
 
     /// Checks the exact two-way attachment graph. Restored state must never
-    /// accept a dangling, stale, duplicate, or asymmetric relation.
+    /// accept a self-link or a dangling, stale, duplicate, or asymmetric relation.
     pub fn validate_attachment_relations(&self) -> Result<(), ObjectId> {
         for (id, object) in self.objects.iter() {
             if object.zone != Zone::Battlefield
@@ -3818,7 +3818,9 @@ impl GameState {
                 let Some(host) = self.objects.try_get(link.object) else {
                     return Err(id);
                 };
-                if object.zone != Zone::Battlefield
+                // CR 301.5c, 301.6, 303.4d forbid even reciprocal self-links.
+                if link.object == id
+                    || object.zone != Zone::Battlefield
                     || host.zone != Zone::Battlefield
                     || host.zone_change_count != link.zone_change_count
                     || host
