@@ -165,6 +165,34 @@ class UnitTests(unittest.TestCase):
             self.assertEqual(integration.isolated_tests("suite", Path(directory) / "missing.json"), {})
 
 
+class ListedTestsTests(unittest.TestCase):
+    def test_a_non_ascii_test_name_round_trips_into_the_exact_filter(self):
+        name = "alpha::caf\u00e9"
+        seen = {}
+
+        def run(command, **options):
+            seen.update(options)
+            # What a system code page makes of libtest's UTF-8 bytes unless UTF-8 is asked for.
+            text = f"{name}: test\n" if options.get("encoding") == "utf-8" else \
+                f"{name}: test\n".encode("utf-8").decode("cp1252")
+            return type("Result", (), {"stdout": text})()
+
+        with patch.object(integration.subprocess, "run", run):
+            self.assertEqual(integration.listed_tests("suite-binary"), [name])
+        self.assertEqual(seen.get("encoding"), "utf-8")
+
+    def test_a_selection_is_listed_by_the_binary_with_the_same_decoding(self):
+        commands = []
+
+        def run(command, **options):
+            commands.append((command, options.get("encoding")))
+            return type("Result", (), {"stdout": "alpha::café: test\nalpha::bench: benchmark\n"})()
+
+        with patch.object(integration.subprocess, "run", run):
+            self.assertEqual(integration.listed_tests("lib-binary", "--skip", "x", "alpha::"), ["alpha::café"])
+        self.assertEqual(commands, [(["lib-binary", "--list", "--format=terse", "--skip", "x", "alpha::"], "utf-8")])
+
+
 class RecordedRunTests(unittest.TestCase):
     def test_the_reported_tests_are_named_and_the_output_passes_through(self):
         script = ("import sys\n"
@@ -287,6 +315,37 @@ class RunSuiteTests(unittest.TestCase):
         tests = [f"alpha::{'x' * 200}_{index}" for index in range(200)]
         with self.assertRaisesRegex(ValueError, "too long for one command"):
             self.run_suite(self.planned(0, [["alpha"]], inventory=("alpha",)), tests=tests)
+
+    def exactly(self, module, limit, flag=()):
+        """Tests of one module whose exact command, with `flag`, is `limit` long by Windows' count."""
+        tests = [f"{module}::{'x' * 150}_{index:03d}" for index in range(150)]
+        base = integration.command_length(["suite-binary", "--exact", *tests, *flag])
+        tests[-1] += "y" * (limit - base)
+        self.assertEqual(integration.command_length(["suite-binary", "--exact", *tests, *flag]), limit)
+        return tests
+
+    def test_the_command_limit_counts_what_windows_counts(self):
+        limit = integration.MAX_COMMAND
+        # At the limit a unit runs; one character more and it is refused.
+        tests = self.exactly("alpha", limit)
+        self.assertEqual(self.run_suite(self.planned(0, [["alpha"]], inventory=("alpha",)), tests=tests)[0], 0)
+        tests[-1] += "y"
+        with self.assertRaisesRegex(ValueError, "too long for one command"):
+            self.run_suite(self.planned(0, [["alpha"]], inventory=("alpha",)), tests=tests)
+        # The --show-output flag two modules get is part of the command.
+        module = "eternal_bo3_v1"
+        tests = self.exactly(module, limit, flag=("--show-output",))
+        self.assertEqual(self.run_suite(self.planned(0, [[module]], inventory=(module,)), tests=tests)[0], 0)
+        tests[-1] += "y"
+        with self.assertRaisesRegex(ValueError, "too long for one command"):
+            self.run_suite(self.planned(0, [[module]], inventory=(module,)), tests=tests)
+        # Characters outside the basic plane are two units each, and a quoted argument adds its quotes.
+        self.assertEqual(integration.command_length(["a", "\U0001F600"]), len("a ") + 2 + 1)
+        self.assertEqual(integration.command_length(["a", "b c"]), len('a "b c"') + 1)
+        wide = [f"alpha::{chr(0x1F600) * 100}_{index:03d}" for index in range(150)]
+        self.assertLess(sum(map(len, wide)) + len(wide), limit)
+        with self.assertRaisesRegex(ValueError, "too long for one command"):
+            self.run_suite(self.planned(0, [["alpha"]], inventory=("alpha",)), tests=wide)
 
     def test_a_plan_that_leaves_a_test_out_or_doubles_it_fails_before_running(self):
         for plan in ([["alpha"], ["alpha::two", "beta"]], [["alpha", "gamma"], ["beta"], ["gamma"]]):

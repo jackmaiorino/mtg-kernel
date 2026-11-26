@@ -124,6 +124,31 @@ pub(crate) fn write_key_v1(
     }
 }
 
+/// SHA-256 (hex) of one observation as a forward consumes it: the feature
+/// path, the schema and every consumed slice, framed as `write_key_v1`
+/// frames them, with the model identity zeroed and the activation tag fixed,
+/// so two models that read the same encoded inputs give the same digest
+/// (the screen's head comparison, collab LANES/lead/reviews/
+/// search-screen-20261125 section 5).
+pub(crate) fn observation_digest_v1(
+    path: ForwardPathV1,
+    view: &NativeEncodedDecisionViewV1<'_>,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut key = Vec::new();
+    write_key_v1(
+        &mut key,
+        &[0; 32],
+        path,
+        ForwardActivationModeV1::LibmTanh,
+        view,
+    );
+    Sha256::digest(&key)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// Bucketing hash (not an identity: hits compare keys in full).
 pub(crate) fn hash_v1(key: &[u8]) -> u64 {
     let mut hash = 0x9e37_79b9_7f4a_7c15_u64 ^ (key.len() as u64).rotate_left(32);

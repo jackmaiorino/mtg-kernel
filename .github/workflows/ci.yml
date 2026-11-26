@@ -130,7 +130,9 @@ jobs:
       # that pull request runs skip. Running every group there repeated the
       # pull request run's Linux and Windows work at the same commit (about a
       # third of all hosted runner time on 2026-11-11). Such a dispatch now
-      # runs only the complement; together the two runs cover every group.
+      # runs only the complement when the pull request run says it scheduled
+      # the rest (tools/ci/pr_lookup.py pr-run); together the two runs cover
+      # every group whose paths were relevant.
       - name: Check out merge ref with parents
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || vars.MTG_CI_MAC_GROUPS != ''
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -165,31 +167,35 @@ jobs:
             esac
           elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ] && [ -z "$INPUT_SCOPE" ]; then
             # Only an open, ready (not draft) same-repository pull request
-            # whose head is this exact commit has a pull request run covering
-            # the rest. Any lookup failure keeps the full set. A self-hosted
-            # runner without the GitHub CLI makes the same two REST calls
-            # with tools/ci/pr_lookup.py.
+            # whose head is this exact commit can have a pull request run
+            # covering the rest. Any lookup failure keeps the full set. A
+            # self-hosted runner without the GitHub CLI finds the pull
+            # request with tools/ci/pr_lookup.py.
             if command -v gh > /dev/null 2>&1; then
               open_pr() {
                 gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" |
                   python3 tools/ci/pr_lookup.py ready-pr
               }
-              pr_files() { gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$1/files"; }
             else
               open_pr() { python3 tools/ci/pr_lookup.py open-pr-head; }
-              pr_files() { python3 tools/ci/pr_lookup.py pr-files "$1"; }
             fi
             pr=$(open_pr) || pr=
             read -r pr_number pr_head pr_base <<< "$pr"
             echo "open pull request ${pr_number:-none} head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
             if [ -n "$pr_base" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
-              # Its run covered the whole pull request set only if its files
-              # did not narrow it to one scope (tools/ci/ci_scope.py).
-              pr_scope=$(pr_files "$pr_number" | python3 tools/ci/ci_scope.py file-scope) || pr_scope=
-              echo "its files map to: ${pr_scope:-unknown}"
-              # File listing is live and paginated. Narrow only if the same
-              # PR is still ready with the same head and base after that read.
-              if [ "$pr_scope" = pr ] && rechecked=$(open_pr) && [ "$rechecked" = "$pr" ]; then
+              # Complement only what that pull request's own run scheduled:
+              # its ci.yml run (event pull_request, this commit, this
+              # repository, this pull request) must say so in its ci-plan
+              # job and show healthy Linux Rust group jobs, and the Python
+              # build jobs unless its plan skipped Python
+              # (tools/ci/pr_lookup.py pr-run, read with this job's token and
+              # its existing actions: read). Anything else, an error
+              # included, keeps the full set.
+              pr_run=$(python3 tools/ci/pr_lookup.py pr-run "$GITHUB_SHA" "$pr_number") || pr_run=
+              echo "its pull request run: ${pr_run:-unknown}"
+              # Narrow only if the same PR is still ready with the same head
+              # and base after that read.
+              if [ "$pr_run" = whole-set ] && rechecked=$(open_pr) && [ "$rechecked" = "$pr" ]; then
                 scope=windows-complement
               fi
             fi
@@ -236,7 +242,7 @@ jobs:
             # markdown are irrelevant. build.rs still hashes every tracked
             # file into its provenance digest; no test pins that value.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/check_rust_integration_parts.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/rust_workspace_lib_plan.py|python/tools/rust_workspace_lib_seconds.json|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/check_rust_integration_parts.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -284,8 +290,10 @@ jobs:
           PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}
           PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}
           PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}
-          # The Windows groups of the pr set (rust-test-groups matrix).
-          PR_ELIGIBLE: '["workspace-lib", "workspace-targets", "native-store", "native-store-1"]'
+          # The Windows groups of the pr set (rust-test-groups matrix). The
+          # workspace library tests run in hosted jobs of their own
+          # (rust-workspace-lib-parts), so they never route here.
+          PR_ELIGIBLE: '["workspace-targets", "native-store", "native-store-1"]'
         run: python3 tools/ci/self_hosted_budget.py
 
       # MTG_CI_MAC_GROUPS (a JSON list, empty by default) names Linux groups
@@ -316,7 +324,8 @@ jobs:
           # Same tests and outcomes on Linux arm64 as hosted at b36c5aefe
           # (PR #876). Not here: groups that run Clippy with -D warnings
           # (x86-only code is dead on arm64: eternal, trace, saved-input),
-          # workspace-lib (x86 state-hash and MXCSR pins), cuda (four x86-only
+          # the workspace library tests (x86 state-hash and MXCSR pins; hosted
+          # jobs of their own, never routed), cuda (four x86-only
           # tests compile out), the Limited-only shards (the shared case list
           # is pinned to the x86-64 build) and limited-protocols (a cold
           # self-hosted build exceeds its 15-minute step limits).
@@ -328,6 +337,27 @@ jobs:
           PYTHON_RELEVANT: ${{ steps.classify.outputs.python_relevant }}
           RUST_RELEVANT: ${{ steps.classify.outputs.rust_relevant }}
         run: python3 tools/ci/mac_route.py
+
+  # The run's plan, in its job name: read by tools/ci/pr_lookup.py pr-run (a
+  # dispatch without inputs at a ready pull request's head decides from it
+  # whether the Windows complement is enough). Renaming this job or changing
+  # the name's format makes every such dispatch run the full matrix (fail
+  # closed) until that parser is updated; tools/ci/tests/test_pr_lookup.py
+  # pins the format. Nothing needs this job and it gates nothing.
+  ci-plan:
+    name: "CI plan: rust=${{ needs.detect-changes.outputs.rust_relevant }} python=${{ needs.detect-changes.outputs.python_relevant }} scope=${{ needs.detect-changes.outputs.scope }} checks=${{ needs.detect-changes.outputs.checks }}"
+    needs: detect-changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Show the plan
+        env:
+          RUST_RELEVANT: ${{ needs.detect-changes.outputs.rust_relevant }}
+          PYTHON_RELEVANT: ${{ needs.detect-changes.outputs.python_relevant }}
+          SCOPE: ${{ needs.detect-changes.outputs.scope }}
+          CHECKS: ${{ needs.detect-changes.outputs.checks }}
+        run: echo "rust=$RUST_RELEVANT python=$PYTHON_RELEVANT scope=$SCOPE checks=$CHECKS"
 
   rust-quality:
     name: Rust formatting and lint
@@ -445,7 +475,7 @@ jobs:
 
       - name: Retain generated catalog source
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: generated-catalog-source-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/release/build/mtg-kernel-*/out/card_defs.rs
@@ -488,9 +518,10 @@ jobs:
       matrix:
         # Windows-only group sets run no Linux group.
         os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
-        # Slowest groups first: runners take matrix jobs in this order.
+        # Slowest groups first: runners take matrix jobs in this order. The
+        # library half of the workspace suite (workspace-lib) runs in
+        # workspace-lib-build and rust-workspace-lib-parts.
         group:
-          - workspace-lib
           - workspace-targets
           - standard
           - eternal
@@ -500,7 +531,7 @@ jobs:
           - trace
           - saved-input
           - limited-store
-        # Pull requests run Windows only for the workspace suites and the
+        # Pull requests run Windows only for the workspace suite and the
         # native Store group, whose production writer is Windows-only code.
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
@@ -508,7 +539,7 @@ jobs:
         # complement dispatch runs exactly the Windows groups excluded here.
         # native-store-1 is a Windows-only part (see its step), so every Linux
         # set excludes it.
-        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"},{"os":"ubuntu-24.04","group":"native-store-1"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"},{"os":"windows-2025","group":"native-store-1"}]' || '[{"os":"ubuntu-24.04","group":"native-store-1"}]') }}
+        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"},{"os":"ubuntu-24.04","group":"native-store-1"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"},{"os":"windows-2025","group":"native-store-1"}]' || '[{"os":"ubuntu-24.04","group":"native-store-1"}]') }}
     # Linux groups use GitHub's hosted runners, which are free for this
     # public repository: the WSL runners can't be pinned to cores, so they
     # pause for any host reservation. Windows groups default to GitHub's
@@ -525,7 +556,7 @@ jobs:
     # and numbers). A bracketed value that fromJSON rejects fails the job
     # (closed: never self-hosted) until it is fixed or cleared.
     # On pull requests, the groups named in MTG_CI_PR_WINDOWS_GROUPS (a JSON
-    # list, for example '["workspace-targets", "workspace-lib"]') run on
+    # list, for example '["workspace-targets", "native-store"]') run on
     # MTG_CI_PR_WINDOWS_RUNNER instead, up to the free slots of
     # MTG_CI_PR_WINDOWS_SLOTS (detect-changes chooses them): a few desktop
     # runners can carry the slowest pull request groups, not every Windows
@@ -727,7 +758,7 @@ jobs:
 
       - name: Retain registered full-text native event samples
         if: always() && matrix.group == 'eternal'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: feb-native-event-samples-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: feb-native-event-samples/
@@ -758,25 +789,26 @@ jobs:
           python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1:: eternal_actor_ eternal_cost_choice_v1:: two_forty_card_cube_decks cube_draft_build_v1::
 
       # The library tests and all other targets are disjoint, so the two
-      # halves of the workspace suite run as parallel jobs. Until 2026-11-16
+      # halves of the workspace suite run as parallel jobs: this group runs
+      # every target but the library's unit tests, which run in
+      # workspace-lib-build and rust-workspace-lib-parts. Until 2026-11-16
       # the targets half also built and ran the library's unit tests. On
       # hosted Linux that compiled the library and its test build side by
       # side (the test build alone peaks near 18.5 GB, on a runner with 16 GB
       # and 15 GB of swap), and the runner was lost 38 minutes in, three
       # times in two days.
       - name: Run Rust release tests
-        if: startsWith(matrix.group, 'workspace-')
+        if: matrix.group == 'workspace-targets'
         run: |
           # The hosted Ubuntu runner ran out of memory compiling every
           # non-library target with full parallelism (shutdown signal, exit
           # 143, from 2026-10-27), and with the FDN catalog also at two units
           # at a time, so that half builds two units at a time with swap.
-          if [ "$MATRIX_GROUP" = workspace-targets ] && [ "$MATRIX_OS" = ubuntu-24.04 ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+          if [ "$MATRIX_OS" = ubuntu-24.04 ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
             export CARGO_BUILD_JOBS=2
           fi
-          python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
+          python python/tools/run_rust_workspace_tests.py --part targets --no-fail-fast
         env:
-          MATRIX_GROUP: ${{ matrix.group }}
           MATRIX_OS: ${{ matrix.os }}
 
       - name: Check opt-in gameplay decision tracing
@@ -973,8 +1005,8 @@ jobs:
         with:
           python-version-file: .python-version
 
-      # The workspace-lib group builds the same default-feature library test
-      # binary, so its cache (restored here, never saved) holds the
+      # The workspace library jobs build the same default-feature library
+      # test binary, so their cache (restored here, never saved) holds the
       # dependencies; Cargo still rebuilds what changed.
       - name: Restore the workspace library build
         if: matrix.part == 'default-list'
@@ -992,7 +1024,7 @@ jobs:
 
       - name: Upload the default-feature library case list
         if: matrix.part == 'default-list'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: limited-default-list-${{ matrix.os }}-${{ github.run_attempt }}
           path: default-library-list.json
@@ -1027,7 +1059,7 @@ jobs:
 
       - name: Upload the shared Limited ${{ matrix.part }}
         if: matrix.part != 'default-list'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: limited-build-${{ matrix.os }}-${{ matrix.part }}-${{ github.run_attempt }}
           path: limited-${{ matrix.part }}.tar
@@ -1226,7 +1258,7 @@ jobs:
       # Self-hosted runners keep their own persistent target directories.
       - name: Download the shared Limited build
         if: runner.environment == 'github-hosted'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           # A partial retry keeps successful producer artifacts from the prior
           # attempt. Every match belongs to this run and its immutable head.
@@ -1284,7 +1316,7 @@ jobs:
 
       - name: Retain generated Limited catalog source
         if: always() && matrix.group == 'limited' && matrix.os == 'ubuntu-24.04'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: generated-limited-catalog-source-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.CARGO_TARGET_DIR || 'target' }}/release/build/mtg-kernel-*/out/card_defs.rs
@@ -1461,7 +1493,7 @@ jobs:
 
       - name: Retain actual Drakuseth event sample
         if: ${{ always() && matrix.group == 'limited-only' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: drakuseth-event-sample-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: fdn-event-samples/DrakusethDamageSourceV76.json
@@ -1474,7 +1506,7 @@ jobs:
       # of cases each; three shards hold about 23 minutes each).
       - name: Download the default-feature library case list
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           # A partial retry keeps the list of the prior attempt; the step
           # below takes the newest.
@@ -1505,7 +1537,7 @@ jobs:
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})
-    needs: [detect-changes, rust-test-groups, limited-build, rust-limited-groups, eternal-integration-build, rust-eternal-integration-parts, eternal-integration-inventory]
+    needs: [detect-changes, rust-test-groups, limited-build, rust-limited-groups, eternal-integration-build, rust-eternal-integration-parts, eternal-integration-inventory, workspace-lib-build, rust-workspace-lib-parts, workspace-lib-inventory]
     if: always() && needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'draft' && needs.detect-changes.outputs.checks == 'all'
     timeout-minutes: 10
     strategy:
@@ -1527,6 +1559,14 @@ jobs:
             test "${{ needs.rust-eternal-integration-parts.result }}" = success
             # Skipped when a part failed, so it also fails the gate then.
             test "${{ needs.eternal-integration-inventory.result }}" = success
+          fi
+          # Every set but the Windows complement has the workspace library
+          # tests (the pull request's own run has them on both systems).
+          if [ "${{ needs.detect-changes.outputs.scope }}" != windows-complement ]; then
+            test "${{ needs.workspace-lib-build.result }}" = success
+            test "${{ needs.rust-workspace-lib-parts.result }}" = success
+            # Skipped when a part failed, so it also fails the gate then.
+            test "${{ needs.workspace-lib-inventory.result }}" = success
           fi
 
   # The integration suites of the Eternal catalog ran as one job until
@@ -1627,22 +1667,31 @@ jobs:
       # Builds the plain library and the suite's test binary with the same
       # Cargo command the parts use, then writes the names of the binary's
       # tests and runs none: the inventory job compares the parts with it.
+      # Four Cargo jobs on hosted Linux, not the two of the other heavy
+      # builds: this job compiles one target and nothing runs beside it.
+      # Measured 2026-11-24 on both hosted processors: 1,485 s against 1,740
+      # and 1,746 (EPYC 7763), 1,164 against about 1,337 (EPYC 9V74); lowest
+      # available memory 391 and 530 MiB with about 0.5 GiB of the compressed
+      # swap in use, against 950 MiB and no swap at two jobs.
       - name: Build the Eternal integration suite and list its tests
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=2
+            export CARGO_BUILD_JOBS=4
           fi
           python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --list-only eternal-integration-tests.json
 
       # Keep Cargo's fingerprints and dep-info with the outputs, so the parts
-      # reuse them only through Cargo's own freshness checks.
+      # reuse them only through Cargo's own freshness checks. The commit this
+      # job built goes into the archive: a part re-stamps the files as newer
+      # than its checkout, which is sound only for the same sources.
       - name: Package the shared Eternal integration build
         run: |
+          git rev-parse HEAD > target/release/mtg-ci-build-commit
           tar -cf eternal-integration.tar --exclude=release/incremental -C target release
           ls -l eternal-integration.tar
 
       - name: Upload the shared Eternal integration build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eternal-integration-build-${{ matrix.os }}-${{ github.run_attempt }}
           path: eternal-integration.tar
@@ -1651,7 +1700,7 @@ jobs:
           compression-level: 1
 
       - name: Upload the Eternal integration test list
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eternal-integration-list-${{ matrix.os }}-${{ github.run_attempt }}
           path: eternal-integration-tests.json
@@ -1776,7 +1825,7 @@ jobs:
       # stale, so the step may fail without failing the part.
       - name: Download the shared Eternal integration build
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           # A partial retry keeps the build job's artifact from the prior
           # attempt. Every match belongs to this run and its immutable head.
@@ -1806,6 +1855,13 @@ jobs:
           fi
           tar -xf "$archive" -C target
           rm -rf -- "$staging"
+          # Only a build of this checkout's commit may be stamped as current.
+          built=$(cat target/release/mtg-ci-build-commit 2>/dev/null || true)
+          if [ "$built" != "$(git rev-parse HEAD)" ]; then
+            echo "::warning::The shared Eternal integration build is of commit '${built:-unknown}', not this checkout: this part compiles the suite itself."
+            rm -rf -- target
+            exit 0
+          fi
           stamp=$(date +%s)
           find target -exec touch -d "@$stamp" {} +
 
@@ -1845,7 +1901,7 @@ jobs:
 
       - name: Upload the names of the tests this part executed
         if: matrix.group != 'eternal-standard'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eternal-integration-executed-${{ matrix.os }}-${{ matrix.group }}-${{ github.run_attempt }}
           path: eternal-integration-executed.json
@@ -1880,14 +1936,14 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Download the Eternal integration test list
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: eternal-integration-list-${{ matrix.os }}-*
           merge-multiple: false
           path: eternal-integration-lists
 
       - name: Download the names of the tests the parts executed
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: eternal-integration-executed-${{ matrix.os }}-*
           merge-multiple: false
@@ -1895,6 +1951,383 @@ jobs:
 
       - name: Require every listed test in exactly one part
         run: python3 python/tools/check_rust_integration_parts.py --listed eternal-integration-lists --parts eternal-integration-parts --count 8
+
+  # The workspace library's unit tests (the default-feature library test
+  # binary) ran as the workspace-lib group of rust-test-groups until
+  # 2026-11-24: on hosted Windows 33.5 minutes of compiling, then 4,084 tests
+  # in one process for 42 minutes (job 138636705623); on hosted Linux 14 and
+  # 25 minutes. One job per system now builds the binary once and the parts
+  # below run it side by side, on the same systems and in the same group sets
+  # as before: both systems in the pr and full sets, Windows in windows-pr
+  # and windows-full, nothing in the Windows complement (the pull request's
+  # own run has them).
+  workspace-lib-build:
+    name: Build shared workspace library tests (${{ matrix.os }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement' && needs.detect-changes.outputs.scope != 'draft' && needs.detect-changes.outputs.checks == 'all'
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+    # Hosted runners only: every hosted job checks out to the same path, so
+    # the source paths in Cargo's freshness records stay valid in the parts.
+    # (The group could be routed to self-hosted runners; these jobs cannot.)
+    runs-on: ${{ matrix.os }}
+    steps:
+      # The swap this step adds is compressed memory (zram): see the note at
+      # the first swap step of this workflow (job rust-quality).
+      - name: Add swap space for the heavy builds
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
+          free -m
+
+      # Windows can resolve `bash` to the WSL launcher in System32 first;
+      # put Git Bash ahead of it for every later step.
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
+      # Point TEMP and TMP at runner.temp on Windows so the runner wipes any
+      # leftover temporary folders after each job, even if a test crashes.
+      - name: Point Windows TEMP and TMP at runner.temp
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WINDOWS_RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          mkdir -p "$WINDOWS_RUNNER_TEMP"
+          runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Guard the hosted Linux runner's memory
+        id: memory_guard
+        uses: ./.github/actions/memory-guard
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+
+      - name: Set up pinned Python for the workspace runner
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-tests-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-tests-${{ matrix.os }}-
+
+      # The compiled output the workspace-lib group kept between runs: with
+      # it only the mtg-kernel crate compiles. The last part saves it again,
+      # after its tests, so the save never delays the parts' start.
+      - name: Cache compiled test output
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: tests-workspace-lib
+
+      # Builds the library test binary with the same Cargo command the parts
+      # use, then writes the names of its tests and runs none: the inventory
+      # job compares the parts with it.
+      - name: Build the workspace library tests and list them
+        run: python python/tools/run_rust_workspace_tests.py --part lib --list-only workspace-lib-tests.json
+
+      # Keep Cargo's fingerprints and dep-info with the outputs, so the parts
+      # reuse them only through Cargo's own freshness checks. The commit this
+      # job built goes into the archive: a part re-stamps the files as newer
+      # than its checkout, which is sound only for the same sources.
+      - name: Package the shared workspace library build
+        run: |
+          git rev-parse HEAD > target/release/mtg-ci-build-commit
+          tar -cf workspace-lib.tar --exclude=release/incremental -C target release
+          ls -l workspace-lib.tar
+
+      - name: Upload the shared workspace library build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: workspace-lib-build-${{ matrix.os }}-${{ github.run_attempt }}
+          path: workspace-lib.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+
+      - name: Upload the workspace library test list
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: workspace-lib-list-${{ matrix.os }}-${{ github.run_attempt }}
+          path: workspace-lib-tests.json
+          if-no-files-found: error
+          # Small, and the inventory job of a later rerun needs it.
+          retention-days: 14
+
+      - name: Report the hosted Linux runner's memory use
+        if: always() && steps.memory_guard.outcome == 'success'
+        uses: ./.github/actions/memory-guard
+        with:
+          mode: report
+
+  # The parts of the workspace library tests start from the shared build
+  # above. rust_workspace_lib_plan.py groups the tests into units whose
+  # libtest filters select disjoint tests and places them into four parts by
+  # libtest's own schedule and rust_workspace_lib_seconds.json. Every part
+  # asks the binary to list what each part's filters select, fails unless
+  # each test is in exactly one part, and writes the names of the tests it
+  # executed. Part 0 then runs the snapshot timing gate alone. The longest
+  # single tests take about 10 minutes on hosted Windows and 7 to 8 on Linux,
+  # about as long as a part, so more parts would not end much sooner.
+  rust-workspace-lib-parts:
+    name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
+    needs: [detect-changes, workspace-lib-build]
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement' && needs.detect-changes.outputs.scope != 'draft' && needs.detect-changes.outputs.checks == 'all'
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        # Parts are named <group>, <group>-1, ..., one per part of the plan.
+        group:
+          - workspace-lib
+          - workspace-lib-1
+          - workspace-lib-2
+          - workspace-lib-3
+    # Hosted runners only, on the system of the shared build: its freshness
+    # records name hosted checkout paths and its binary is for that system.
+    runs-on: ${{ matrix.os }}
+    steps:
+      # A part compiles nothing when it reuses the shared build. If Cargo
+      # finds that build stale the part compiles the library tests itself,
+      # and then needs the same swap space as the build job (compressed
+      # memory: see the note at the first swap step of this workflow).
+      - name: Add swap space in case the library tests are compiled again
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
+          free -m
+
+      # Windows can resolve `bash` to the WSL launcher in System32 first;
+      # put Git Bash ahead of it for every later step.
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
+      # Point TEMP and TMP at runner.temp on Windows so the runner wipes any
+      # leftover temporary folders after each job, even if a test crashes.
+      - name: Point Windows TEMP and TMP at runner.temp
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WINDOWS_RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          mkdir -p "$WINDOWS_RUNNER_TEMP"
+          runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Guard the hosted Linux runner's memory
+        id: memory_guard
+        uses: ./.github/actions/memory-guard
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+
+      - name: Set up pinned Python for the workspace runner
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-tests-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-tests-${{ matrix.os }}-
+
+      # The build is kept for a day. A part rerun after that finds none and
+      # compiles the library tests itself, as it does when Cargo finds the
+      # build stale, so the step may fail without failing the part.
+      - name: Download the shared workspace library build
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          # A partial retry keeps the build job's artifact from the prior
+          # attempt. Every match belongs to this run and its immutable head.
+          pattern: workspace-lib-build-${{ matrix.os }}-*
+          merge-multiple: false
+          path: ${{ runner.temp }}/shared-workspace-lib-build
+
+      # Cargo reuses an output only when it is newer than every source file
+      # it recorded. Unpacked files get one time after this checkout, so the
+      # Cargo commands below reuse them; anything whose sources, settings or
+      # toolchain differ is still rebuilt as usual.
+      - name: Unpack the shared workspace library build as current output
+        run: |
+          staging="${RUNNER_TEMP:?}/shared-workspace-lib-build"
+          if [ "$RUNNER_OS" = Windows ]; then
+            staging=$(cygpath -u "$staging")
+          fi
+          mkdir -p target
+          # Attempts keep separate directories; take the newest.
+          archive=
+          if [ -d "$staging" ]; then
+            archive=$(find "$staging" -mindepth 2 -maxdepth 2 -type f -path "*/workspace-lib-build-*/workspace-lib.tar" | sort -V | tail -n 1)
+          fi
+          if [ -z "$archive" ]; then
+            echo "::warning::No shared workspace library build to unpack: this part compiles the library tests itself."
+            exit 0
+          fi
+          tar -xf "$archive" -C target
+          rm -rf -- "$staging"
+          # Only a build of this checkout's commit may be stamped as current.
+          built=$(cat target/release/mtg-ci-build-commit 2>/dev/null || true)
+          if [ "$built" != "$(git rev-parse HEAD)" ]; then
+            echo "::warning::The shared workspace library build is of commit '${built:-unknown}', not this checkout: this part compiles the library tests itself."
+            rm -rf -- target
+            exit 0
+          fi
+          stamp=$(date +%s)
+          find target -exec touch -d "@$stamp" {} +
+
+      # A part that compiles the library tests again still tests the same
+      # code, only later: say so in the run instead of failing. Cargo's status
+      # lines are read without color, which would split the words searched for.
+      - name: Check that Cargo reuses the shared build
+        run: |
+          CARGO_TERM_COLOR=never python python/tools/run_rust_workspace_tests.py --part lib --no-run 2>&1 | tee workspace-lib-build.log
+          if grep -q 'Compiling mtg-kernel' workspace-lib-build.log; then
+            echo "::warning::The shared workspace library build was not reused: this part compiled the library tests again."
+          fi
+
+      - name: Run this part of the workspace library tests
+        run: |
+          part=0
+          if [ '${{ matrix.group }}' != workspace-lib ]; then
+            part='${{ matrix.group }}'
+            part="${part##*-}"
+          fi
+          python python/tools/run_rust_workspace_tests.py --part lib --shard-index "$part" --shard-count 4 --executed-list workspace-lib-executed.json
+
+      - name: Upload the names of the tests this part executed
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: workspace-lib-executed-${{ matrix.os }}-${{ matrix.group }}-${{ github.run_attempt }}
+          path: workspace-lib-executed.json
+          if-no-files-found: error
+          # Small, and the inventory job of a later rerun needs it.
+          retention-days: 14
+
+      # The compiled output for the next run's build job (the action saves
+      # only on main, tags and manual runs, never for a pull request). The
+      # last part holds the same build as every part. The inventory job and
+      # the Rust gate wait for this part, save included, and the plan balances
+      # the parts to within seconds (9.9 and 9.8 simulated minutes on Windows,
+      # 10.2 each on Linux), so on main the save adds its own duration to the
+      # gate. Accepted: before the
+      # split the gate waited for the same save at the end of the one
+      # workspace-lib job, and saving from the build job would hold every part.
+      - name: Save compiled test output
+        if: success() && matrix.group == 'workspace-lib-3'
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: tests-workspace-lib
+          mode: save
+
+      - name: Report the hosted Linux runner's memory use
+        if: always() && steps.memory_guard.outcome == 'success'
+        uses: ./.github/actions/memory-guard
+        with:
+          mode: report
+
+  # Second check on the parts, across jobs: the union of the test names the
+  # parts executed must equal the list the build job wrote from the unsplit
+  # binary, timing gate included, with no test in two parts and a report from
+  # every part. Runs only when every part passed; the Rust gate requires it.
+  workspace-lib-inventory:
+    name: Workspace library inventory (${{ matrix.os }})
+    needs: [detect-changes, workspace-lib-build, rust-workspace-lib-parts]
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement' && needs.detect-changes.outputs.scope != 'draft' && needs.detect-changes.outputs.checks == 'all'
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+    # The check reads small JSON files; matrix.os names the system whose
+    # parts it checks, not its own runner.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Download the workspace library test list
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: workspace-lib-list-${{ matrix.os }}-*
+          merge-multiple: false
+          path: workspace-lib-lists
+
+      - name: Download the names of the tests the parts executed
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: workspace-lib-executed-${{ matrix.os }}-*
+          merge-multiple: false
+          path: workspace-lib-parts
+
+      - name: Require every listed test in exactly one part
+        run: python3 python/tools/check_rust_integration_parts.py --listed workspace-lib-lists --parts workspace-lib-parts --count 4
 
   # The Python shards of one system test the same two default-feature
   # binaries. One hosted job per system builds them once (each shard built
@@ -1977,7 +2410,7 @@ jobs:
           mode: save
 
       - name: Upload the Python test binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: python-env-${{ matrix.os }}-${{ github.run_attempt }}
           # The generated build-script sources go too: the card database
@@ -2141,7 +2574,7 @@ jobs:
       # take the newest attempt.
       - name: Download the shared Python test binaries
         if: runner.arch != 'ARM64'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: python-env-${{ matrix.os }}-*
           path: ${{ runner.temp }}/python-env
@@ -2343,7 +2776,7 @@ jobs:
   # line run that branch's own ci.yml, which carries its own copy.
   post-merge-report:
     name: Report a red post-merge run
-    needs: [detect-changes, rust-quality, rust-test-groups, limited-build, rust-limited-groups, eternal-integration-build, rust-eternal-integration-parts, eternal-integration-inventory, rust-tests, python-env-build, python-tests]
+    needs: [detect-changes, rust-quality, rust-test-groups, limited-build, rust-limited-groups, eternal-integration-build, rust-eternal-integration-parts, eternal-integration-inventory, workspace-lib-build, rust-workspace-lib-parts, workspace-lib-inventory, rust-tests, python-env-build, python-tests]
     if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && needs.detect-changes.outputs.scope != 'draft' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.windows_runner == '' && inputs.scope == '')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
