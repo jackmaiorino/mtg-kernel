@@ -57,7 +57,8 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
     (("mtg-kernel/src/bin/kernel_limited_training_v1.rs",), "pr"),
     (("mtg-kernel/src/bin/kernel_limited_*",), "rules-limited"),
     # Python files that change which Rust tests run stay with the whole set.
-    (("python/tools/run_rust_workspace_tests.py", "python/tools/run_rust_lib_filters.py",
+    (("python/tools/run_rust_workspace_tests.py", "python/tools/rust_workspace_lib_plan.py",
+      "python/tools/rust_workspace_lib_seconds.json", "python/tools/run_rust_lib_filters.py",
       "python/tools/rust_case_seconds.json", "python/tools/rust_case_timeout_seconds.json",
       "python/tools/rust_limited_only_known_failures.json", "python/tools/run_rust_integration_tests.py",
       "python/tools/rust_integration_module_seconds.json", "python/tools/check_rust_integration_inventory.py",
