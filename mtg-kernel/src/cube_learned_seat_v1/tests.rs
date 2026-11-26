@@ -173,7 +173,8 @@ fn shared_sampler_goldens_pass_through_decision_rows() {
         GRID_SIZE - 1,
     ];
     for case in golden_cases::cases() {
-        let original_record = case.record();
+        // Only the draws are compared here, so the weight hash is not needed.
+        let original_record = case.record(&[]);
         let (options, logits): (Vec<_>, Vec<_>) = case
             .logits
             .iter()
@@ -198,7 +199,10 @@ fn shared_sampler_goldens_pass_through_decision_rows() {
             decision.row.chosen
         });
         let (_, record_after_hash) = original_record.split_once(' ').unwrap();
-        let (recorded_draws, _) = record_after_hash.rsplit_once(' ').unwrap();
+        // The record ends with the ln(S) bits and the exp-weight hash.
+        let mut tail = record_after_hash.rsplitn(3, ' ');
+        let (_weights, _ln_bits) = (tail.next().unwrap(), tail.next().unwrap());
+        let recorded_draws = tail.next().unwrap();
         assert_eq!(format!("{draws:?}"), recorded_draws, "{}", case.name);
     }
 }
