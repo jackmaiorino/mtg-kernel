@@ -529,51 +529,52 @@ fn a_failed_post_write_check_removes_the_output_and_reports_a_failed_removal() {
 fn the_export_refuses_every_input_that_is_not_a_flat_v7_checkpoint() {
     let fixture = Fixture::new("refusals");
     let v7_pin = fixture.v7.checkpoint.clone().unwrap();
-    let mut cases: Vec<(&str, ExpandedModelSourceV1, &str)> = Vec::new();
     // The source.
-    cases.push((
-        "a V4 source",
-        ExpandedModelSourceV1 {
-            feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4),
-            ..fixture.v7.clone()
-        },
-        "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
-    ));
-    cases.push((
-        "a half-V7 source",
-        ExpandedModelSourceV1 {
-            feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V4),
-            ..fixture.v7.clone()
-        },
-        "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
-    ));
-    cases.push((
-        "a source with the V4 contract and the FlatV7 encoding",
-        ExpandedModelSourceV1 {
-            feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V7),
-            ..fixture.v7.clone()
-        },
-        "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
-    ));
-    cases.push((
-        "a source without a checkpoint",
-        ExpandedModelSourceV1 {
-            checkpoint: None,
-            ..fixture.v7.clone()
-        },
-        "the V4 inference export requires the FlatV7 checkpoint",
-    ));
-    cases.push((
-        "a native S source",
-        ExpandedModelSourceV1 {
-            s_learner: Some(Box::new(super::super::s_learner_v1::SLearnerSourceV1 {
-                schema: "s".into(),
-                initial: v7_pin.clone(),
-            })),
-            ..fixture.v7.clone()
-        },
-        "the V4 inference export takes a net-8 source; a native S source refuses it",
-    ));
+    let mut cases: Vec<(&str, ExpandedModelSourceV1, &str)> = vec![
+        (
+            "a V4 source",
+            ExpandedModelSourceV1 {
+                feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4),
+                ..fixture.v7.clone()
+            },
+            "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
+        ),
+        (
+            "a half-V7 source",
+            ExpandedModelSourceV1 {
+                feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V4),
+                ..fixture.v7.clone()
+            },
+            "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
+        ),
+        (
+            "a source with the V4 contract and the FlatV7 encoding",
+            ExpandedModelSourceV1 {
+                feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V7),
+                ..fixture.v7.clone()
+            },
+            "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
+        ),
+        (
+            "a source without a checkpoint",
+            ExpandedModelSourceV1 {
+                checkpoint: None,
+                ..fixture.v7.clone()
+            },
+            "the V4 inference export requires the FlatV7 checkpoint",
+        ),
+        (
+            "a native S source",
+            ExpandedModelSourceV1 {
+                s_learner: Some(Box::new(super::super::s_learner_v1::SLearnerSourceV1 {
+                    schema: "s".into(),
+                    initial: v7_pin.clone(),
+                })),
+                ..fixture.v7.clone()
+            },
+            "the V4 inference export takes a net-8 source; a native S source refuses it",
+        ),
+    ];
     // The checkpoint record.
     let v4_record = fixture.write_record("v4-record", |saved| {
         saved.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V4.into();
