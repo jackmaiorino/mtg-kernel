@@ -2192,6 +2192,10 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
 }
 
 #[cfg(test)]
+mod gametest_default_rows;
+#[cfg(test)]
+mod gametest_tests;
+#[cfg(test)]
 mod history_guard_tests;
 #[cfg(test)]
 mod tests;
