@@ -60,7 +60,7 @@ The walk reads the definition, not the engine's behaviour: two leaves that do th
 
 ## Cube table
 
-A second generated table covers the Vintage Cube list (`data/cube_v1/mtgo_vintage_cube_20261007.json`) in the `eternal-fixtures` build. The M4 learner's card index and loader (`cube_draft_build_v1`) read the cube table under the D0.3 to D0.5 pins, which restrict those reads to this declared consumer.
+A second generated table covers the Vintage Cube list (`data/cube_v1/mtgo_vintage_cube_20261007.json`) in the `eternal-fixtures` build. The M4 learner's card index and loader (`cube_draft_build_v1`) read the cube table under the D0.3 to D0.5 pins. The M4 owner view (`cube_owner_view_v1`) loads it only through that loader, under D0.21. No other code may read it.
 
 Files:
 
