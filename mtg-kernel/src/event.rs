@@ -2282,6 +2282,52 @@ pub enum CommittedEvent {
         card_def: u16,
         move_history_index: u64,
     },
+    /// A resolving draw instruction stopped after its drawer's first draw
+    /// this turn, a miracle card, with `remaining` attempts still to make
+    /// (CR 702.94a). History-only proof that this stack item reached the
+    /// draw at `path`.
+    MiracleDrawSuspendedV1 {
+        stack_item_id: StackItemId,
+        player: PlayerId,
+        path: Vec<u16>,
+        drawn: crate::state::ObjectLinkV4,
+        remaining: u32,
+    },
+    /// The stop of `MiracleDrawSuspendedV1` at `path` resumed: its later
+    /// attempts are made now. History-only proof that the stop is spent.
+    MiracleDrawResumedV1 {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+    },
+    /// A resolving stack item's discard at `path` waits inside its
+    /// resolution for `player` to discard from `hand`, where the program's
+    /// shape alone cannot prove the interpreter reached it: a nested leaf,
+    /// or a last instruction waiting while a draw's captures are deferred.
+    /// History-only proof that this stack item reached that discard.
+    ResolutionDiscardWaitsV1 {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+        player: PlayerId,
+        hand: Vec<crate::state::ObjectLinkV4>,
+    },
+    /// A resolving stack item's draw at `path`, inside a program with a
+    /// discard before its last instruction, offered `player` a replacement
+    /// choice (a dredge, or Jace's empty-library replacement) for one
+    /// attempt, with `attempts` attempts of that draw left counting it.
+    /// History-only proof that this stack item reached that attempt, every
+    /// earlier instruction done.
+    ResolutionDrawChoiceOfferedV1 {
+        stack_item_id: StackItemId,
+        player: PlayerId,
+        path: Vec<u16>,
+        attempts: u32,
+    },
+    /// The offer of `ResolutionDrawChoiceOfferedV1` at `path` was answered
+    /// and its draw is made now. History-only proof that the offer is spent.
+    ResolutionDrawChoiceAnsweredV1 {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3940,7 +3986,7 @@ pub(crate) fn draw_instruction_extra_at_hand_size(
     .min(u32::MAX - count)
 }
 
-fn draw_instruction_continues(state: &GameState, player: PlayerId) -> bool {
+pub(crate) fn draw_instruction_continues(state: &GameState, player: PlayerId) -> bool {
     state.engine.halted.is_none()
         && !crate::eternal_cards_v1::owned_draws_v1::draw_won_game(state, player)
 }

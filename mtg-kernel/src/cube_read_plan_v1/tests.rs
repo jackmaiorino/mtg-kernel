@@ -595,3 +595,88 @@ fn d8_restart_requires_pinned_structured_entry_appended_on_lead_branch() {
     put(&path, restart);
     assert!(shakedown::authorize_restart(&manifest, &pin).is_err());
 }
+
+#[test]
+fn checkpoint_seats_verify_state_and_replay_both_heads_across_threads() {
+    use crate::card_def::KERNEL_CARDDB_HASH;
+    use crate::cube_draft_build_v1::card_index::{CardIndexV1, CubeTableSourceV1};
+    use crate::cube_draft_build_v1::model::ModelCardRowsV1;
+    use crate::cube_draft_v1::basic_land_ids;
+    use crate::cube_seat_v1::{PassDirection, SeatPickView};
+    use crate::cube_training_driver_v1::{RunConfig, Segment, TrainingDriver};
+
+    let dir = HistoryDir::new("learned-seats");
+    let basics = basic_land_ids().unwrap();
+    let pool: Vec<_> = (1..)
+        .filter(|id| !basics.contains(id))
+        .take(POOL_CARDS)
+        .collect();
+    let mut ids = pool.clone();
+    ids.extend(basics);
+    ids.sort_unstable();
+    let cards: Vec<_> = ids
+        .iter()
+        .map(|&id| {
+            serde_json::json!({
+                "card_id": id, "name": CARD_DEFS[id as usize].name, "vector": [1]
+            })
+        })
+        .collect();
+    let database = format!("{KERNEL_CARDDB_HASH:016x}");
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "schema": "card_semantics_table/v1", "kernel_carddb_hash": database,
+        "vector_width": 1, "card_count": cards.len(),
+        "vocabulary": [{"index": 0, "token": "fixture"}], "cards": cards,
+    }))
+    .unwrap();
+    let table = CubeTableSourceV1::from_bytes_v1(&bytes, &sha256_hex(&bytes))
+        .unwrap()
+        .bind_v1(&CardIndexV1::from_ids(ids.clone()).unwrap())
+        .unwrap();
+    let rows = ModelCardRowsV1::with_registry_basics_v1(
+        ids,
+        table.vector_width(),
+        table.scaled_rows().to_vec(),
+        table.dense_columns().len(),
+        table.dense_rows().to_vec(),
+    )
+    .unwrap();
+    let mut cfg = RunConfig::shakedown(dir.0.join("b1"), "b1", Segment::BuilderOnly);
+    cfg.pins.card_index = Some(table.index_pin().to_owned());
+    cfg.pins.cube_table = Some(table.file_sha256().to_owned());
+    cfg.metadata.card_database_sha256 = database;
+    let driver = TrainingDriver::open(cfg, std::sync::Arc::new(rows), 17).unwrap();
+    let pin = driver.checkpoint().unwrap().state_sha256;
+    let path = dir.0.join("b1/initial/checkpoint.json");
+    let mut one = CheckpointSeatFactory::default();
+    assert!(one
+        .load(&path, &"0".repeat(64), &table, 1)
+        .unwrap_err()
+        .contains("expected state"));
+    one.load(&path, &pin, &table, 1).unwrap();
+    let mut two = CheckpointSeatFactory::default();
+    two.load(&path, &pin, &table, 2).unwrap();
+    fs::remove_file(path).unwrap();
+    let sample = |factory: &CheckpointSeatFactory| {
+        let mut picker = factory
+            .make_picker(&SeatRef {
+                kind: SeatKind::Learned,
+                pin: Some(pin.clone()),
+            })
+            .unwrap();
+        let view = SeatPickView {
+            round: 0,
+            pick: 0,
+            direction: PassDirection::Left,
+            pack: &pool[..15],
+            pool: &[],
+            seen_not_taken: &[],
+        };
+        let pick = picker.pick(&view, &mut SplitMix64::seed(31)).unwrap();
+        let mut builder = factory.make_builder(&BuilderRef::learned(&pin)).unwrap();
+        let build = builder.build(&pool, &mut SplitMix64::seed(47)).unwrap();
+        assert!(pick.row.is_some() && build.rows.is_some());
+        (pick, build)
+    };
+    assert_eq!(sample(&one), sample(&two));
+}

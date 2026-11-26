@@ -29,22 +29,26 @@ use crate::cube_draft_v1::{
     game_seed, pod_game_seats, pod_pairings, CubePool, Deck, DraftRecord, GameEnd, PickRecord,
     DECK_CARDS, DRAFT_RECORD_SCHEMA, POOL_CARDS, ROUNDS, SEATS,
 };
+use crate::cube_owner_view_v1::{
+    load_real_checkpoint_v1, LearnedCheckpointSeats, OwnerViewSeatFactory,
+};
 use crate::cube_pod_runner_v1::{
     build_seed_for_chair, collect_halts_and_stop, execute_game_tasks_with_options, expect_array,
     expect_bool, expect_object_keys, expect_opt_str, expect_opt_u64, expect_str, expect_u64,
     is_sha256_hex, is_valid_token, seed, seed_keyed, validate_pod_record_json, AttemptRecord,
-    AttemptTiming, BuilderKind, BuilderRef, ChairRecord, ChairRole, DealtOrigin, DeckRecord,
-    DeckSource, ExecOptions, GameCompleteHook, GameRole, GameTask, JsonParser, OrderedJson,
-    PairedBuildKind, PairedBuildRecord, PilotInfo, PilotKind, PodCaps, PodGameRecord, PodPins,
-    PodRecord, PodRunnerError, PodSeeds, PodStatus, PodUse, SeatKind, SeatRef, SeatRule, SeedPart,
-    StopAttemptReport, StopReport, A2_GAME_CAPS, A2_MAX_STACK_OBJECTS, DEFAULT_WATCHDOG_SECONDS,
-    POD_RECORD_SCHEMA, READ_MAX_REPLAYS, WATCHDOG_STOP_KIND,
+    AttemptTiming, BuilderKind, BuilderPin, BuilderRef, ChairRecord, ChairRole, DealtOrigin,
+    DeckRecord, DeckSource, ExecOptions, GameCompleteHook, GameRole, GameTask, JsonParser,
+    OrderedJson, PairedBuildKind, PairedBuildRecord, PilotInfo, PilotKind, PodCaps, PodGameRecord,
+    PodPins, PodRecord, PodRunnerError, PodSeeds, PodStatus, PodUse, SeatKind, SeatRef, SeatRule,
+    SeedPart, StopAttemptReport, StopReport, A2_GAME_CAPS, A2_MAX_STACK_OBJECTS,
+    DEFAULT_WATCHDOG_SECONDS, POD_RECORD_SCHEMA, READ_MAX_REPLAYS, WATCHDOG_STOP_KIND,
 };
 use crate::cube_seat_v1::{
     canonical_deck, run_seat_draft, BuildRows, DecisionKind, DecisionRow, GamePilot, SeatBuilder,
     SeatPicker, StatedSeatBuilder, UniformFourStepBuilder, UniformSeatPicker,
     M4_INTERFACES_VERSION, UNIFORM_SAMPLER_ID,
 };
+use crate::cube_training_driver_v1::CubeTableV1;
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -209,6 +213,60 @@ impl SeatFactory for UniformSeatFactory {
                 "dealt decks are not rebuilt via SeatBuilder".to_owned(),
             )),
         }
+    }
+}
+
+/// Resolves mixed learned, uniform and stated seats by their declared state pins.
+#[derive(Default)]
+pub struct CheckpointSeatFactory {
+    checkpoints: BTreeMap<String, LearnedCheckpointSeats>,
+}
+
+impl CheckpointSeatFactory {
+    pub fn load(
+        &mut self,
+        path: &Path,
+        pin: &str,
+        table: &CubeTableV1,
+        threads: usize,
+    ) -> Result<(), String> {
+        if !is_sha256_hex(pin) || self.checkpoints.contains_key(pin) {
+            return Err(format!("invalid or repeated checkpoint state pin {pin:?}"));
+        }
+        let (header, seats) = load_real_checkpoint_v1(path, table, threads)?;
+        if header.state_sha256 != pin {
+            return Err(format!(
+                "checkpoint {}: expected state {pin}, got {}",
+                path.display(),
+                header.state_sha256
+            ));
+        }
+        self.checkpoints.insert(pin.to_owned(), seats);
+        Ok(())
+    }
+
+    fn resolve(&self, pin: Option<&str>) -> Result<&LearnedCheckpointSeats, PodRunnerError> {
+        pin.and_then(|p| self.checkpoints.get(p))
+            .ok_or_else(|| plan_err(format!("no loaded checkpoint for state pin {pin:?}")))
+    }
+}
+
+impl SeatFactory for CheckpointSeatFactory {
+    fn make_picker(&self, seat: &SeatRef) -> Result<Box<dyn SeatPicker>, PodRunnerError> {
+        if seat.kind == SeatKind::Learned {
+            return Ok(self.resolve(seat.pin.as_deref())?.make_learned_picker());
+        }
+        UniformSeatFactory.make_picker(seat)
+    }
+
+    fn make_builder(&self, builder: &BuilderRef) -> Result<Box<dyn SeatBuilder>, PodRunnerError> {
+        if builder.kind == BuilderKind::Learned {
+            let Some(BuilderPin::Checkpoint(pin)) = &builder.pin else {
+                return Err(plan_err("learned builder requires a checkpoint state pin"));
+            };
+            return Ok(self.resolve(Some(pin))?.make_learned_builder());
+        }
+        UniformSeatFactory.make_builder(builder)
     }
 }
 
@@ -562,6 +620,31 @@ pub struct ReadPlanV1 {
     pub paired_builds: Vec<PairedBuildRecord>,
 }
 
+fn preflight_learned_seats<'a>(
+    seats: &dyn SeatFactory,
+    chairs: &[PlanChair],
+    builders: impl Iterator<Item = &'a BuilderRef>,
+) -> Result<(), PodRunnerError> {
+    for chair in chairs {
+        if chair.picker.kind == SeatKind::Learned {
+            seats.make_picker(&chair.picker)?;
+        }
+    }
+    for builder in builders {
+        if builder.kind == BuilderKind::Learned {
+            seats.make_builder(builder)?;
+        }
+    }
+    Ok(())
+}
+
+impl ReadPlanV1 {
+    /// Resolve every required checkpoint before publishing execution artifacts.
+    pub fn preflight_seats(&self, seats: &dyn SeatFactory) -> Result<(), PodRunnerError> {
+        preflight_learned_seats(seats, &self.chairs, self.decks.iter().map(|d| &d.builder))
+    }
+}
+
 /// One declared build inside a [`PrepRequest`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -688,12 +771,31 @@ pub struct SetManifest {
     pub executions: Vec<ManifestExecutionEntry>,
 }
 
+// D7 namespaces each reader fixture's auxiliary sets under fx-...-d0 or
+// fx-...-d15 within test/v1. Production sets live directly under their run.
+fn fixture_set_parts<'a>(namespace: &str, set: &'a str) -> Option<(&'a str, &'a str)> {
+    if namespace != "test" || !set.starts_with("fx-") {
+        return None;
+    }
+    if set.ends_with("-d0") || set.ends_with("-d15") {
+        return Some((set, ""));
+    }
+    ["-d0-", "-d15-"].iter().find_map(|binding| {
+        let boundary = set.find(binding)? + binding.len() - 1;
+        Some((&set[..boundary], &set[boundary + 1..]))
+    })
+}
+
+fn is_prep_panel_set(kind: ManifestKind, namespace: &str, set: &str) -> bool {
+    let name = fixture_set_parts(namespace, set).map_or(set, |(_, suffix)| suffix);
+    kind == ManifestKind::Prep && (name == "prep-panel" || name.starts_with("prep-panel-restart-"))
+}
+
 impl SetManifest {
     /// Returns `true` iff this set is the stage-1 `prep-panel` set (or a
     /// restart of it), which is exempt from pinned-panel checks.
     pub fn is_prep_panel(&self) -> bool {
-        self.kind == ManifestKind::Prep
-            && (self.set == "prep-panel" || self.set.starts_with("prep-panel-restart-"))
+        is_prep_panel_set(self.kind, &self.namespace, &self.set)
     }
 }
 
@@ -3179,8 +3281,7 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
     }
 
     // Validate family, namespace, panel_sha256, and prep_set consistency.
-    let is_prep_panel = kind == ManifestKind::Prep
-        && (set == "prep-panel" || set.starts_with("prep-panel-restart-"));
+    let is_prep_panel = is_prep_panel_set(kind, &namespace, &set);
     match kind {
         ManifestKind::Plans => {
             let fam = PlanFamily::from_str_name(&family).ok_or_else(|| {
@@ -4266,11 +4367,13 @@ fn load_and_verify_panel(
             "manifest.panel_sha256 ({expected_digest}) differs from pinned digest ({pinned_digest})"
         )));
     }
-    let panel_path = set_dir
+    let run_dir = set_dir
         .parent()
-        .ok_or_else(|| plan_err("set_dir has no parent directory for panel/panel.json"))?
-        .join("panel")
-        .join("panel.json");
+        .ok_or_else(|| plan_err("panel set lacks run directory"))?;
+    let panel_path = fixture_set_parts(&manifest.namespace, &manifest.set)
+        .map(|(base, _)| run_dir.join(format!("{base}-panel/panel.json")))
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| run_dir.join("panel/panel.json"));
     let raw = fs::read(&panel_path)
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", panel_path.display())))?;
     let actual_digest = sha256_hex(&raw);
@@ -4682,6 +4785,7 @@ pub fn run_prep_set_execution_with_ended_claim(
                 out_path.display()
             )));
         }
+        preflight_learned_seats(seats, &req.chairs, req.builds.iter().map(|b| &b.builder))?;
         validated_units.push((unit_entry.clone(), req, out_path));
     }
 
@@ -5555,6 +5659,7 @@ fn preflight_plan_set_execution(
     set_dir: &Path,
     execution: u64,
     verification: &RuntimeVerification,
+    seats: &dyn SeatFactory,
 ) -> Result<ValidatedPlanSet, PodRunnerError> {
     if execution > 1 {
         return Err(plan_err(format!(
@@ -5690,6 +5795,7 @@ fn preflight_plan_set_execution(
                 pod_entry.pod_index
             )));
         }
+        plan.preflight_seats(seats)?;
         validated_plans.push((pod_entry.clone(), plan_path, plan));
     }
 
@@ -5714,7 +5820,7 @@ pub fn run_plan_set_execution(
     workers: usize,
     watchdog_override: Option<Duration>,
 ) -> Result<PlanExecutionReceipt, PodRunnerError> {
-    let preflight = preflight_plan_set_execution(set_dir, execution, verification)?;
+    let preflight = preflight_plan_set_execution(set_dir, execution, verification, seats)?;
     let exec_dir = set_dir.join(format!("exec-{execution}"));
     let records_dir = exec_dir.join("records");
     let timing_dir = exec_dir.join("timing");
@@ -5880,7 +5986,7 @@ pub fn supervise_plan_set_execution(
     verification: &RuntimeVerification,
     launcher: &dyn PodWorkerLauncher,
 ) -> Result<PlanExecutionReceipt, PodRunnerError> {
-    let preflight = preflight_plan_set_execution(set_dir, execution, verification)?;
+    let preflight = preflight_plan_set_execution(set_dir, execution, verification, seats)?;
     let exec_dir = set_dir.join(format!("exec-{execution}"));
     let records_dir = exec_dir.join("records");
     let timing_dir = exec_dir.join("timing");

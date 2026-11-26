@@ -114,7 +114,7 @@ pub(crate) fn begin(
     let commits = eternal_legacy_e7a_v1::shuffle_echo_libraries(state)?;
     if ![first, first.opponent()]
         .into_iter()
-        .any(|drawer| dredge::owned_draw_needs_choice(state, drawer, 7))
+        .any(|drawer| dredge::owned_draw_needs_stage(state, drawer, 7))
     {
         eternal_legacy_e7a_v1::draw_echo_cards(state);
         return Ok(());
