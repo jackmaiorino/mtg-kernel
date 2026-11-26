@@ -7,6 +7,8 @@
 //! checkpoint_container_v1 weights-snapshot --input CHECKPOINT --sha256 HEX --output OUT
 //! checkpoint_container_v1 materialize --template SOURCE.json --input SNAPSHOT --sha256 HEX --output OUT.json
 //! checkpoint_container_v1 s-document --input S_CONTAINER --sha256 HEX
+//! checkpoint_container_v1 v7-to-v4-inference --source V7_SOURCE.json --output OUT.json
+//! checkpoint_container_v1 v7-v4-equality --request REQUEST.json
 //! ```
 //!
 //! `s-document` prints a native S train-state container's document (config,
@@ -16,6 +18,12 @@
 //! `weights-snapshot` and `materialize` are W5's weights-only snapshots
 //! (`weights_snapshot_v1`): the parameters alone, and a playable checkpoint
 //! with zero moments rebuilt from them against a same-lineage template.
+//!
+//! `v7-to-v4-inference` writes the FlatV7 checkpoint that `V7_SOURCE.json`
+//! (a model source with both FlatV7 digests) pins under the V4 feature
+//! identity, every other byte of the record kept, and loads it back under
+//! V4 (`v4_inference_export_v1`). `v7-v4-equality` plays the request's games
+//! and compares the FlatV7 and V4 scorers on every in-game decision.
 //!
 //! `SOURCE.json` is the model source (`ExpandedModelSourceV1`) whose
 //! `checkpoint` pin is the v1 checkpoint to convert, as a run config names
@@ -28,12 +36,13 @@
 mtg_kernel::fast_global_allocator!();
 
 use mtg_kernel::expanded_deck_training_v1::{
-    convert_checkpoint_v1_to_v2, export_checkpoint_v2_to_v1, materialize_weights_snapshot_v1,
-    s_container_document_v1, weights_snapshot_v1, ExpandedModelSourceV1, PinnedFileV1,
+    convert_checkpoint_v1_to_v2, export_checkpoint_v2_to_v1, export_flat_v7_to_v4_inference_v1,
+    flat_v7_v4_equality_json_v1, materialize_weights_snapshot_v1, s_container_document_v1,
+    weights_snapshot_v1, ExpandedModelSourceV1, PinnedFileV1,
 };
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: checkpoint_container_v1 convert --source SOURCE.json --output FRESH_ABSOLUTE_PATH | export --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | weights-snapshot --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | materialize --template SOURCE.json --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | s-document --input PATH --sha256 HEX";
+const USAGE: &str = "usage: checkpoint_container_v1 convert --source SOURCE.json --output FRESH_ABSOLUTE_PATH | export --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | weights-snapshot --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | materialize --template SOURCE.json --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | s-document --input PATH --sha256 HEX | v7-to-v4-inference --source V7_SOURCE.json --output FRESH_ABSOLUTE_PATH | v7-v4-equality --request REQUEST.json";
 
 fn flags_v1(rest: &[String], names: &[&str]) -> Option<Vec<String>> {
     if rest.len() != 2 * names.len() {
@@ -100,6 +109,24 @@ fn run_v1(args: &[String]) -> Option<Result<String, String>> {
                 path: PathBuf::from(&values[0]),
                 sha256: values[1].clone(),
             })
+        }
+        "v7-to-v4-inference" => {
+            let values = flags_v1(rest, &["--source", "--output"])?;
+            std::fs::read(&values[0])
+                .map_err(|e| e.to_string())
+                .and_then(|text| {
+                    serde_json::from_slice::<ExpandedModelSourceV1>(&text)
+                        .map_err(|e| e.to_string())
+                })
+                .and_then(|source| {
+                    export_flat_v7_to_v4_inference_v1(&source, &PathBuf::from(&values[1]))
+                })
+        }
+        "v7-v4-equality" => {
+            let values = flags_v1(rest, &["--request"])?;
+            std::fs::read_to_string(&values[0])
+                .map_err(|e| e.to_string())
+                .and_then(|text| flat_v7_v4_equality_json_v1(&text))
         }
         _ => return None,
     };

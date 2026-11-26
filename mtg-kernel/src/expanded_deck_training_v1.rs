@@ -135,6 +135,7 @@ pub(crate) mod london_keep_offset_v1;
 pub(crate) mod priority_pass_offset_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
+pub mod v4_inference_export_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub mod weights_snapshot_v1;
@@ -145,6 +146,7 @@ pub use record_envelope_v1::RecordEnvelopeV1;
 pub(crate) use trajectory_parse_ahead_v1::{
     take_collection_fields_v1, CollectionTrajectoryFieldsV1,
 };
+pub use v4_inference_export_v1::{export_flat_v7_to_v4_inference_v1, flat_v7_v4_equality_json_v1};
 pub use weights_snapshot_v1::{
     materialize_weights_snapshot_v1, s_container_document_v1, weights_snapshot_v1,
 };
