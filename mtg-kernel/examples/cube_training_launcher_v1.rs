@@ -578,7 +578,9 @@ fn execute(
                 &inputs.initial_state_sha256,
             )?;
             let path = builder_config.root.join("initial/checkpoint.json");
-            if stored_state_sha256(&path)? != expected_initial_sha {
+            let stored_bytes = fs::read(&path)?;
+            let (stored, _, _) = load_checkpoint_read_only_bytes_v1(&stored_bytes, &data.table)?;
+            if stored.state_sha256 != expected_initial_sha {
                 return Err("stored builder initial checkpoint state sha256 mismatch".into());
             }
         }

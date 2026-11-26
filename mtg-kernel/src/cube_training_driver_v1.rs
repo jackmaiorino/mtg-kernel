@@ -1757,7 +1757,16 @@ impl TrainingDriver {
     ) -> Result<Self, TrainingDriverError> {
         let model = Self::initial_model(&rows, init_seed)?;
         let optimizer = Optimizer::new(&model);
-        Self::open_from_state(config, rows, model, optimizer, lineage, Vec::new(), None)
+        Self::open_from_state(
+            config,
+            rows,
+            model,
+            optimizer,
+            lineage,
+            Vec::new(),
+            None,
+            false,
+        )
     }
 
     fn restore_archived_initial_checkpoint(
@@ -1870,7 +1879,16 @@ impl TrainingDriver {
             source_checkpoint,
             expected_source_state_sha256,
         )?;
-        Self::open_from_state(config, rows, model, optimizer, Vec::new(), Vec::new(), None)
+        Self::open_from_state(
+            config,
+            rows,
+            model,
+            optimizer,
+            Vec::new(),
+            Vec::new(),
+            None,
+            true,
+        )
     }
 
     /// Open an already-prepared pick-phase run from its staged initial checkpoint
@@ -1899,9 +1917,19 @@ impl TrainingDriver {
             .model
             .restore(template, checkpoint.head_updates)
             .map_err(TrainingDriverError::Update)?;
-        Self::open_from_state(config, rows, model, optimizer, Vec::new(), Vec::new(), None)
+        Self::open_from_state(
+            config,
+            rows,
+            model,
+            optimizer,
+            Vec::new(),
+            Vec::new(),
+            None,
+            false,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn open_from_state(
         mut config: RunConfig,
         rows: Arc<ModelCardRowsV1>,
@@ -1910,6 +1938,7 @@ impl TrainingDriver {
         initial_lineage: Vec<LineageSegment>,
         initial_league: Vec<LeagueEntry>,
         builder_boundary: Option<(PickBoundary, &Path)>,
+        verify_initial_checkpoint: bool,
     ) -> Result<Self, TrainingDriverError> {
         let layout = model_layout_pin(&initial_model);
         if config.metadata.parameter_layout_sha256.is_empty() {
@@ -1955,6 +1984,34 @@ impl TrainingDriver {
         config.check_open_intent(false)?;
         let run_lock = RunLock::acquire(&config)?;
         config.check_open_intent(true)?;
+        let initial_path = config.root.join("initial/checkpoint.json");
+        if verify_initial_checkpoint
+            && config.segment == Segment::BuilderOnly
+            && initial_path.exists()
+        {
+            let mut expected_initial = Checkpoint::new(
+                &config,
+                CubeModelState::from_model(&initial_model, &initial_optimizer),
+                initial_league.clone(),
+                0,
+                initial_lineage.clone(),
+                pin_reasons(&config, 0),
+                initial_optimizer.head_updates,
+            )?;
+            if expected_initial.league.is_empty() {
+                expected_initial
+                    .league
+                    .push(league_entry(&config.root, &expected_initial)?);
+                expected_initial.refresh_pin()?;
+            }
+            let stored_initial: Checkpoint = read_json(&initial_path)?;
+            stored_initial.validate()?;
+            if stored_initial.state_sha256 != expected_initial.state_sha256 {
+                return Err(invalid(
+                    "stored initial checkpoint differs from expected canonical checkpoint 0",
+                ));
+            }
+        }
         let resume_receipt = check_resume(&config, &run_lock)?;
         let run_path = config.root.join("run.json");
         let mut runner = None;
@@ -1969,7 +2026,6 @@ impl TrainingDriver {
         recover(&config.root)?;
         check_stop_ledger(&config.root)?;
         let indices = published_update_indices(&config.root)?;
-        let initial_path = config.root.join("initial/checkpoint.json");
         if config.segment == Segment::PickPhase {
             let boundary_source = if let Some((boundary, builder_root)) = builder_boundary {
                 for entry in &initial_league {
@@ -2086,31 +2142,6 @@ impl TrainingDriver {
                 .and_then(|switch| switch.gate.as_ref())
             {
                 publish_bytes(&config.root.join("gate-pin.json"), &json_bytes(gate)?)?;
-            }
-        }
-
-        if config.segment == Segment::BuilderOnly && initial_path.exists() {
-            let mut expected_initial = Checkpoint::new(
-                &config,
-                CubeModelState::from_model(&initial_model, &initial_optimizer),
-                initial_league.clone(),
-                0,
-                initial_lineage.clone(),
-                pin_reasons(&config, 0),
-                initial_optimizer.head_updates,
-            )?;
-            if expected_initial.league.is_empty() {
-                expected_initial
-                    .league
-                    .push(league_entry(&config.root, &expected_initial)?);
-                expected_initial.refresh_pin()?;
-            }
-            let stored_initial: Checkpoint = read_json(&initial_path)?;
-            stored_initial.validate()?;
-            if stored_initial.state_sha256 != expected_initial.state_sha256 {
-                return Err(invalid(
-                    "stored initial checkpoint differs from expected canonical checkpoint 0",
-                ));
             }
         }
 
@@ -2288,6 +2319,7 @@ impl TrainingDriver {
                 },
                 &previous.config.root,
             )),
+            false,
         )
     }
 
