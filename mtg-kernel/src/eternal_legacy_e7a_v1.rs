@@ -1430,16 +1430,12 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let life = i32::from(crate::engine::object_mana_value(state, card));
-            match crate::linked_aura_operation_v1::prepare_reanimated_metamorph(state, ctx, card) {
-                Ok(true) => {}
-                Ok(false) => return,
-                Err(_) => {
-                    halt(state, ctx.source);
-                    return;
-                }
-            }
-            if !crate::linked_aura_operation_v1::copy_declined_discard(state, card) {
-                put_onto_battlefield(state, card, ctx.controller);
+            // The common pre-batch copy hook may suspend this resolution before entry.
+            put_onto_battlefield(state, card, ctx.controller);
+            if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                || state.engine.halted.is_some()
+            {
+                return;
             }
             if life > 0 {
                 crate::effect::execute(

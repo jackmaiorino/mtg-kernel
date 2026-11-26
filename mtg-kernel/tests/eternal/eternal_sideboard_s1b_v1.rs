@@ -1612,7 +1612,7 @@ fn noncast_metamorph_face_down_and_peacekeeper_halt_only_on_selection() {
             Zone::Battlefield,
         );
         state.objects.get_mut(hidden).v4.face_down_v1 = Some(mtg_kernel::state::FaceDownV1 {
-            disguised: false,
+            disguised: true,
             lookers: 0,
             hidden_by: None,
             hidden_by_source: None,
@@ -1626,9 +1626,20 @@ fn noncast_metamorph_face_down_and_peacekeeper_halt_only_on_selection() {
                 .iter()
                 .find(|row| row["source"] == serde_json::json!(hidden))
                 .unwrap();
-            assert_eq!(redacted["card_def"], id("Face-down card"));
+            assert_eq!(redacted["card_def"], id("Face-down creature"));
             assert_eq!(menu["can_decline"], true);
         }
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let roster = forged["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"]
+            ["choice"]["ReanimateMetamorphV1"]["choice"]["candidates"]
+            .as_array_mut()
+            .unwrap();
+        let face = roster
+            .iter_mut()
+            .find(|row| row["source"] == serde_json::json!(hidden))
+            .unwrap();
+        face["card_def"] = id("Lava Spike").into();
+        assert_copy_restore_refused(forged, Action::FinishEffectSelection);
         for unsupported in [keeper, hidden] {
             let mut selected = state.clone();
             act(
@@ -1663,6 +1674,13 @@ fn noncast_metamorph_face_down_and_peacekeeper_halt_only_on_selection() {
         assert_eq!(life(&state, actor), 16);
         assert_eq!(state.objects.get(metamorph).card_def, id("Mind Stone"));
         assert!(!state.objects.get(metamorph).v4.is_token);
+        assert!(shroud_copy_menu(&state, actor).is_null());
+        let mana = state.players[actor.index()].mana_pool[ManaColor::C.pool_index()];
+        act(&mut state, Action::ActivateManaAbility(metamorph));
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            mana + 1
+        );
         mtg_kernel::event::propose_and_commit(
             &mut state,
             mtg_kernel::event::ProposedEvent::zone_change(metamorph, Zone::Graveyard),
@@ -1671,6 +1689,33 @@ fn noncast_metamorph_face_down_and_peacekeeper_halt_only_on_selection() {
             state.objects.get(metamorph).card_def,
             id("Phyrexian Metamorph")
         );
+    }
+}
+
+#[test]
+fn dress_down_suppresses_the_noncast_copy_menu_in_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let dress = put(&mut state, actor, "Dress Down", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        cast(&mut state, dress, &[]);
+        settled(&mut state);
+        put(&mut state, actor, "Mind Stone", Zone::Battlefield);
+        let metamorph = put(
+            &mut state,
+            actor.opponent(),
+            "Phyrexian Metamorph",
+            Zone::Graveyard,
+        );
+        let spell = put(&mut state, actor, "Reanimate", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 0);
+        cast(&mut state, spell, &[Target::Object(metamorph)]);
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+        assert_eq!(life(&state, actor), 16);
+        assert!(mtg_kernel::rl::pending_copy_entry_v1(&state, actor).is_none());
     }
 }
 
@@ -1710,6 +1755,18 @@ fn show_and_tell_noncast_metamorph_copies_only_preexisting_mind_stone() {
                 id("Mind Stone")
             );
         }
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let roster = forged["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"]
+            ["choice"]["ShowAndTellV1"]["choice"]["candidates"]
+            .as_array_mut()
+            .unwrap();
+        roster.push(
+            serde_json::to_value(mtg_kernel::state::AbilitySourceContractV4::capture(
+                &state, island,
+            ))
+            .unwrap(),
+        );
+        assert_copy_restore_refused(forged, Action::ChooseEffectTarget(Target::Object(island)));
         let mut declined = state.clone();
         act(&mut declined, Action::FinishEffectSelection);
         settled(&mut declined);
@@ -1739,7 +1796,6 @@ fn copied_entry_requirements_are_answered_before_reanimate_moves_the_card() {
             state.priority_player = actor;
             state.public_shroud_v1 = true;
             let donor = put(&mut state, actor, name, Zone::Battlefield);
-            settle_option(&mut state, 0);
             if name == "Cavern of Souls" {
                 let coating = put(&mut state, actor, "Liquimetal Coating", Zone::Battlefield);
                 activate(&mut state, coating, 0, &[Target::Object(donor)]);
@@ -1760,6 +1816,13 @@ fn copied_entry_requirements_are_answered_before_reanimate_moves_the_card() {
             let opponent = shroud_copy_menu(&state, actor.opponent());
             assert!(opponent.get("options").is_none());
             if step == "discard" {
+                let options = shroud_copy_menu(&state, actor)["options"]
+                    .as_array()
+                    .unwrap()
+                    .clone();
+                assert_eq!(options.len(), 2);
+                assert_eq!(options[0], serde_json::json!({"Discard":null}));
+                assert_eq!(options[1]["Discard"]["source"], serde_json::json!(land));
                 let mut declined = state.clone();
                 act(&mut declined, Action::ChooseEffectOption(0));
                 settled(&mut declined);
@@ -1854,6 +1917,7 @@ fn noncast_metamorph_copies_image_values_and_refuses_forged_frozen_values() {
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::R], 0);
         cast(&mut state, bolt, &[Target::Object(metamorph)]);
+        next(&mut state);
         assert_eq!(
             state.stack.len(),
             2,
@@ -2059,6 +2123,14 @@ fn reanimated_metamorph_chooses_painter_color_before_lethal_life_loss_both_seats
         );
         assert_eq!(zone(&state, metamorph), Zone::Graveyard);
         assert_eq!(life(&state, actor), 4);
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let pending = &mut forged["engine"]["linked_aura_operation_v1"]["pending_meddling_mage_v1"];
+        let requirement = pending["choice"]["CopyEntryOptionV1"]["choice"].clone();
+        pending["answers"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"CopyEntryOptionV1":{"choice":requirement,"index":0}}));
+        assert_copy_restore_refused(forged, Action::ChooseEffectOption(2));
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         act(&mut restored, Action::ChooseEffectOption(2));
@@ -2068,6 +2140,8 @@ fn reanimated_metamorph_chooses_painter_color_before_lethal_life_loss_both_seats
             restored.objects.get(metamorph).v4.chosen_color,
             Some(ManaColor::B)
         );
+        restored.objects.get_mut(metamorph).v4.chosen_color = Some(ManaColor::G);
+        assert_copy_restore_refused(serde_json::to_value(restored).unwrap(), Action::Pass);
     }
 }
 

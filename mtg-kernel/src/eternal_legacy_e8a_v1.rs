@@ -2305,11 +2305,13 @@ pub(crate) fn finish_selection(
         E8aChoiceV1::VialHandToBattlefieldV1 { paid_at } => {
             validate_vial_hand_choice(state, continuation, choice, *paid_at)?;
             if let Some(card) = chosen {
-                if !crate::linked_aura_operation_v1::prepare_vial_metamorph(
+                if !crate::linked_aura_operation_v1::prepare_registered_entry(
                     state,
-                    continuation,
-                    *paid_at,
                     card.object,
+                    crate::linked_aura_operation_v1::CopyProducer::PaidHand {
+                        continuation,
+                        paid_at: *paid_at,
+                    },
                 )? {
                     return Ok(false);
                 }

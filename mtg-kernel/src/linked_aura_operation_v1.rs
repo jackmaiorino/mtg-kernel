@@ -261,6 +261,8 @@ struct RunnerV1 {
     mage_names_v2: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     metamorph_mage_copies: Vec<mage_entry::MetamorphCopyV1>,
+    #[serde(skip)]
+    copy_resolution: Option<Box<crate::effect::ExecCtx>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     show_and_tell_entries: Vec<(
         crate::state::AbilitySourceContractV4,
@@ -671,6 +673,7 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         mage_plans: Vec::new(),
         mage_names_v2: true,
         metamorph_mage_copies: Vec::new(),
+        copy_resolution: None,
         show_and_tell_entries: Vec::new(),
         original_stack: enclosing.original_stack.clone(),
         original_history_len: enclosing.original_history_len,
@@ -1218,7 +1221,7 @@ fn potential_operation(state: &GameState) -> bool {
     mage_entry::vial::waiting(state)
         || crate::effect::needs_electroduplicate_entry_owner_v1(state)
         || state.stack.last().is_some_and(|item| {
-            show_and_tell::printed(item) || mage_entry::reanimate_metamorph_waiting(state, item)
+            show_and_tell::printed(item) || mage_entry::resolving_copy_waiting(state, item)
         })
         || ((!state.stack.is_empty() || state.engine.pending_effect.is_some())
             && mage_entry::potentially_enters(state))
@@ -1508,6 +1511,7 @@ fn replay_general_input_v1(
         mage_start: None,
         mage_plans: Vec::new(),
         metamorph_mage_copies: Vec::new(),
+        copy_resolution: None,
         show_and_tell_entries: Vec::new(),
         mage_names_v2: mage_names_v2
             .or_else(|| {
@@ -3032,24 +3036,16 @@ pub(crate) fn resolve_show_and_tell(
     }
     let mut proposals = Vec::new();
     for physical in entrants {
-        if mage_entry::vial::is_physical_metamorph_in_hand(state, physical.source) {
-            if let Some(choice) = show_and_tell::copy_choice(state, producer, physical)? {
-                let original_sha256 = state
-                    .engine
-                    .linked_aura_operation_v1
-                    .runtime
-                    .as_ref()
-                    .unwrap()
-                    .original_sha256
-                    .clone();
-                let checkpoint = GeneralChoiceV36::ShowAndTellV1 {
-                    choice: Box::new(choice),
-                    original_sha256,
-                };
-                if !prepare_copy_entry(state, physical.owner, checkpoint, Some((cast_at, item)))? {
-                    return Ok(true);
-                }
-            }
+        if !prepare_registered_entry(
+            state,
+            physical.source,
+            CopyProducer::ShowAndTell {
+                producer,
+                cast_at,
+                item,
+            },
+        )? {
+            return Ok(true);
         }
         let copy = metamorph_mage_copy(state, physical.source);
         let ProposedEvent::ZoneChange(mut proposal) =
@@ -3168,22 +3164,166 @@ fn show_and_tell_answer(
     Ok(None)
 }
 
-pub(crate) fn prepare_reanimated_metamorph(
+/// Install the actual native resolving spell for the duration of its program.
+/// A direct event or a synthetic effect context cannot acquire this authority.
+pub(crate) fn with_copy_resolution<T>(
+    state: &mut GameState,
+    item: &crate::state::StackItem,
+    ctx: Option<&crate::effect::ExecCtx>,
+    execute: impl FnOnce(&mut GameState) -> T,
+) -> T {
+    if mage_entry::resolving_copy_route(item).is_none() {
+        return execute(state);
+    }
+    let context = ctx
+        .or_else(|| {
+            state
+                .engine
+                .pending_effect
+                .as_ref()
+                .map(|pending| &pending.ctx)
+        })
+        .filter(|ctx| {
+            ctx.stack_item_id == Some(item.v4.stack_item_id)
+                && ctx.source == item.source
+                && ctx.controller == item.controller
+        })
+        .cloned();
+    let Some(runner) = state.engine.linked_aura_operation_v1.runtime.as_mut() else {
+        return execute(state);
+    };
+    let previous = std::mem::replace(&mut runner.copy_resolution, context.map(Box::new));
+    let result = execute(state);
+    if let Some(runner) = state.engine.linked_aura_operation_v1.runtime.as_mut() {
+        runner.copy_resolution = previous;
+    }
+    result
+}
+
+/// Prepare the whole roster before replacement effects inspect any member (CR 614.12).
+/// Returning false suspends the enclosing replay without committing the proposal.
+pub(crate) fn prepare_copy_batch(state: &mut GameState, events: &mut [ProposedEvent]) -> bool {
+    use crate::state::Zone;
+    if !cfg!(feature = "eternal-fixtures") || !events.iter().any(|event|
+        matches!(event, ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield)) {
+        return true;
+    }
+    let Some(ctx) = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .and_then(|runner| runner.copy_resolution.clone())
+    else {
+        return true;
+    };
+    for event in events {
+        let ProposedEvent::ZoneChange(change) = event else {
+            continue;
+        };
+        if change.to_zone != Zone::Battlefield
+            || !state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_ref()
+                .and_then(|r| r.original_stack.last())
+                .and_then(mage_entry::resolving_copy_route)
+                .is_some_and(|(zone, _)| {
+                    mage_entry::physical_copy_entrant(state, change.object, zone)
+                })
+            || crate::eternal_legacy_e7a_v1::prevents_zone_change(state, change)
+        {
+            continue;
+        }
+        match prepare_registered_entry(state, change.object, CopyProducer::Resolution(&ctx)) {
+            Ok(false) => return false,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return false;
+            }
+            Ok(true) if copy_declined_discard(state, change.object) => {
+                if state.objects.get(change.object).zone == Zone::Graveyard {
+                    return false;
+                }
+                change.to_zone = Zone::Graveyard;
+            }
+            Ok(true) => {}
+        }
+    }
+    true
+}
+
+/// Hand selections pass their native proof at the point where the chosen
+/// physical card becomes known. Generic effects use their resolving scope.
+pub(crate) enum CopyProducer<'a> {
+    Resolution(&'a crate::effect::ExecCtx),
+    PaidHand {
+        continuation: &'a crate::effect::EffectContinuation,
+        paid_at: usize,
+    },
+    ShowAndTell {
+        producer: crate::state::AbilitySourceContractV4,
+        cast_at: usize,
+        item: crate::ids::StackItemId,
+    },
+}
+
+pub(crate) fn prepare_registered_entry(
+    state: &mut GameState,
+    object: crate::ids::ObjectId,
+    producer: CopyProducer<'_>,
+) -> Result<bool, String> {
+    if metamorph_mage_copy(state, object).is_some() {
+        return Ok(true);
+    }
+    match producer {
+        CopyProducer::Resolution(ctx) => prepare_resolving_copy(state, ctx, object),
+        CopyProducer::PaidHand {
+            continuation,
+            paid_at,
+        } => prepare_vial_metamorph(state, continuation, paid_at, object),
+        CopyProducer::ShowAndTell {
+            producer,
+            cast_at,
+            item,
+        } => {
+            if !mage_entry::vial::is_physical_metamorph_in_hand(state, object) {
+                return Ok(true);
+            }
+            let physical = crate::state::AbilitySourceContractV4::capture(state, object);
+            let Some(choice) = show_and_tell::copy_choice(state, producer, physical)? else {
+                return Ok(true);
+            };
+            let original_sha256 = state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_ref()
+                .ok_or("Show and Tell copy lost its resolving operation")?
+                .original_sha256
+                .clone();
+            prepare_copy_entry(
+                state,
+                physical.owner,
+                GeneralChoiceV36::ShowAndTellV1 {
+                    choice: Box::new(choice),
+                    original_sha256,
+                },
+                Some((cast_at, item)),
+            )
+        }
+    }
+}
+
+fn prepare_resolving_copy(
     state: &mut GameState,
     ctx: &crate::effect::ExecCtx,
     object: crate::ids::ObjectId,
 ) -> Result<bool, String> {
-    if !mage_entry::physical_graveyard_metamorph(state, object) || ctx.stack_item_id.is_none() {
-        return Ok(true);
-    }
-    let ProposedEvent::ZoneChange(proposal) =
-        ProposedEvent::zone_change_to_battlefield_under_controller(object, ctx.controller)
-    else {
-        unreachable!("Reanimate proposes a zone change");
-    };
-    if crate::eternal_legacy_e7a_v1::prevents_zone_change(state, &proposal) {
-        return Ok(true);
-    }
     let runner = state
         .engine
         .linked_aura_operation_v1
@@ -3210,7 +3350,7 @@ pub(crate) fn prepare_reanimated_metamorph(
     prepare_noncast_metamorph(state, choice, false)
 }
 
-pub(crate) fn prepare_vial_metamorph(
+fn prepare_vial_metamorph(
     state: &mut GameState,
     pending: &crate::effect::EffectContinuation,
     paid_at: usize,
@@ -3350,7 +3490,11 @@ fn prepare_copy_entry(
         }
         pay_copy_entry_cost(state, &copy);
         copy.refresh_show_origin(state);
-        copy.record_prepared(state);
+        // Validate against the unmodified battlefield before any simultaneous move.
+        if crate::state::AbilitySourceContractV4::capture(state, copy.copied.source) != copy.copied
+        {
+            return Err("chosen copy source changed before its entry batch".into());
+        }
         stage_metamorph_mage_copy(state, copy)?;
     }
     Ok(true)
@@ -4609,6 +4753,7 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
         original_world_v50: None,
         active_fake_aura_entry_v50: None,
         metamorph_mage_copies: Vec::new(),
+        copy_resolution: None,
         show_and_tell_entries: Vec::new(),
     };
     state.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
@@ -4647,6 +4792,7 @@ mod runner_serde_tests {
             mage_plans: Vec::new(),
             mage_names_v2,
             metamorph_mage_copies: Vec::new(),
+            copy_resolution: None,
             show_and_tell_entries: Vec::new(),
         }
     }

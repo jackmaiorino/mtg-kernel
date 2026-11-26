@@ -32,7 +32,8 @@ pub(crate) fn printed(item: &StackItem) -> bool {
         && !item.is_copy
         && item.v4.source_contract.is_some_and(|source| {
             source.zone == Zone::Stack
-                && super::card_id_by_name("Show and Tell") == Some(source.card_def)
+                && crate::copy_entry_v1::registered_route(source.card_def)
+                    == Some(crate::copy_entry_v1::Route::ShowAndTell)
         })
 }
 

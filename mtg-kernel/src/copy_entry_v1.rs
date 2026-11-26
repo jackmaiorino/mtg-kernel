@@ -7,6 +7,37 @@ use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Only these native resolution paths own a noncast copy menu in this phase.
+/// Selection programs supply their authenticated hand answer. Ordinary resolving
+/// effects are intercepted at the zone proposal, including simultaneous batches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Route {
+    ResolvingSpell {
+        from: crate::state::Zone,
+        targeted: bool,
+    },
+    ShowAndTell,
+    PaidHandAbility,
+}
+
+pub(crate) fn registered_route(definition: u16) -> Option<Route> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    match crate::card_def::CARD_DEFS
+        .get(usize::from(definition))?
+        .name
+    {
+        "Reanimate" => Some(Route::ResolvingSpell {
+            from: crate::state::Zone::Graveyard,
+            targeted: true,
+        }),
+        "Show and Tell" => Some(Route::ShowAndTell),
+        "Aether Vial" => Some(Route::PaidHandAbility),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CopiableValuesV1 {
@@ -95,15 +126,18 @@ pub(crate) fn capture_menu(
             let object = candidate.object;
             if state.objects.get(object).v4.face_down_v1.is_some() {
                 let mut contract = AbilitySourceContractV4::capture(state, object);
+                // CR 708.2: the public contract must not disclose the face-down printing.
                 contract.card_def =
                     crate::rl::projected_card_def(state, object, contract.zone_change_count);
                 contracts.push(contract);
                 continue;
             }
+            // Freeze every value observable on this incarnation (CR 707.2).
+            // Older Saheeli and Phantasmal Image records omit inherited sacrifices
+            // and nightmare. Their original donor cannot be recovered here.
             let captured = capture_battlefield_copiable_values(state, object)
                 .ok_or("copy candidate lost its copiable characteristics")?;
             let mut contract = AbilitySourceContractV4::capture(state, object);
-            // A face-down permanent exposes only its anonymous characteristics (CR 708.2).
             contract.card_def = captured.card_def;
             contracts.push(contract);
             if captured.face_index != 0
@@ -267,6 +301,7 @@ pub(crate) fn requirement(
             )
             .collect(),
         "Anointed Peacekeeper"
+        | "Disruptor Flute"
         | "Heraldic Banner"
         | "Banner of Kinship"
         | "Phantasmal Image"
@@ -316,6 +351,19 @@ pub(crate) fn install_answer(state: &mut GameState, host: ObjectLinkV4, answer: 
             )),
         EntryAnswer::Discard(_) => {}
     }
+}
+
+/// CR 701.28: a single-faced physical card cannot transform. Keep the
+/// battlefield face copied at entry when the day/night designation changes.
+pub(crate) fn is_noncast_copy(state: &GameState, object: ObjectId) -> bool {
+    if !crate::eternal_vintage_v1::active_copy(state, object) {
+        return false;
+    }
+    let generation = state.objects.get(object).zone_change_count;
+    state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
+        .any(|(_, e)| matches!(e, crate::event::CommittedEvent::MeddlingMageEntryV1 { journal }
+            if matches!(journal.as_ref(), crate::eternal_sideboard_s1b_v1::meddling_mage_entry::JournalV1::MetamorphCopied {entrant,copy,..}
+                if entrant.source == object && entrant.zone_change_count == generation && copy.physical.zone != crate::state::Zone::Stack)))
 }
 
 /// Recover non-token inherited copy abilities from the committed entry. The regular
@@ -382,7 +430,34 @@ pub(crate) fn installed_values_match(
     let expected_mods = values
         .map(|values| &values.mods)
         .filter(|mods| !mods.is_empty());
-    live.card_def == entrant.card_def
+    let installed_answer = match copy.entry_answer {
+        None | Some(EntryAnswer::Discard(Some(_))) => true,
+        Some(EntryAnswer::Discard(None)) => false,
+        Some(EntryAnswer::Color(color)) => live.v4.chosen_color == Some(color),
+        Some(EntryAnswer::ProtectionType(index)) => state
+            .eternal_v1
+            .as_ref()
+            .is_some_and(|et| et.e5a.emissary_types.contains(&(host, index))),
+        Some(EntryAnswer::NeedleName(name)) => state
+            .eternal_v1
+            .as_ref()
+            .is_some_and(|et| et.lurrus.needle_names.contains(&(host, name))),
+        Some(EntryAnswer::RevokerName(name)) => state
+            .eternal_v1
+            .as_ref()
+            .is_some_and(|et| et.e7b.revoker_names.contains(&(host, name))),
+        Some(EntryAnswer::CreatureType(id)) => state
+            .eternal_v1
+            .as_ref()
+            .and_then(|et| et.e3.as_ref())
+            .is_some_and(|e3| {
+                e3.cavern_types
+                    .iter()
+                    .any(|(source, ty)| *source == host && ty.stable_id() == id)
+            }),
+    };
+    installed_answer
+        && live.card_def == entrant.card_def
         && mods.as_ref() == expected_mods
         && live.v4.face_index == values.map_or(0, |values| values.face_index)
         && live.v4.copied_nightmare_v1 == values.is_some_and(|values| values.copied_nightmare_v1)

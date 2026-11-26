@@ -17577,7 +17577,12 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     } else if let Some(owner) = printed_optional_owner {
         effect::resume_owned_printed_optional(state, owner)
     } else {
-        effect::resume_resumable_resolution(state)
+        crate::linked_aura_operation_v1::with_copy_resolution(
+            state,
+            &item,
+            None,
+            effect::resume_resumable_resolution,
+        )
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed)) => {
@@ -23804,6 +23809,28 @@ type ResolutionOwnersV1<'a> = (
 );
 
 fn execute_resolving_program(
+    state: &mut GameState,
+    item: &StackItem,
+    ctx: &ExecCtx,
+    program: &EffectOp,
+    squad_owner: Option<&effect::SquadRallierResolutionOwnerV1>,
+    frenzied_owner: Option<&effect::FrenziedGoblinResolutionOwnerV1>,
+    extra_owners: ResolutionOwnersV1<'_>,
+) -> ResolutionProgress {
+    crate::linked_aura_operation_v1::with_copy_resolution(state, item, Some(ctx), |state| {
+        execute_resolving_program_in_scope(
+            state,
+            item,
+            ctx,
+            program,
+            squad_owner,
+            frenzied_owner,
+            extra_owners,
+        )
+    })
+}
+
+fn execute_resolving_program_in_scope(
     state: &mut GameState,
     item: &StackItem,
     ctx: &ExecCtx,

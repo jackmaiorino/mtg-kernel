@@ -3071,7 +3071,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     // Only the schema 5 policy observation and the registered Premodern
     // ordered profile represent Meddling Mage's names (`meddling_mage_names`,
     // wave S1k). They never read a pending entry's saved world or answers, and
-    // still refuse a pending Metamorph copy menu.
+    // expose only the pending public copy menu or the viewer's own options.
     let mage_refused = if text_mode.accepts_public_shroud() {
         crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_copy_successor(state)
     } else if matches!(text_mode, ObservationTextModeV2::FlatForbiddenElided) {

@@ -3843,7 +3843,11 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
-fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
+fn propose_event(state: &mut GameState, mut event: ProposedEvent, individual_draw: bool) {
+    if !crate::linked_aura_operation_v1::prepare_copy_batch(state, std::slice::from_mut(&mut event))
+    {
+        return;
+    }
     if refuse_unowned_donated_damage(state, &event) {
         return;
     }
@@ -4755,7 +4759,7 @@ fn commit_with_entry_batch_and_source_color(
         || counter_input
             .as_ref()
             .is_some_and(|input| !input.seasons.is_empty());
-    let metamorph_mage_copy = match &event {
+    let mut metamorph_mage_copy = match &event {
         ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield => {
             crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object)
         }
@@ -5255,6 +5259,11 @@ fn commit_with_entry_batch_and_source_color(
             ..
         }
     );
+    if let Some(copy) = metamorph_mage_copy.as_mut() {
+        // Only a materialized entry earns a receipt. Replacement into exile or
+        // declining Mox Diamond's discard cannot leave an orphan preparation.
+        copy.record_prepared(state);
+    }
     let entry_history_index = state.engine.event_history.len();
     if let CommittedEvent::Damage { source, target, .. } = &committed {
         for (object, owner) in damage_public_owners {
@@ -5305,6 +5314,7 @@ fn commit_with_entry_batch_and_source_color(
         crate::full_text_v1::record_departure(state, entry_history_index, departure);
     }
     if let Some(copy) = metamorph_mage_copy {
+        let physical = copy.physical.source;
         if matches!(state.engine.event_history.get(entry_history_index),
             Some(CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, .. })
                 if *object == copy.physical.source && *from == copy.physical.zone)
@@ -5317,7 +5327,7 @@ fn commit_with_entry_batch_and_source_color(
         {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                copy.physical.source,
+                physical,
             ));
             return;
         }
@@ -6017,6 +6027,10 @@ impl FinalZonePtPlanV1 {
                 // against its real materialized row. Reuse the existing private
                 // constructor in this discarded scene; do not approximate that
                 // boost by merely writing v4.chosen_color.
+                let mut metamorph_mage_copy = metamorph_mage_copy;
+                if let Some(copy) = metamorph_mage_copy.as_mut() {
+                    copy.record_prepared(&mut scene);
+                }
                 let entry_index = scene.engine.event_history.len();
                 scene
                     .engine
@@ -7260,7 +7274,10 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
     crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
-fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {
+fn propose_and_commit_batch_unaudited(state: &mut GameState, mut events: Vec<ProposedEvent>) {
+    if !crate::linked_aura_operation_v1::prepare_copy_batch(state, &mut events) {
+        return;
+    }
     if events
         .iter()
         .any(|event| refuse_unowned_donated_damage(state, event))
@@ -9014,6 +9031,7 @@ fn materialize_zone_change_v1(
         },
         |(definition, _)| definition,
     );
+    let physical_face = state.objects.get(id).v4.face_index;
     let source_face = state.objects.get(id).v4.face_down_v1;
     let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
@@ -9126,7 +9144,19 @@ fn materialize_zone_change_v1(
     // once the permanent is on the battlefield (below).
     let printed_entry_tapped = to_zone == Zone::Battlefield
         && entering_face_down.is_none()
-        && permanent_enters_battlefield_tapped(state, id, owner, entry_definition);
+        && permanent_enters_battlefield_tapped(
+            state,
+            id,
+            if metamorph_mage_copy
+                .as_ref()
+                .is_some_and(|copy| copy.physical.zone != Zone::Stack)
+            {
+                battlefield_controller.unwrap_or(owner)
+            } else {
+                owner
+            },
+            entry_definition,
+        );
     let enters_battlefield_tapped =
         to_zone == Zone::Battlefield && (force_battlefield_tapped || printed_entry_tapped);
     {
@@ -9224,7 +9254,7 @@ fn materialize_zone_change_v1(
         }
     }
     if let Some(copy) = &metamorph_mage_copy {
-        crate::eternal_vintage_v1::retain_mage_copy_on_entry(state, copy);
+        crate::eternal_vintage_v1::retain_mage_copy_on_entry(state, copy, physical_face);
     }
     #[cfg(feature = "eternal-fixtures")]
     if from_zone == Zone::Battlefield && to_zone != Zone::Battlefield {
