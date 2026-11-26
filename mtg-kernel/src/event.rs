@@ -2328,6 +2328,12 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         path: Vec<u16>,
     },
+    /// Authenticated stack publication for a registered activated or triggered
+    /// copy-entry producer (Goblin Welder, Oath of Druids, Recurring Nightmare,
+    /// Animate Dead's return trigger).
+    CopyProducerAbilityPublishedV1 {
+        publication: Box<crate::copy_entry_v1::AbilityPublicationV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -7311,6 +7317,26 @@ fn pre_apply_batch_zone_replacements_v1(state: &mut GameState, events: &mut [Pro
 
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
     propose_and_commit_batch_unaudited(state, events);
+    finish_batch_audit(state);
+}
+
+/// Simultaneous batch that also sacrifices `sacrificed` (e.g., Goblin Welder).
+/// Runs the pre-batch copy hook before emitting `CommittedEvent::Sacrificed`
+/// so a suspended copy menu never snapshots a premature sacrifice marker.
+pub fn propose_and_commit_sacrifice_batch(
+    state: &mut GameState,
+    sacrificed: ObjectId,
+    mut events: Vec<ProposedEvent>,
+) {
+    if !crate::linked_aura_operation_v1::prepare_copy_batch(state, &mut events) {
+        return;
+    }
+    log_sacrifice(state, sacrificed);
+    commit_prepared_batch_unaudited(state, events);
+    finish_batch_audit(state);
+}
+
+fn finish_batch_audit(state: &mut GameState) {
     // Audited after the batch, once an owner order has selected its final
     // graveyard top (the check defers while the order is still open).
     let _ = crate::full_text_v1::donor_refusal_at(
@@ -7326,6 +7352,10 @@ fn propose_and_commit_batch_unaudited(state: &mut GameState, mut events: Vec<Pro
     if !crate::linked_aura_operation_v1::prepare_copy_batch(state, &mut events) {
         return;
     }
+    commit_prepared_batch_unaudited(state, events);
+}
+
+fn commit_prepared_batch_unaudited(state: &mut GameState, mut events: Vec<ProposedEvent>) {
     events.retain(|event| !crate::linked_aura_operation_v1::kept_in_graveyard(state, event));
     if events
         .iter()

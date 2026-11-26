@@ -14182,6 +14182,11 @@ fn drive_resumable_in_departure_scope_v1(
                         state.engine.pending_effect = Some(continuation);
                         return Ok(ResumableProgress::Suspended);
                     }
+                    if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                        || state.engine.halted.is_some()
+                    {
+                        return Ok(ResumableProgress::Suspended);
+                    }
                 }
                 EffectFrame::ChandraExileGrantV74 { capture, chosen } => {
                     chandra_flameshaper_v1::apply_grant(state, &continuation, capture, chosen)?;
@@ -15536,6 +15541,10 @@ fn drive_resumable_in_departure_scope_v1(
                         }
                         LibrarySearchDestinationV1::LibraryTopAfterShuffle => {}
                     }
+                    if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(&staged) {
+                        *state = staged;
+                        return Ok(ResumableProgress::Suspended);
+                    }
                     shuffle_after_search_move(state, &mut staged, player)?;
                     match destination {
                         LibrarySearchDestinationV1::BattlefieldTappedUntapWithFourLandsV1 => {
@@ -16428,6 +16437,11 @@ fn drive_resumable_in_departure_scope_v1(
                         state,
                         event::ProposedEvent::zone_change(object, Zone::Battlefield),
                     );
+                    if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                        || state.engine.halted.is_some()
+                    {
+                        return Ok(ResumableProgress::Suspended);
+                    }
                     continue;
                 }
                 let candidates = returning_aura_hosts(state, aura)?;
@@ -18196,7 +18210,9 @@ fn drive_resumable_in_departure_scope_v1(
                     return Ok(ResumableProgress::Suspended);
                 }
                 // The linked replay owns the checkpoint for an unanswered damage choice.
-                if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state) {
+                if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                    || state.engine.halted.is_some()
+                {
                     return Ok(ResumableProgress::Suspended);
                 }
             }

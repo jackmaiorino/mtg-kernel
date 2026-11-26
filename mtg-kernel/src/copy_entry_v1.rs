@@ -1,11 +1,15 @@
 //! Copiable characteristics frozen before a simultaneous entry batch (CR 614.12, 707.2).
-use crate::card_def::{card_id_by_name, Subtype};
+use crate::card_def::{card_id_by_name, Subtype, CARD_DEFS};
+use crate::effect::EffectOp;
 use crate::eternal_cube_c8b_v1::{current_copy_mods, read_state, C8bCopyModsV1};
-use crate::event;
-use crate::ids::{ObjectId, PlayerId};
-use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4};
+use crate::event::{self, CommittedEvent};
+use crate::event_history_v1::EventKindV1;
+use crate::ids::{ObjectId, PlayerId, StackItemId};
+use crate::state::{
+    AbilitySourceContractV4, GameState, ObjectLinkV4, StackItem, StackItemKind, Target, Zone,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Only these native resolution paths own a noncast copy menu in this phase.
 /// Selection programs supply their authenticated hand answer. Ordinary resolving
@@ -13,29 +17,100 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Route {
     ResolvingSpell {
-        from: crate::state::Zone,
+        from: Zone,
         targeted: bool,
         under_owner: bool,
     },
     ShowAndTell,
     PaidHandAbility,
+    ResolvingAbility {
+        kind: StackItemKind,
+        from: Zone,
+        targeted: bool,
+        under_owner: bool,
+    },
+}
+
+/// Authenticated stack publication for a registered activated or triggered
+/// copy-entry producer (CR 602.2, 603.3, 614.12, 707.9).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbilityPublicationV1 {
+    pub(crate) item: StackItemId,
+    pub(crate) kind: StackItemKind,
+    pub(crate) source: AbilitySourceContractV4,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) targets: Vec<Target>,
+    /// History anchor proving cost payment (activated) or the triggering event (triggered).
+    pub(crate) evidence_at: usize,
 }
 
 pub(crate) fn registered_route(definition: u16) -> Option<Route> {
     if !cfg!(feature = "eternal-fixtures") {
         return None;
     }
-    match crate::card_def::CARD_DEFS
-        .get(usize::from(definition))?
-        .name
-    {
+    match CARD_DEFS.get(usize::from(definition))?.name {
         "Reanimate" => Some(Route::ResolvingSpell {
-            from: crate::state::Zone::Graveyard,
+            from: Zone::Graveyard,
             targeted: true,
+            under_owner: false,
+        }),
+        "Exhume" => Some(Route::ResolvingSpell {
+            from: Zone::Graveyard,
+            targeted: false,
+            under_owner: true,
+        }),
+        "Flash" => Some(Route::ResolvingSpell {
+            from: Zone::Hand,
+            targeted: false,
+            under_owner: false,
+        }),
+        "Tinker" => Some(Route::ResolvingSpell {
+            from: Zone::Library,
+            targeted: false,
+            under_owner: false,
+        }),
+        "Shallow Grave" => Some(Route::ResolvingSpell {
+            from: Zone::Graveyard,
+            targeted: false,
+            under_owner: false,
+        }),
+        "Through the Breach" => Some(Route::ResolvingSpell {
+            from: Zone::Hand,
+            targeted: false,
+            under_owner: false,
+        }),
+        "Corpse Dance" => Some(Route::ResolvingSpell {
+            from: Zone::Graveyard,
+            targeted: false,
             under_owner: false,
         }),
         "Show and Tell" => Some(Route::ShowAndTell),
         "Aether Vial" => Some(Route::PaidHandAbility),
+        "Goblin Welder" => Some(Route::ResolvingAbility {
+            kind: StackItemKind::ActivatedAbility,
+            from: Zone::Graveyard,
+            targeted: true,
+            under_owner: true,
+        }),
+        "Oath of Druids" => Some(Route::ResolvingAbility {
+            kind: StackItemKind::TriggeredAbility,
+            from: Zone::Library,
+            targeted: false,
+            under_owner: true,
+        }),
+        "Recurring Nightmare" => Some(Route::ResolvingAbility {
+            kind: StackItemKind::ActivatedAbility,
+            from: Zone::Graveyard,
+            targeted: true,
+            under_owner: false,
+        }),
+        "Animate Dead" => Some(Route::ResolvingAbility {
+            kind: StackItemKind::TriggeredAbility,
+            from: Zone::Graveyard,
+            targeted: false,
+            under_owner: false,
+        }),
         _ => None,
     }
 }
@@ -45,11 +120,418 @@ pub(crate) fn entering_controller(
     physical: AbilitySourceContractV4,
 ) -> PlayerId {
     match registered_route(producer.card_def) {
-        Some(Route::ResolvingSpell {
-            under_owner: true, ..
-        }) => physical.owner,
+        Some(
+            Route::ResolvingSpell {
+                under_owner: true, ..
+            }
+            | Route::ResolvingAbility {
+                under_owner: true, ..
+            },
+        ) => physical.owner,
         _ => producer.controller,
     }
+}
+
+fn ability_effect_matches(name: &str, inline_effect: Option<&EffectOp>) -> bool {
+    use crate::eternal_cards_v1::EternalOpV1;
+    use crate::eternal_e5a_v1::E5aOpV1;
+    use crate::standard_cards_v1::StandardOpV1;
+    match name {
+        "Goblin Welder" => inline_effect == Some(&crate::eternal_legacy_e7a_v1::goblin_welder()),
+        "Recurring Nightmare" => {
+            inline_effect == Some(&crate::eternal_cube_c5c_v1::nightmare_return())
+        }
+        "Animate Dead" => {
+            inline_effect == Some(&crate::eternal_legacy_e7a_v1::animate_dead_return())
+        }
+        "Oath of Druids" => matches!(
+            inline_effect,
+            Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+                EternalOpV1::E5aV1(E5aOpV1::OathV1 { .. })
+            )))
+        ),
+        _ => false,
+    }
+}
+
+pub(crate) fn ability_route(item: &StackItem) -> Option<(Zone, bool, AbilitySourceContractV4)> {
+    if !cfg!(feature = "eternal-fixtures")
+        || item.is_copy
+        || item.v4.granted_by.is_some()
+        || item.v4.cauldron_grant.0.is_some()
+    {
+        return None;
+    }
+    let source = item.v4.ability_source_contract?;
+    if source.zone != Zone::Battlefield
+        || item.source != source.source
+        || item.controller != source.controller
+    {
+        return None;
+    }
+    let Route::ResolvingAbility {
+        kind,
+        from,
+        targeted,
+        ..
+    } = registered_route(source.card_def)?
+    else {
+        return None;
+    };
+    let name = CARD_DEFS.get(usize::from(source.card_def))?.name;
+    (item.kind == kind && ability_effect_matches(name, item.inline_effect.as_ref()))
+        .then_some((from, targeted, source))
+}
+
+pub(crate) fn is_step_boundary(event: &CommittedEvent) -> bool {
+    matches!(
+        event,
+        CommittedEvent::UpkeepBegan { .. }
+            | CommittedEvent::BeginningPrecombatMainV1 { .. }
+            | CommittedEvent::BeginningOfCombat { .. }
+            | CommittedEvent::BeginningEndStep { .. }
+    )
+}
+
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn record_activated_ability(
+    state: &mut GameState,
+    id: StackItemId,
+    payment_history_start: usize,
+) -> Result<(), String> {
+    let Some(row) = state
+        .stack
+        .last()
+        .filter(|row| row.v4.stack_item_id == id)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let Some((_, _, source)) = ability_route(&row) else {
+        return Ok(());
+    };
+    if row.kind != StackItemKind::ActivatedAbility {
+        return Ok(());
+    }
+    let publication = AbilityPublicationV1 {
+        item: id,
+        kind: row.kind,
+        source,
+        targets: row.targets,
+        evidence_at: payment_history_start,
+    };
+    let published_at = state.engine.event_history.len();
+    if !ability_publication_evidence_matches(state, published_at, &publication) {
+        return Err("copy-producer activation lost its paid cost evidence".into());
+    }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CopyProducerAbilityPublishedV1 {
+            publication: Box::new(publication),
+        });
+    Ok(())
+}
+
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn record_triggered_ability(
+    state: &mut GameState,
+    item: &StackItem,
+) -> Result<(), String> {
+    use crate::eternal_cards_v1::EternalOpV1;
+    use crate::eternal_e5a_v1::E5aOpV1;
+    use crate::standard_cards_v1::StandardOpV1;
+    let Some((_, _, source)) = ability_route(item) else {
+        return Ok(());
+    };
+    if item.kind != StackItemKind::TriggeredAbility {
+        return Ok(());
+    }
+    let name = CARD_DEFS[usize::from(source.card_def)].name;
+    let history = &state.engine.event_history;
+    let evidence_at = match name {
+        "Oath of Druids" => {
+            let Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E5aV1(
+                E5aOpV1::OathV1 { player },
+            )))) = item.inline_effect.as_ref()
+            else {
+                return Err("Oath of Druids trigger lost its upkeep player".into());
+            };
+            history
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(at, event)| match event {
+                    CommittedEvent::UpkeepBegan { player: began } if began == player => Some(at),
+                    _ => None,
+                })
+                .ok_or("Oath of Druids trigger has no upkeep event")?
+        }
+        "Animate Dead" => history
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(at, event)| match event {
+                CommittedEvent::ZoneChange {
+                    object,
+                    from,
+                    to: Zone::Battlefield,
+                    ..
+                } if *object == source.source && *from != Zone::Battlefield => Some(at),
+                _ => None,
+            })
+            .ok_or("Animate Dead trigger has no battlefield entry event")?,
+        _ => return Err("unknown copy-producer triggered ability".into()),
+    };
+    let publication = AbilityPublicationV1 {
+        item: item.v4.stack_item_id,
+        kind: item.kind,
+        source,
+        targets: item.targets.clone(),
+        evidence_at,
+    };
+    let published_at = state.engine.event_history.len();
+    if !ability_publication_evidence_matches(state, published_at, &publication) {
+        return Err("copy-producer trigger lost its event evidence".into());
+    }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CopyProducerAbilityPublishedV1 {
+            publication: Box::new(publication),
+        });
+    Ok(())
+}
+
+pub(crate) fn ability_publication_evidence_matches(
+    state: &GameState,
+    published_at: usize,
+    publication: &AbilityPublicationV1,
+) -> bool {
+    if !cfg!(feature = "eternal-fixtures")
+        || publication.source.zone != Zone::Battlefield
+        || publication.evidence_at >= published_at
+        || published_at > state.engine.event_history.len()
+    {
+        return false;
+    }
+    let Some(Route::ResolvingAbility { kind, .. }) = registered_route(publication.source.card_def)
+    else {
+        return false;
+    };
+    if publication.kind != kind {
+        return false;
+    }
+    let Some(def) = CARD_DEFS.get(usize::from(publication.source.card_def)) else {
+        return false;
+    };
+    let history = &state.engine.event_history;
+    match def.name {
+        "Goblin Welder" => {
+            let paid = &history[publication.evidence_at..published_at];
+            publication.targets.len() == 2
+                && publication
+                    .targets
+                    .iter()
+                    .all(|t| matches!(t, Target::Object(_)))
+                && !paid.iter().any(|event| {
+                    is_step_boundary(event)
+                        || matches!(
+                            event,
+                            CommittedEvent::SpellCast { .. }
+                                | CommittedEvent::CopyProducerAbilityPublishedV1 { .. }
+                                | CommittedEvent::DeclaredAttacker { .. }
+                                | CommittedEvent::ControllerAttacked { .. }
+                        )
+                        || matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == publication.source.source)
+                })
+                && paid.iter().any(
+                    |event| matches!(event, CommittedEvent::Tap { object } if *object == publication.source.source),
+                )
+        }
+        "Recurring Nightmare" => {
+            let paid = &history[publication.evidence_at..published_at];
+            publication.targets.len() == 1
+                && matches!(publication.targets[0], Target::Object(_))
+                && !paid.iter().any(|event| {
+                    is_step_boundary(event)
+                        || matches!(
+                            event,
+                            CommittedEvent::SpellCast { .. }
+                                | CommittedEvent::CopyProducerAbilityPublishedV1 { .. }
+                                | CommittedEvent::DeclaredAttacker { .. }
+                                | CommittedEvent::ControllerAttacked { .. }
+                        )
+                })
+                && paid.iter().any(|event| matches!(event, CommittedEvent::Sacrificed { controller_before, .. } if *controller_before == publication.source.controller))
+                && paid.iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before } if *object == publication.source.source && *to != Zone::Battlefield && *controller_before == publication.source.controller))
+        }
+        "Oath of Druids" => {
+            publication.targets.is_empty()
+                && matches!(
+                    history.get(publication.evidence_at),
+                    Some(CommittedEvent::UpkeepBegan { .. })
+                )
+                && !history[publication.evidence_at + 1..published_at]
+                    .iter()
+                    .any(is_step_boundary)
+        }
+        "Animate Dead" => {
+            let Some(live) = state.objects.try_get(publication.source.source) else {
+                return false;
+            };
+            let later = history[publication.evidence_at + 1..]
+                .iter()
+                .filter(|event| {
+                    matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == publication.source.source)
+                })
+                .count();
+            publication.targets.is_empty()
+                && live.owner == publication.source.owner
+                && matches!(
+                    history.get(publication.evidence_at),
+                    Some(CommittedEvent::ZoneChange {
+                        object,
+                        from,
+                        to: Zone::Battlefield,
+                        ..
+                    }) if *object == publication.source.source && *from != Zone::Battlefield
+                )
+                && live
+                    .zone_change_count
+                    .checked_sub(publication.source.zone_change_count)
+                    .is_some_and(|delta| delta as usize == later)
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn published_ability_index(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<usize, String> {
+    let (_, _, source) =
+        ability_route(item).ok_or("copy-entry ability is not a registered route")?;
+    let mut matches = state
+        .engine
+        .event_history
+        .of_kinds_v2(&[EventKindV1::CopyProducerAbilityPublishedV1])
+        .filter_map(|(at, event)| match event {
+            CommittedEvent::CopyProducerAbilityPublishedV1 { publication }
+                if publication.item == item.v4.stack_item_id =>
+            {
+                Some((at, publication.as_ref()))
+            }
+            _ => None,
+        });
+    let (at, publication) = matches
+        .next()
+        .ok_or("copy-entry ability has no stack publication receipt")?;
+    if matches.next().is_some()
+        || publication.kind != item.kind
+        || publication.source != source
+        || publication.targets != item.targets
+        || !ability_publication_evidence_matches(state, at, publication)
+        || state.engine.event_history[at + 1..]
+            .iter()
+            .any(is_step_boundary)
+    {
+        return Err("copy-entry ability lost its exact stack publication".into());
+    }
+    Ok(at)
+}
+
+pub(crate) fn ability_publication_at(
+    state: &GameState,
+    published_at: usize,
+) -> Option<&AbilityPublicationV1> {
+    match state.engine.event_history.get(published_at)? {
+        CommittedEvent::CopyProducerAbilityPublishedV1 { publication } => Some(publication),
+        _ => None,
+    }
+}
+
+pub(crate) fn validate_retained_abilities(state: &GameState) -> Result<(), String> {
+    use crate::eternal_cards_v1::EternalOpV1;
+    use crate::eternal_e5a_v1::E5aOpV1;
+    use crate::standard_cards_v1::StandardOpV1;
+
+    let has_receipts = state
+        .engine
+        .event_history
+        .has_any(&[EventKindV1::CopyProducerAbilityPublishedV1]);
+    let live_has_route = state
+        .stack
+        .iter()
+        .chain(
+            state
+                .engine
+                .pending_effect
+                .as_ref()
+                .map(|p| &p.resolving_item),
+        )
+        .any(|row| ability_route(row).is_some());
+    if !has_receipts && !live_has_route {
+        return Ok(());
+    }
+    if !cfg!(feature = "eternal-fixtures") {
+        return Err("copy-producer ability receipt is invalid without eternal fixtures".into());
+    }
+    let mut publications: HashMap<StackItemId, (usize, &AbilityPublicationV1)> = HashMap::new();
+    for (at, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[EventKindV1::CopyProducerAbilityPublishedV1])
+    {
+        let CommittedEvent::CopyProducerAbilityPublishedV1 { publication } = event else {
+            continue;
+        };
+        if !ability_publication_evidence_matches(state, at, publication)
+            || publications
+                .insert(publication.item, (at, publication.as_ref()))
+                .is_some()
+        {
+            return Err("copy-producer ability receipt failed validation".into());
+        }
+    }
+    let live_items = state.stack.iter().chain(
+        state
+            .engine
+            .pending_effect
+            .as_ref()
+            .map(|p| &p.resolving_item),
+    );
+    for row in live_items {
+        if let Some((_, _, source)) = ability_route(row) {
+            let Some(&(at, publication)) = publications.get(&row.v4.stack_item_id) else {
+                return Err(
+                    "live copy-producer ability lacks its stack publication receipt".into(),
+                );
+            };
+            let oath_player_matches = match row.inline_effect.as_ref() {
+                Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E5aV1(
+                    E5aOpV1::OathV1 { player },
+                )))) => matches!(
+                    state.engine.event_history.get(publication.evidence_at),
+                    Some(CommittedEvent::UpkeepBegan { player: began }) if began == player
+                ),
+                _ => true,
+            };
+            if publication.kind != row.kind
+                || publication.source != source
+                || publication.targets != row.targets
+                || !oath_player_matches
+                || state.engine.event_history[at + 1..]
+                    .iter()
+                    .any(is_step_boundary)
+            {
+                return Err("live copy-producer ability disagrees with its receipt".into());
+            }
+        } else if publications.contains_key(&row.v4.stack_item_id) {
+            return Err("stack item mutated away from its published copy-producer ability".into());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

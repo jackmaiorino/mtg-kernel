@@ -954,7 +954,7 @@ fn archon_trigger() -> EffectOp {
     ])
 }
 
-fn animate_dead_return() -> EffectOp {
+pub(crate) fn animate_dead_return() -> EffectOp {
     e7a(E7aOpV1::AnimateDeadReturnV1)
 }
 
@@ -1373,16 +1373,24 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }) else {
                 return;
             };
-            e7a_state(state)
-                .animating
-                .retain(|(host, _)| *host != aura_link);
             if !link_live_in(state, card, Zone::Graveyard)
                 || !definition(state, card.object)
                     .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
             {
+                e7a_state(state)
+                    .animating
+                    .retain(|(host, _)| *host != aura_link);
                 return;
             }
             put_onto_battlefield(state, card.object, ctx.controller);
+            if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                || state.engine.halted.is_some()
+            {
+                return;
+            }
+            e7a_state(state)
+                .animating
+                .retain(|(host, _)| *host != aura_link);
             if state.objects.get(card.object).zone != Zone::Battlefield {
                 return;
             }
@@ -1470,6 +1478,11 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             put_onto_battlefield(state, card, ctx.controller);
+            if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                || state.engine.halted.is_some()
+            {
+                return;
+            }
             if state.objects.get(card).zone != Zone::Battlefield {
                 return;
             }
@@ -1783,9 +1796,9 @@ fn goblin_welder_effect(ctx: &ExecCtx, state: &mut GameState) {
     if state.objects.get(card).owner != player {
         return;
     }
-    event::log_sacrifice(state, artifact);
-    event::propose_and_commit_batch(
+    event::propose_and_commit_sacrifice_batch(
         state,
+        artifact,
         vec![
             ProposedEvent::zone_change(artifact, Zone::Graveyard),
             ProposedEvent::zone_change_to_battlefield_under_controller(card, player),

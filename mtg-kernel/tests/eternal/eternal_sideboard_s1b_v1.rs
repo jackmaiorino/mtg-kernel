@@ -3975,6 +3975,276 @@ fn noncast_metamorph_copy_of_delver_and_temple_of_power_cannot_transform_in_plac
     }
 }
 
+fn roundtrip_snapshot(state: &GameState) -> GameState {
+    let encoded = serde_json::to_vec(state).unwrap();
+    let decoded: GameState = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(decoded.state_hash(), state.state_hash());
+    decoded
+}
+
+fn expect_copy_menu_and_branch(
+    paused: &GameState,
+    expected_chooser: PlayerId,
+    metamorph: ObjectId,
+    donor: ObjectId,
+    donor_name: &str,
+    excluded: Option<ObjectId>,
+    post_choice_answer: impl Fn(&GameState, Decision) -> Action,
+) -> (GameState, GameState) {
+    let mut probe = roundtrip_snapshot(paused);
+    match next(&mut probe) {
+        Decision::ChooseEffectTargets {
+            player,
+            source,
+            legal_targets,
+            can_finish,
+            ..
+        } => {
+            assert_eq!(player, expected_chooser);
+            assert_eq!(source, metamorph);
+            assert!(can_finish);
+            assert!(
+                legal_targets.contains(&Target::Object(donor)),
+                "donor {donor:?} missing from {legal_targets:?}"
+            );
+            if let Some(absent) = excluded {
+                assert!(
+                    !legal_targets.contains(&Target::Object(absent)),
+                    "same-batch/absent {absent:?} leaked into {legal_targets:?}"
+                );
+            }
+        }
+        other => panic!("expected noncast copy menu, got {other:?}"),
+    }
+
+    let mut copied = roundtrip_snapshot(paused);
+    act(
+        &mut copied,
+        Action::ChooseEffectTarget(Target::Object(donor)),
+    );
+    settle_with(&mut copied, |s, d| post_choice_answer(s, d));
+    let copied = roundtrip_snapshot(&copied);
+    assert_eq!(zone(&copied, metamorph), Zone::Battlefield);
+    assert_eq!(copied.objects.get(metamorph).card_def, id(donor_name));
+    assert_eq!(copied.objects.get(metamorph).controller, expected_chooser);
+    assert!(engine::object_has_type(
+        &copied,
+        metamorph,
+        CardType::Artifact
+    ));
+
+    let mut declined = roundtrip_snapshot(paused);
+    act(&mut declined, Action::FinishEffectSelection);
+    settle_with(&mut declined, |s, d| post_choice_answer(s, d));
+    let declined = roundtrip_snapshot(&declined);
+    assert_eq!(zone(&declined, metamorph), Zone::Graveyard);
+    assert_eq!(
+        declined.objects.get(metamorph).card_def,
+        id("Phyrexian Metamorph")
+    );
+
+    (copied, declined)
+}
+
+#[test]
+fn phase1b_paid_spell_routes_offer_copy_decline_and_restore() {
+    for actor in [P0, P1] {
+        // 1. Exhume (simultaneous batch: same-batch Wall of Blossoms is excluded; CR 614.12).
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let stone = put(&mut state, actor, "Mind Stone", Zone::Battlefield);
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Graveyard);
+            let wall = put(
+                &mut state,
+                actor.opponent(),
+                "Wall of Blossoms",
+                Zone::Graveyard,
+            );
+            let exhume = put(&mut state, actor, "Exhume", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::B], 1);
+            cast(&mut state, exhume, &[]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+            ));
+            let (copied, declined) = expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                stone,
+                "Mind Stone",
+                Some(wall),
+                |_, d| first_answer(d),
+            );
+            assert_eq!(zone(&copied, wall), Zone::Battlefield);
+            assert_eq!(zone(&declined, wall), Zone::Battlefield);
+        }
+
+        // 2. Flash (copy menu before Flash's pay-or-sacrifice choice).
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let stone = put(&mut state, actor, "Mind Stone", Zone::Battlefield);
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+            let flash = put(&mut state, actor, "Flash", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::U], 1);
+            cast(&mut state, flash, &[]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == flash
+            ));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(metamorph)),
+            );
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+            ));
+            // Option 0 pays Flash's reduced cost ({2} - {2} = {0} for Mind Stone;
+            // unpayable for declined 0/0 Metamorph so it sacrifices/dies to SBA).
+            expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                stone,
+                "Mind Stone",
+                None,
+                |_, d| first_answer(d),
+            );
+        }
+
+        // 3. Tinker (library search destination Battlefield + shuffle after entry).
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let stone = put(&mut state, actor, "Mind Stone", Zone::Battlefield);
+            let sac = put(&mut state, actor, "Mind Stone", Zone::Battlefield);
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Library);
+            let tinker = put(&mut state, actor, "Tinker", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::U], 2);
+            cast(&mut state, tinker, &[]);
+            if let Decision::ChooseCostTargets { .. } = next(&mut state) {
+                act(&mut state, Action::ChooseCostTarget(sac));
+            }
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == tinker
+            ));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(metamorph)),
+            );
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+            ));
+            expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                stone,
+                "Mind Stone",
+                None,
+                |_, d| first_answer(d),
+            );
+        }
+
+        // 4. Shallow Grave (top creature in graveyard gets copy choice, then haste).
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let strix = put(&mut state, actor, "Baleful Strix", Zone::Battlefield);
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Graveyard);
+            let spell = put(&mut state, actor, "Shallow Grave", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::B], 1);
+            cast(&mut state, spell, &[]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+            ));
+            let (copied, _) = expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                strix,
+                "Baleful Strix",
+                None,
+                |_, d| first_answer(d),
+            );
+            assert!(keyword(&copied, metamorph, Keywords::HASTE));
+        }
+
+        // 5. Through the Breach (creature from hand gets copy choice, then haste).
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let strix = put(&mut state, actor, "Baleful Strix", Zone::Battlefield);
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+            let breach = put(&mut state, actor, "Through the Breach", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::R], 4);
+            cast(&mut state, breach, &[]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == breach
+            ));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(metamorph)),
+            );
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+            ));
+            let (copied, _) = expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                strix,
+                "Baleful Strix",
+                None,
+                |_, d| first_answer(d),
+            );
+            assert!(keyword(&copied, metamorph, Keywords::HASTE));
+        }
+
+        // 6. Corpse Dance (top creature in graveyard gets copy choice, then haste).
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let strix = put(&mut state, actor, "Baleful Strix", Zone::Battlefield);
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Graveyard);
+            let dance = put(&mut state, actor, "Corpse Dance", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::B], 2);
+            cast(&mut state, dance, &[]);
+            if let Decision::ChooseKicker { .. } = next(&mut state) {
+                act(&mut state, Action::ChooseKicker(false));
+            }
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+            ));
+            let (copied, _) = expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                strix,
+                "Baleful Strix",
+                None,
+                |_, d| first_answer(d),
+            );
+            assert!(keyword(&copied, metamorph, Keywords::HASTE));
+        }
+    }
+}
+
 #[test]
 fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
     let mut state = islands();
@@ -4550,4 +4820,421 @@ fn show_and_tell_dual_metamorph_defers_mox_discard_until_both_choices_complete()
     let mut restored: GameState =
         serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
     act(&mut restored, Action::Pass);
+}
+
+#[test]
+fn phase1b_ability_routes_offer_copy_decline_and_restore() {
+    for actor in [P0, P1] {
+        // 7. Goblin Welder: simultaneous swap can copy the sacrificed artifact itself,
+        // and targeting an opponent's artifact gives the copy choice to that owner.
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let welder = put(&mut state, actor, "Goblin Welder", Zone::Battlefield);
+            let owner = actor.opponent();
+            let stone = put(&mut state, owner, "Mind Stone", Zone::Battlefield);
+            let metamorph = put(&mut state, owner, "Phyrexian Metamorph", Zone::Graveyard);
+            activate(
+                &mut state,
+                welder,
+                0,
+                &[Target::Object(stone), Target::Object(metamorph)],
+            );
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { player, source, .. })
+                if player == owner && source == metamorph
+            ));
+            let (mut copied, declined) = expect_copy_menu_and_branch(
+                &state,
+                owner,
+                metamorph,
+                stone,
+                "Mind Stone",
+                None,
+                |_, d| first_answer(d),
+            );
+            assert_eq!(zone(&copied, stone), Zone::Graveyard);
+            assert_eq!(zone(&declined, stone), Zone::Graveyard);
+            // Post-entry restored state must continue cleanly past validate_retained.
+            act(&mut copied, Action::Pass);
+        }
+
+        // 8. Oath of Druids: upkeep trigger gives the upkeep player the copy choice.
+        {
+            let mut state = islands();
+            state.active_player = actor.opponent();
+            state.priority_player = actor.opponent();
+            let _oath = put(&mut state, actor, "Oath of Druids", Zone::Battlefield);
+            let strix = put(
+                &mut state,
+                actor.opponent(),
+                "Baleful Strix",
+                Zone::Battlefield,
+            );
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Library);
+            run_until(
+                &mut state,
+                |s| s.active_player == actor && s.step == Step::Upkeep,
+                |_, _| None,
+            );
+            let mut revealed = false;
+            for _ in 0..80 {
+                match next(&mut state) {
+                    Decision::ChooseEffectOption { player, .. } => {
+                        assert_eq!(player, actor);
+                        act(&mut state, Action::ChooseEffectOption(0));
+                        revealed = true;
+                    }
+                    Decision::ChooseEffectTargets { source, .. } if source == metamorph => break,
+                    Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                    Decision::OrderTriggers { pending, .. } => act(
+                        &mut state,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    ),
+                    other => panic!("unexpected Oath decision: {other:?}"),
+                }
+            }
+            assert!(revealed);
+            let (mut copied, _) = expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                strix,
+                "Baleful Strix",
+                None,
+                |_, d| first_answer(d),
+            );
+            act(&mut copied, Action::Pass);
+        }
+
+        // 9. Recurring Nightmare: bounce+sacrifice cost already paid before copy menu.
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let nightmare = put(&mut state, actor, "Recurring Nightmare", Zone::Battlefield);
+            let fodder = put(&mut state, actor, "Wall of Blossoms", Zone::Battlefield);
+            let stone = put(&mut state, actor, "Mind Stone", Zone::Battlefield);
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Graveyard);
+            activate(&mut state, nightmare, 0, &[Target::Object(metamorph)]);
+            if let Decision::ChooseCostTargets { .. } = next(&mut state) {
+                act(&mut state, Action::ChooseCostTarget(fodder));
+            }
+            assert_eq!(zone(&state, nightmare), Zone::Hand);
+            assert_eq!(zone(&state, fodder), Zone::Graveyard);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+            ));
+            let (mut copied, _) = expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                stone,
+                "Mind Stone",
+                Some(fodder),
+                |_, d| first_answer(d),
+            );
+            act(&mut copied, Action::Pass);
+        }
+
+        // 10. Animate Dead: ETB return trigger offers copy choice before attaching.
+        {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let strix = put(&mut state, actor, "Baleful Strix", Zone::Battlefield);
+            let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Graveyard);
+            let animate = put(&mut state, actor, "Animate Dead", Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::B], 1);
+            cast(&mut state, animate, &[Target::Object(metamorph)]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+            ));
+            let (mut copied, declined) = expect_copy_menu_and_branch(
+                &state,
+                actor,
+                metamorph,
+                strix,
+                "Baleful Strix",
+                None,
+                |_, d| first_answer(d),
+            );
+            assert_eq!(zone(&copied, animate), Zone::Battlefield);
+            assert_eq!(
+                copied.objects.get(animate).v4.attached_to.map(|l| l.object),
+                Some(metamorph)
+            );
+            assert_eq!(zone(&declined, animate), Zone::Graveyard);
+            act(&mut copied, Action::Pass);
+        }
+    }
+}
+
+#[test]
+fn phase1b_forged_ability_origin_receipts_refused() {
+    // A. Live stack row without its CopyProducerAbilityPublishedV1 receipt is refused.
+    {
+        let mut state = islands();
+        let welder = put(&mut state, P0, "Goblin Welder", Zone::Battlefield);
+        let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+        let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Graveyard);
+        activate(
+            &mut state,
+            welder,
+            0,
+            &[Target::Object(stone), Target::Object(metamorph)],
+        );
+        let _ = next(&mut state);
+        assert_eq!(state.stack.len(), 1);
+        let valid = roundtrip_snapshot(&state);
+        assert_eq!(valid.state_hash(), state.state_hash());
+
+        // Strip CopyProducerAbilityPublishedV1 from event_history.
+        let mut stripped = serde_json::to_value(&state).unwrap();
+        let history = stripped["engine"]["event_history"].as_array_mut().unwrap();
+        let before_len = history.len();
+        history.retain(|ev| ev.get("CopyProducerAbilityPublishedV1").is_none());
+        assert_eq!(history.len() + 1, before_len);
+        assert_copy_restore_refused(stripped, Action::Pass);
+
+        // Tamper evidence_at to point past the Tap event.
+        let mut bad_evidence = serde_json::to_value(&state).unwrap();
+        let history = bad_evidence["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap();
+        let pub_idx = history
+            .iter()
+            .position(|ev| ev.get("CopyProducerAbilityPublishedV1").is_some())
+            .unwrap();
+        history[pub_idx]["CopyProducerAbilityPublishedV1"]["publication"]["evidence_at"] =
+            serde_json::json!(pub_idx);
+        assert_copy_restore_refused(bad_evidence, Action::Pass);
+
+        // Tamper source zone_change_count on the receipt.
+        let mut bad_source = serde_json::to_value(&state).unwrap();
+        bad_source["engine"]["event_history"][pub_idx]["CopyProducerAbilityPublishedV1"]
+            ["publication"]["source"]["zone_change_count"] = serde_json::json!(99);
+        assert_copy_restore_refused(bad_source, Action::Pass);
+
+        // Forge a second receipt reusing an earlier Tap across an intervening boundary/publication.
+        let mut stale_reuse = serde_json::to_value(&state).unwrap();
+        let mut forged_pub = stale_reuse["engine"]["event_history"][pub_idx].clone();
+        forged_pub["CopyProducerAbilityPublishedV1"]["publication"]["item"] =
+            serde_json::json!(999);
+        stale_reuse["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .push(forged_pub);
+        assert_copy_restore_refused(stale_reuse, Action::Pass);
+    }
+
+    // B. Post-entry completed MetamorphCopied with forged ability origin is refused.
+    {
+        let mut state = islands();
+        let nightmare = put(&mut state, P0, "Recurring Nightmare", Zone::Battlefield);
+        let fodder = put(&mut state, P0, "Wall of Blossoms", Zone::Battlefield);
+        let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+        let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Graveyard);
+        activate(&mut state, nightmare, 0, &[Target::Object(metamorph)]);
+        if let Decision::ChooseCostTargets { .. } = next(&mut state) {
+            act(&mut state, Action::ChooseCostTarget(fodder));
+        }
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+        ));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(stone)),
+        );
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Mind Stone"));
+
+        // Untampered round-trip succeeds.
+        let mut ok = roundtrip_snapshot(&state);
+        act(&mut ok, Action::Pass);
+
+        // Tamper ability.source.zone_change_count on MetamorphCopied.
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let copy = forged["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find_map(|event| {
+                event
+                    .get_mut("MeddlingMageEntryV1")?
+                    .get_mut("journal")?
+                    .get_mut("MetamorphCopied")?
+                    .get_mut("copy")
+            })
+            .unwrap();
+        copy["ability"]["source"]["zone_change_count"] = serde_json::json!(999);
+        assert_copy_restore_refused(forged, Action::Pass);
+
+        // Tamper the underlying CopyProducerAbilityPublishedV1 target.
+        let mut bad_target = serde_json::to_value(&state).unwrap();
+        let pub_row = bad_target["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|event| event.get("CopyProducerAbilityPublishedV1").is_some())
+            .unwrap();
+        pub_row["CopyProducerAbilityPublishedV1"]["publication"]["targets"] =
+            serde_json::json!([{"Object": fodder}]);
+        assert_copy_restore_refused(bad_target, Action::Pass);
+    }
+
+    // C. Animate Dead ETB trigger receipt tampered after resolution is refused.
+    {
+        let mut state = islands();
+        let strix = put(&mut state, P0, "Baleful Strix", Zone::Battlefield);
+        let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Graveyard);
+        let animate = put(&mut state, P0, "Animate Dead", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::B], 1);
+        cast(&mut state, animate, &[Target::Object(metamorph)]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+        ));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(strix)),
+        );
+        settled(&mut state);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Baleful Strix"));
+
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let pub_row = forged["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|event| event.get("CopyProducerAbilityPublishedV1").is_some())
+            .unwrap();
+        pub_row["CopyProducerAbilityPublishedV1"]["publication"]["evidence_at"] =
+            serde_json::json!(0);
+        assert_copy_restore_refused(forged, Action::Pass);
+    }
+
+    // D. Oath of Druids upkeep trigger receipt tampered after resolution is refused.
+    {
+        let mut state = islands();
+        state.active_player = P1;
+        state.priority_player = P1;
+        let _oath = put(&mut state, P0, "Oath of Druids", Zone::Battlefield);
+        let strix = put(&mut state, P1, "Baleful Strix", Zone::Battlefield);
+        let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Library);
+        run_until(
+            &mut state,
+            |s| s.active_player == P0 && s.step == Step::Upkeep,
+            |_, _| None,
+        );
+        for _ in 0..80 {
+            match next(&mut state) {
+                Decision::ChooseEffectOption { .. } => {
+                    act(&mut state, Action::ChooseEffectOption(0))
+                }
+                Decision::ChooseEffectTargets { source, .. } if source == metamorph => break,
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::OrderTriggers { pending, .. } => act(
+                    &mut state,
+                    Action::OrderTriggers((0..pending.len()).collect()),
+                ),
+                other => panic!("unexpected Oath decision: {other:?}"),
+            }
+        }
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(strix)),
+        );
+        settled(&mut state);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Baleful Strix"));
+
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let pub_row = forged["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|event| event.get("CopyProducerAbilityPublishedV1").is_some())
+            .unwrap();
+        pub_row["CopyProducerAbilityPublishedV1"]["publication"]["evidence_at"] =
+            serde_json::json!(0);
+        assert_copy_restore_refused(forged, Action::Pass);
+    }
+}
+
+#[test]
+fn phase1b_simultaneous_batch_mox_diamond_copy_and_restore() {
+    // 1. Goblin Welder sacrifices Mox Diamond while returning Phyrexian Metamorph
+    //    copying that sacrificed Mox Diamond and discarding a land from hand.
+    {
+        let mut state = islands();
+        state.active_player = P0;
+        state.priority_player = P0;
+        let welder = put(&mut state, P0, "Goblin Welder", Zone::Battlefield);
+        let mox = put(&mut state, P0, "Mox Diamond", Zone::Battlefield);
+        let land = put(&mut state, P0, "Island", Zone::Hand);
+        let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Graveyard);
+        activate(
+            &mut state,
+            welder,
+            0,
+            &[Target::Object(mox), Target::Object(metamorph)],
+        );
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { source, .. }) if source == metamorph
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(mox)));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, .. }) if player == P0
+        ));
+        act(&mut state, Action::ChooseEffectOption(1));
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Mox Diamond"));
+        assert_eq!(zone(&state, mox), Zone::Graveyard);
+        assert_eq!(zone(&state, land), Zone::Graveyard);
+        let mut restored = roundtrip_snapshot(&state);
+        act(&mut restored, Action::Pass);
+    }
+
+    // 2. Exhume simultaneously returns P0's Wall of Blossoms and P1's Phyrexian
+    //    Metamorph copying Mox Diamond (with P1 discarding a land from hand).
+    {
+        let mut state = islands();
+        state.active_player = P0;
+        state.priority_player = P0;
+        let mox = put(&mut state, P0, "Mox Diamond", Zone::Battlefield);
+        let wall = put(&mut state, P0, "Wall of Blossoms", Zone::Graveyard);
+        let metamorph = put(&mut state, P1, "Phyrexian Metamorph", Zone::Graveyard);
+        let land = put(&mut state, P1, "Island", Zone::Hand);
+        let exhume = put(&mut state, P0, "Exhume", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::B], 1);
+        cast(&mut state, exhume, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { player, source, .. })
+            if player == P1 && source == metamorph
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(mox)));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, .. }) if player == P1
+        ));
+        act(&mut state, Action::ChooseEffectOption(1));
+        settled(&mut state);
+        assert_eq!(zone(&state, wall), Zone::Battlefield);
+        assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Mox Diamond"));
+        assert_eq!(state.objects.get(metamorph).controller, P1);
+        assert_eq!(zone(&state, land), Zone::Graveyard);
+        let mut restored = roundtrip_snapshot(&state);
+        act(&mut restored, Action::Pass);
+    }
 }
