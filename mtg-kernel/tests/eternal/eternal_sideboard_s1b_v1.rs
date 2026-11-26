@@ -2119,6 +2119,10 @@ fn noncast_metamorph_copies_transformed_faces_before_containment_priest() {
                 settled(&mut world);
                 if priest && creature_back {
                     assert_eq!(zone(&world, metamorph), Zone::Exile);
+                    assert!(world.engine.event_history.iter().all(|event| !matches!(
+                        event,
+                        mtg_kernel::event::CommittedEvent::MeddlingMageEntryV1 { .. }
+                    )));
                 } else {
                     assert_eq!(zone(&world, metamorph), Zone::Battlefield);
                     assert_eq!(world.objects.get(metamorph).v4.face_index, 1);

@@ -4760,7 +4760,7 @@ fn commit_with_entry_batch_and_source_color(
         || counter_input
             .as_ref()
             .is_some_and(|input| !input.seasons.is_empty());
-    let mut metamorph_mage_copy = match &event {
+    let metamorph_mage_copy = match &event {
         ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield => {
             crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object)
         }
@@ -5260,9 +5260,13 @@ fn commit_with_entry_batch_and_source_color(
             ..
         }
     );
+    // CR 614.6: a zone change redirected by a replacement never made the
+    // proposed battlefield entry. Both copy receipts follow the committed move.
+    let mut metamorph_mage_copy = metamorph_mage_copy.filter(|copy| {
+        matches!(&committed, CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, .. }
+            if *object == copy.physical.source && *from == copy.physical.zone)
+    });
     if let Some(copy) = metamorph_mage_copy.as_mut() {
-        // Only a materialized entry earns a receipt. Replacement into exile or
-        // declining Mox Diamond's discard cannot leave an orphan preparation.
         copy.record_prepared(state);
     }
     let entry_history_index = state.engine.event_history.len();
@@ -5316,15 +5320,12 @@ fn commit_with_entry_batch_and_source_color(
     }
     if let Some(copy) = metamorph_mage_copy {
         let physical = copy.physical.source;
-        if matches!(state.engine.event_history.get(entry_history_index),
-            Some(CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, .. })
-                if *object == copy.physical.source && *from == copy.physical.zone)
-            && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
-                state,
-                copy,
-                entry_history_index,
-            )
-            .is_err()
+        if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
+            state,
+            copy,
+            entry_history_index,
+        )
+        .is_err()
         {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
