@@ -1878,7 +1878,9 @@ fn archon_of_cruelty_refuses_a_restored_dredge_before_its_discard_or_after_its_d
     // restored dredge, open or answered, staged while P1's discard still
     // waits, or again at the reveal after the draw was made, is refused.
     let line = archon_dredge_line(false);
-    let revealing = line.revealing.expect("the declined dredge's draw is a miracle");
+    let revealing = line
+        .revealing
+        .expect("the declined dredge's draw is a miracle");
     mtg_kernel::effect::validate_pending_effect_choice(&line.offered).unwrap();
     let mut answered = line.offered.clone();
     act(&mut answered, Action::FinishEffectSelection);

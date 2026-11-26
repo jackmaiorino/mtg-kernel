@@ -2121,7 +2121,11 @@ fn fomo_dredge_line() -> (GameState, GameState, GameState) {
         other => first_answer(other),
     });
     assert!(state.engine.halted.is_none());
-    assert_eq!(zone(&state, imp), Zone::Graveyard, "the dredge was declined");
+    assert_eq!(
+        zone(&state, imp),
+        Zone::Graveyard,
+        "the dredge was declined"
+    );
     assert!(hand_contains(&state, P0, fanatic));
     (
         discarding.expect("the discard waits inside the resolution"),
