@@ -359,20 +359,25 @@ pub(crate) fn is_noncast_copy(state: &GameState, object: ObjectId) -> bool {
     if !crate::eternal_vintage_v1::active_copy(state, object) {
         return false;
     }
-    let generation = state.objects.get(object).zone_change_count;
-    state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::MeddlingMageEntryV1])
-        .any(|(_, e)| matches!(e, crate::event::CommittedEvent::MeddlingMageEntryV1 { journal }
-            if matches!(journal.as_ref(), crate::eternal_sideboard_s1b_v1::meddling_mage_entry::JournalV1::MetamorphCopied {entrant,copy,..}
-                if entrant.source == object && entrant.zone_change_count == generation && copy.physical.zone != crate::state::Zone::Stack)))
+    let source = AbilitySourceContractV4::capture(state, object);
+    noncast_entry(state, source, state.engine.event_history.len()).is_some()
 }
 
-/// Recover non-token inherited copy abilities from the committed entry. The regular
-/// token receipt continues to authenticate actual token creations.
+/// Recover non-token inherited copy abilities from the committed entry.
+/// Ordinary token creations have a separate receipt.
 pub(crate) fn inherited_values(
     state: &GameState,
     source: AbilitySourceContractV4,
     before: usize,
 ) -> Option<&CopiableValuesV1> {
+    noncast_entry(state, source, before)?.values.as_ref()
+}
+
+fn noncast_entry(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+    before: usize,
+) -> Option<&crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1> {
     use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::JournalV1;
     if !cfg!(feature = "eternal-fixtures") {
         return None;
@@ -398,11 +403,32 @@ pub(crate) fn inherited_values(
                 && entrant.source == source.source
                 && entrant.owner == source.owner
                 && entrant.zone_change_count == source.zone_change_count
-                && entrant.card_def == source.card_def
                 && copy.physical.zone != crate::state::Zone::Stack)
-                .then_some(copy.values.as_ref())
-                .flatten()
+                .then_some(copy)
         })
+}
+
+/// Saheeli can cover this new nontoken entry until cleanup. Its existing
+/// saved record already restores the underlying subtype list. Recover the
+/// underlying ability flags from the entry instead of extending that record.
+pub(crate) fn set_covered_by_saheeli(state: &mut GameState, object: ObjectId, covered: bool) {
+    if !crate::eternal_vintage_v1::active_copy(state, object) {
+        return;
+    }
+    let source = AbilitySourceContractV4::capture(state, object);
+    let Some(values) = inherited_values(state, source, state.engine.event_history.len()) else {
+        return;
+    };
+    let count = values.copied_end_step_sacrifices_v1;
+    let nightmare = values.copied_nightmare_v1;
+    if count == 0 && !nightmare {
+        return;
+    }
+    let live = state.objects.get_mut(object);
+    let prior = live.v4.copied_nightmare_v1;
+    live.v4.copied_end_step_sacrifices_v1 = if covered { 0 } else { count };
+    live.v4.copied_nightmare_v1 = !covered && nightmare;
+    crate::effect::harvester_v1::record_layer(state, object, prior);
 }
 
 pub(crate) fn installed_values_match(
@@ -416,6 +442,7 @@ pub(crate) fn installed_values_match(
     if live.zone_change_count != entrant.zone_change_count
         || live.zone != crate::state::Zone::Battlefield
         || crate::eternal_cube_c8b_v1::has_saheeli_copy(state, entrant.source)
+        || crate::standard_cards_v1::active_aegis_copy(state, entrant.source)
         || crate::eternal_cube_c8c_v1::is_absorbing_copy(state, entrant.source)
         || crate::eternal_legacy_e7a_v1::active_copy(state, entrant.source)
     {
@@ -465,4 +492,92 @@ pub(crate) fn installed_values_match(
             == values.map_or(0, |values| values.copied_end_step_sacrifices_v1)
         && crate::eternal_pauper_pf2c_v1::is_prototyped_permanent(state, entrant.source)
             == values.is_some_and(|values| values.prototyped)
+}
+
+#[cfg(all(test, feature = "eternal-fixtures"))]
+mod tests {
+    use super::*;
+    use crate::engine::{advance_until_decision, step, Action, Decision};
+    use crate::state::{Step, Target, Zone};
+
+    #[test]
+    fn flat_actor_observes_completed_nonmage_copies_and_refuses_pending_or_named_copies() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for donor_name in ["Mind Stone", "Meddling Mage"] {
+                let cards = ["Reanimate", "Phyrexian Metamorph", donor_name, "Island"]
+                    .map(|name| card_id_by_name(name).unwrap());
+                let mut state = GameState::new_from_libraries(
+                    &cards,
+                    &cards,
+                    |id| {
+                        crate::card_def::CARD_DEFS[usize::from(id)]
+                            .object_name
+                            .into()
+                    },
+                    137,
+                );
+                state.active_player = player;
+                state.priority_player = player;
+                state.step = Step::Main1;
+                let mut place = |name: &str, zone| {
+                    let seat = &mut state.players[player.index()];
+                    let pos = seat
+                        .library
+                        .iter()
+                        .position(|id| {
+                            state.objects.get(*id).card_def == card_id_by_name(name).unwrap()
+                        })
+                        .unwrap();
+                    let object = seat.library.remove(pos);
+                    state.objects.get_mut(object).zone = zone;
+                    match zone {
+                        Zone::Hand => seat.hand.push(object),
+                        Zone::Graveyard => seat.graveyard.push(object),
+                        Zone::Battlefield => seat.battlefield.push(object),
+                        _ => unreachable!(),
+                    }
+                    object
+                };
+                let spell = place("Reanimate", Zone::Hand);
+                let entrant = place("Phyrexian Metamorph", Zone::Graveyard);
+                let donor = place(donor_name, Zone::Battlefield);
+                state.players[player.index()].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
+                let surface = crate::policy_surface_v5::PolicySurfaceV5::new();
+                let flat = |state: &GameState| {
+                    crate::rl::observe_policy_v5_unhashed_for_flat_policy(
+                        state, &surface, player, 0, 0, 0, 1,
+                    )
+                };
+                advance_until_decision(&mut state);
+                step(&mut state, Action::CastSpell(spell)).unwrap();
+                advance_until_decision(&mut state);
+                step(&mut state, Action::ChooseTarget(Target::Object(entrant))).unwrap();
+                let mut chose = false;
+                for _ in 0..24 {
+                    let response = advance_until_decision(&mut state);
+                    let action = match response {
+                        Decision::ChooseEffectTargets { source, .. } if source == entrant => {
+                            assert!(flat(&state).is_err());
+                            chose = true;
+                            Action::ChooseEffectTarget(Target::Object(donor))
+                        }
+                        Decision::ChooseMeddlingMageNameV1 { .. } => Action::ChooseEffectOption(0),
+                        Decision::CastSpellOrPass { .. } if chose && state.stack.is_empty() => {
+                            break
+                        }
+                        Decision::CastSpellOrPass { .. } => Action::Pass,
+                        other => panic!("unexpected copy decision: {other:?}"),
+                    };
+                    step(&mut state, action).unwrap();
+                }
+                assert!(chose);
+                assert_eq!(state.objects.get(entrant).zone, Zone::Battlefield);
+                assert_eq!(
+                    state.objects.get(entrant).card_def,
+                    card_id_by_name(donor_name).unwrap()
+                );
+                assert_eq!(flat(&state).is_ok(), donor_name == "Mind Stone");
+            }
+        }
+    }
 }

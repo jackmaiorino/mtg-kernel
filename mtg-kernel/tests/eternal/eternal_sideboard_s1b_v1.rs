@@ -1979,6 +1979,68 @@ fn noncast_metamorph_copies_token_blueprints_and_prototype_characteristics() {
 }
 
 #[test]
+fn noncast_saga_copy_gets_its_entry_lore_and_first_chapter() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let saga = put(
+            &mut state,
+            actor.opponent(),
+            "Fable of the Mirror-Breaker",
+            Zone::Battlefield,
+        );
+        let coating = put(&mut state, actor, "Liquimetal Coating", Zone::Battlefield);
+        activate(&mut state, coating, 0, &[Target::Object(saga)]);
+        settled(&mut state);
+        let metamorph = reanimate_copy(&mut state, actor);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(saga)));
+        settled(&mut state);
+        assert_eq!(state.objects.get(metamorph).counters.lore, 1);
+        assert!(state.players[actor.index()]
+            .battlefield
+            .iter()
+            .any(|id| state.objects.get(*id).v4.is_token
+                && engine::has_effective_subtype(
+                    &state,
+                    *id,
+                    mtg_kernel::card_def::Subtype::Goblin
+                )));
+    }
+}
+
+#[test]
+fn noncast_copy_of_daybound_creature_keeps_the_chosen_face() {
+    use mtg_kernel::state::DayNightV1;
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let donor = put(
+            &mut state,
+            actor.opponent(),
+            "Outland Liberator",
+            Zone::Battlefield,
+        );
+        let metamorph = reanimate_copy(&mut state, actor);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(donor)),
+        );
+        settled(&mut state);
+        assert_eq!(state.day_night_v1, Some(DayNightV1::Day));
+        pass_until(&mut state, |state| {
+            state.day_night_v1 == Some(DayNightV1::Night) && state.step == Step::Main1
+        });
+        assert_eq!(state.objects.get(donor).v4.face_index, 1);
+        assert_eq!(state.objects.get(metamorph).v4.face_index, 0);
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        act(&mut restored, Action::Pass);
+    }
+}
+
+#[test]
 fn noncast_metamorph_copies_transformed_faces_before_containment_priest() {
     use mtg_kernel::event::{propose_and_commit, ProposedEvent};
     for actor in [P0, P1] {
@@ -2483,11 +2545,12 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
 
     for actor in [P0, P1] {
         let opponent = actor.opponent();
-        for (bounce_vial, hidden) in [
-            (false, "Phyrexian Metamorph"),
-            (true, "Phyrexian Metamorph"),
-            (false, "Lodestone Golem"),
-            (false, "Island"),
+        for (bounce_vial, hidden, extended) in [
+            (false, "Phyrexian Metamorph", false),
+            (false, "Phyrexian Metamorph", true),
+            (true, "Phyrexian Metamorph", false),
+            (false, "Lodestone Golem", false),
+            (false, "Island", false),
         ] {
             let mut state = vial_metamorph_opening(actor, hidden);
             let refusal = frozen_opening_refusal(&state, opponent);
@@ -2585,6 +2648,8 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             assert_eq!(zone(&state, selected), Zone::Hand);
             assert_eq!(zone(&state, wrong_value), Zone::Hand);
             assert!(!state.objects.get(vial).tapped);
+            let stone =
+                extended.then(|| put(&mut state, opponent, "Mind Stone", Zone::Battlefield));
             let vial_generation = state.objects.get(vial).zone_change_count;
             activate(&mut state, vial, 0, &[]);
             assert!(matches!(next(&mut state),
@@ -2701,19 +2766,21 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
                 Action::ChooseEffectTarget(Target::Object(metamorph)),
             );
             let copy_choice = next(&mut state);
+            let other_copy = mage.unwrap_or(vial);
             for viewer in [actor, opponent] {
                 let menu = mtg_kernel::rl::pending_copy_entry_v1(&state, viewer).unwrap();
                 assert_eq!(menu.player, actor);
                 assert!(menu.can_decline);
-                assert!(menu
-                    .candidates
-                    .iter()
-                    .any(|candidate| candidate.source == wall));
+                let mut actual: Vec<_> = menu.candidates.iter().map(|c| c.source).collect();
+                let mut expected = vec![wall, other_copy];
+                expected.extend(stone);
+                actual.sort();
+                expected.sort();
+                assert_eq!(actual, expected);
             }
-            let other_copy = mage.unwrap_or(vial);
             assert!(matches!(&copy_choice, Decision::ChooseEffectTargets {
                 player, source, legal_targets, can_finish: true, ..
-            } if *player == actor && *source == vial && legal_targets.len() == 2
+            } if *player == actor && *source == vial && legal_targets.len() == 2 + usize::from(extended)
                 && legal_targets.contains(&Target::Object(wall))
                 && legal_targets.contains(&Target::Object(other_copy))));
             assert_eq!(zone(&state, metamorph), Zone::Hand);
@@ -2730,7 +2797,10 @@ fn paid_vial_metamorph_uses_private_hand_and_prospective_copy_both_seats() {
             assert!(engine::step(&mut wrong_incarnation, Action::FinishEffectSelection).is_err());
 
             let copy_snapshot = serde_json::to_vec(&state).unwrap();
-            for donor in [None, Some(wall), Some(other_copy)] {
+            for donor in [None, Some(wall), Some(other_copy)]
+                .into_iter()
+                .chain(stone.map(Some))
+            {
                 let mut restored: GameState = serde_json::from_slice(&copy_snapshot).unwrap();
                 assert_eq!(next(&mut restored), copy_choice);
                 act(

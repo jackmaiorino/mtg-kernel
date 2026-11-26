@@ -12934,9 +12934,14 @@ pub(crate) fn copiable_token_abilities_v1(
             crate::state::AbilitySourceContractV4::capture(state, object),
             state.engine.event_history.len(),
         ) {
+            let count = if crate::eternal_cube_c8b_v1::has_saheeli_copy(state, object) {
+                0
+            } else {
+                values.copied_end_step_sacrifices_v1
+            };
             return (live.zone == Zone::Battlefield
-                && live.v4.copied_end_step_sacrifices_v1 == values.copied_end_step_sacrifices_v1)
-                .then_some(values.copied_end_step_sacrifices_v1)
+                && live.v4.copied_end_step_sacrifices_v1 == count)
+                .then_some(count)
                 .ok_or_else(|| "copy lost inherited end-step ability count".into());
         }
     }

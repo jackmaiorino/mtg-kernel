@@ -1101,6 +1101,7 @@ pub(crate) fn end_temp_copy_before_departure(state: &mut GameState, object: Obje
                 copy_mods.push((link, prev));
             }
         }
+        crate::copy_entry_v1::set_covered_by_saheeli(state, object, false);
         crate::eternal_pauper_pf2c_v1::restore_saheeli_prototype(state, object);
     }
 }
@@ -1196,6 +1197,7 @@ pub(crate) fn begin_cleanup(state: &mut GameState) {
                 copy_mods.push((saved.host, prev));
             }
         }
+        crate::copy_entry_v1::set_covered_by_saheeli(state, saved.host.object, false);
         crate::eternal_pauper_pf2c_v1::restore_saheeli_prototype(state, saved.host.object);
     }
     if read_state(state).is_some_and(|c8b| !c8b.death_lki.is_empty()) {
@@ -1484,6 +1486,7 @@ fn resolve_saheeli_copy(ctx: &ExecCtx, state: &mut GameState) {
         values.face_index,
         mods,
     );
+    crate::copy_entry_v1::set_covered_by_saheeli(state, target_artifact, true);
     if values.prototyped {
         crate::eternal_pauper_pf2c_v1::note_prototyped_entry(state, target_artifact);
     } else {
