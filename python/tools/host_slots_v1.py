@@ -65,10 +65,12 @@ never changes what it means. It keeps its own records beside it, under
 
 Background jobs (`run --background` or Windows `adopt --background`) yield
 to both timed reservations and ordinary claims. Ordinary admission waits
-for complete suspension before using borrowed CPUs. Background tickets
-come after every ordinary ticket. OS --priority is independent of this
-allocation class; CI uses --background --priority idle. `adopt` watches a
-verified existing worker and all descendants until its job object empties.
+for complete suspension before using borrowed CPUs. On Windows, a background
+command that exits before acknowledging an ordinary handoff can let its
+remaining descendants finish before handing over. Background tickets come after
+every ordinary ticket. OS --priority is independent of this allocation class;
+CI uses --background --priority idle. `adopt` watches a verified existing worker
+and all descendants until its job object empties.
 Idle CI listeners do not need a claim.
 
 Optional per-host config, <root>/<HOST>.slots/config.json:
@@ -433,15 +435,6 @@ if os.name == "nt":
             raise OSError(ctypes.get_last_error(), "QueryInformationJobObject failed")
         _, listed = struct.unpack_from("<II", buf, 0)
         return list(struct.unpack_from(f"<{listed}Q", buf, 8))
-
-    def _process_exited(pid: int) -> bool:
-        handle = _OpenProcess(SYNCHRONIZE, False, pid)
-        if not handle:
-            return ctypes.get_last_error() == ERROR_INVALID_PARAMETER
-        try:
-            return _WaitForSingleObject(handle, 0) == WAIT_OBJECT_0
-        finally:
-            _CloseHandle(handle)
 
     def _suspend_pid(pid: int, suspend: bool) -> bool:
         handle = _OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
@@ -1380,11 +1373,10 @@ class Tree:
                 if handle:
                     _CloseHandle(handle)
 
-    def members(self, *, check_exit: bool = False) -> list[int]:
-        """Other processes in the tree. Windows can still list a PID after its process handle signals."""
+    def members(self) -> list[int]:
+        """Live processes of the tree other than this runner."""
         if os.name == "nt":
-            return [pid for pid in _job_members(self.job)
-                    if pid != os.getpid() and not (check_exit and _process_exited(pid))]
+            return [pid for pid in _job_members(self.job) if pid != os.getpid()]
         if self.child is None:
             return []
         try:
@@ -1734,9 +1726,9 @@ def _record_lends(claim: Path) -> bool:
     return record is None or _core_list(record.get("cores")) is None or bool(lent(record))
 
 
-def _set_state_locked(claim: Path, state: str) -> None:
+def _set_state_locked(claim: Path, state: str) -> bool:
     """Publish under the same mutex that protects timed admission and tree transitions."""
-    _update_claim_locked(claim, state=state)
+    return _update_claim_locked(claim, state=state)
 
 
 def _share_step(tree: "Tree", claim: Path, claim_id: str, share: dict, *, grow: bool) -> bool:
@@ -1859,6 +1851,7 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
             time.sleep(poll_seconds())
         code = None
         kill_pending = False
+        vacated = False
         grow_at = time.monotonic() + grow_seconds()
         while True:
             if kill_pending:
@@ -1874,10 +1867,9 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                     code = child.wait(timeout=poll_seconds())
                 except subprocess.TimeoutExpired:
                     pass
-            if code is not None and not tree.members(check_exit=True):
+            # A member seen in this snapshot could spawn another before exiting. Wait for an empty snapshot.
+            if code is not None and not tree.members():
                 break
-            if code is not None:
-                time.sleep(poll_seconds())
             with Mutex():
                 if overdue is not None and code is None:
                     action = _overdue_step(tree, claim, claim_id, overdue, share)
@@ -1888,16 +1880,33 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                 grow = share is not None and time.monotonic() >= grow_at
                 narrowed = _share_step(tree, claim, claim_id, share, grow=False) if share else True
                 conflict = claim_conflicts(guard, background) or not narrowed
-                complete = tree.set_suspended(conflict)
+                if (os.name == "nt" and background and conflict and not vacated
+                        and narrowed and not conflicts(guard)):
+                    # The ordinary claimant still waits for our acknowledgement, and no timed
+                    # reservation overlaps. Recheck after suspending in case the main child just exited.
+                    if code is None:
+                        complete = tree.set_suspended(True)
+                        code = child.poll()
+                    if code is not None:
+                        conflict = False
+                        complete = tree.set_suspended(False)
+                else:
+                    complete = tree.set_suspended(conflict)
                 # A partial suspension leaves the claim busy. Retry incomplete
                 # transitions on later polls without acknowledging vacated cores.
-                _set_state_locked(claim, "suspended" if conflict and complete else "running")
+                suspended = conflict and complete
+                published = _set_state_locked(claim, "suspended" if suspended else "running")
+                # A claimant may already have started after seeing a suspension acknowledgement.
+                # Keep yielding until the conflict clears and we confirm that the record is busy again.
+                vacated = suspended or (vacated and (conflict or not published))
                 if grow and not conflict:
                     if not _share_step(tree, claim, claim_id, share, grow=True):
                         # The job's mask or record is not settled: suspend until a later step settles it.
                         complete = tree.set_suspended(True)
                         _set_state_locked(claim, "suspended" if complete else "running")
                     grow_at = time.monotonic() + grow_seconds()
+            if code is not None:
+                time.sleep(poll_seconds())
         return code
     except BaseException:
         # Retain containment on every exit, including partial suspension errors.

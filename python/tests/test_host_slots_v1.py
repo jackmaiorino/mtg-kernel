@@ -339,59 +339,150 @@ class HostSlotsTests(unittest.TestCase):
                                                                 "lending": True})
         self.host, self.tmp_path = root, tmp_path
 
-    @unittest.skipUnless(os.name == "nt", "Windows job membership can lag process exit")
-    def test_suspended_claim_releases_after_its_last_job_member_exits(self):
+    @unittest.skipUnless(os.name == "nt", "Windows job suspension")
+    def test_exited_background_child_drains_helpers_without_handing_off(self):
+        for exit_during_suspend in (False, True):
+            with self.subTest(exit_during_suspend=exit_during_suspend):
+                self.check_background_helper(exit_during_suspend=exit_during_suspend)
+
+    @unittest.skipUnless(os.name == "nt", "Windows job suspension")
+    def test_exited_background_child_respects_prior_handoffs_and_timed_reservations(self):
+        for timed in (False, True):
+            with self.subTest(timed=timed):
+                self.check_background_helper(timed=timed, handed_off=not timed)
+
+    def check_background_helper(self, *, exit_during_suspend=False, timed=False, handed_off=False):
         claim_id = "a" * 32
         claim = slots.slots_dir() / f"claim-{claim_id}.json"
-        child_pid, descendant_pid = 110, 120
-        handles = {child_pid: object(), descendant_pid: object()}
+        ordinary = slots.slots_dir() / "claim-ordinary.json"
+        core = max(CPUS)
+        slots.write_json(slots.slots_dir() / "config.json", {"cores": str(core)})
+        child_pid, helper_pid = 110, 120
         child = MagicMock()
-        child.wait.side_effect = [subprocess.TimeoutExpired("probe", 0), 23]
         tree = slots.Tree.__new__(slots.Tree)
-        tree.cores, tree.suspended, tree.job = [CPUS[0]], set(), object()
+        tree.cores, tree.suspended, tree.job = [core], set(), object()
         tree.start = MagicMock(return_value=child)
         tree.kill = MagicMock()
-        descendant_exited = False
-        close_handle = slots._CloseHandle
+        main_exited, helper_ticks = False, 0
+        must_yield = timed or handed_off
+        released = False
 
-        def wait_for_member(handle, timeout):
-            self.assertEqual(timeout, 0)
-            if handle is handles[descendant_pid] and not descendant_exited:
-                return slots.WAIT_TIMEOUT
-            return slots.WAIT_OBJECT_0
+        def wait_for_main(timeout):
+            nonlocal main_exited
+            if child.wait.call_count == 1:
+                if timed:
+                    lock(self.host, cores=[core])
+                else:
+                    pid, creation = slots.self_identity()
+                    slots.write_json(ordinary, {"id": "ordinary", "pid": pid, "creation_time": creation,
+                                                "cores": [core], "state": "running"})
+                if exit_during_suspend or handed_off:
+                    raise subprocess.TimeoutExpired("probe", timeout)
+            main_exited = True
+            return 23
 
-        def finish_descendant(delay):
-            nonlocal descendant_exited
-            if delay != 0:
-                time.sleep(delay)  # Leave filesystem retry delays alone.
+        def members(_job):
+            pids = [os.getpid()]
+            if not main_exited:
+                pids.append(child_pid)
+            if helper_ticks < 2:
+                pids.append(helper_pid)
+            return pids
+
+        def suspend(pid, suspend):
+            nonlocal main_exited
+            if exit_during_suspend and pid == child_pid and suspend:
+                main_exited = True
+            return True
+
+        def tick(delay):
+            nonlocal helper_ticks, released
+            if delay:
+                time.sleep(delay)
                 return
-            self.assertEqual(slots.read_json(claim)["state"], "suspended")
-            self.assertFalse(descendant_exited, "a suspended claim kept waiting after its whole tree exited")
-            descendant_exited = True
+            record = slots.read_json(claim)
+            self.assertEqual(record["cores"], [core])
+            self.assertTrue(slots.claim_conflicts([core], True) or released)
+            if must_yield and not released:
+                self.assertEqual(record["state"], "suspended")
+                self.assertIn(helper_pid, tree.suspended)
+                (self.host / "TESTHOST.lock" if timed else ordinary).unlink()
+                released = True
+                return
+            self.assertNotIn(helper_pid, tree.suspended, "the exited child's helper is still suspended")
+            self.assertEqual(record["state"], "running")
+            self.assertEqual(released, must_yield)
+            self.assertLess(helper_ticks, 2, "the empty job did not release its claim")
+            helper_ticks += 1
 
-        # Keep both PIDs in the job's enumeration even after their process handles signal exit.
+        child.wait.side_effect = wait_for_main
+        child.poll.side_effect = lambda: 23 if main_exited else None
+        try:
+            with patch.object(slots, "Tree", return_value=tree), \
+                    patch.object(slots, "_job_members", side_effect=members), \
+                    patch.object(slots, "_suspend_pid", side_effect=suspend) as suspend_pid, \
+                    patch.object(slots, "poll_seconds", return_value=0), patch.object(slots, "time", wraps=time) as clock:
+                clock.sleep.side_effect = tick
+                code = slots.run("lane", "probe", 1, ["probe"], wait=True, claim_id=claim_id, background=True)
+            self.assertEqual(helper_ticks, 2)
+            self.assertEqual(code, 23)
+            self.assertFalse(claim.exists())
+            tree.kill.assert_not_called()
+            if not exit_during_suspend and not must_yield:
+                suspend_pid.assert_not_called()
+            events = [json.loads(line) for path in slots.util_dir().glob("events-*.jsonl")
+                      for line in path.read_text(encoding="utf-8").splitlines()]
+            self.assertTrue(any(event["event"] == "end" and event["id"] == claim_id
+                                and event["exit_code"] == 23 for event in events))
+        finally:
+            ordinary.unlink(missing_ok=True)
+            (self.host / "TESTHOST.lock").unlink(missing_ok=True)
+
+    @unittest.skipUnless(os.name == "nt", "Windows job membership")
+    def test_job_snapshot_cannot_release_while_a_grandchild_is_live(self):
+        claim_id = "b" * 32
+        claim = slots.slots_dir() / f"claim-{claim_id}.json"
+        parent_pid, grandchild_pid = 110, 120
+        tree = slots.Tree.__new__(slots.Tree)
+        tree.cores, tree.suspended, tree.job = [max(CPUS)], set(), object()
+        tree.start = MagicMock()
+        tree.start.return_value.wait.return_value = 23
+        tree.kill = MagicMock()
+        parent_handle = object()
+        open_process, wait, close = slots._OpenProcess, slots._WaitForSingleObject, slots._CloseHandle
+        parent_exited = grandchild_exited = False
+
+        def snapshot(_job):
+            nonlocal parent_exited
+            if not parent_exited:
+                # The parent spawns its successor and exits just after this snapshot.
+                parent_exited = True
+                return [os.getpid(), parent_pid]
+            return [os.getpid()] if grandchild_exited else [os.getpid(), grandchild_pid]
+
+        def tick(delay):
+            nonlocal grandchild_exited
+            if delay:
+                time.sleep(delay)
+                return
+            self.assertTrue(claim.exists())
+            self.assertFalse(grandchild_exited)
+            grandchild_exited = True
+
         with patch.object(slots, "Tree", return_value=tree), \
-                patch.object(slots, "claim_conflicts", side_effect=lambda *_: child.wait.call_count > 0), \
-                patch.object(slots, "process_state", return_value="alive"), \
-                patch.object(slots, "_job_members", return_value=[os.getpid(), child_pid, descendant_pid]), \
-                patch.object(slots, "_suspend_pid", return_value=True) as suspend, \
-                patch.object(slots, "_OpenProcess", side_effect=lambda _access, _inherit, pid: handles[pid]), \
-                patch.object(slots, "_WaitForSingleObject", side_effect=wait_for_member), \
+                patch.object(slots, "_job_members", side_effect=snapshot), \
+                patch.object(slots, "_OpenProcess", side_effect=lambda access, inherit, pid: (
+                    parent_handle if pid == parent_pid else open_process(access, inherit, pid))), \
+                patch.object(slots, "_WaitForSingleObject", side_effect=lambda handle, timeout: (
+                    slots.WAIT_OBJECT_0 if handle is parent_handle else wait(handle, timeout))), \
                 patch.object(slots, "_CloseHandle", side_effect=lambda handle: (
-                    close_handle(handle) if handle not in handles.values() else True)), \
+                    True if handle is parent_handle else close(handle))), \
                 patch.object(slots, "poll_seconds", return_value=0), patch.object(slots, "time", wraps=time) as clock:
-            clock.sleep.side_effect = finish_descendant
-            code = slots.run("lane", "probe", 1, ["probe"], wait=True, claim_id=claim_id, background=True)
-
-        self.assertTrue(descendant_exited, "the claim released while a descendant was still live")
-        self.assertEqual(code, 23)
+            clock.sleep.side_effect = tick
+            self.assertEqual(slots.run("lane", "probe", 1, ["probe"], claim_id=claim_id), 23)
+        self.assertTrue(grandchild_exited, "the claim released while a grandchild was still live")
         self.assertFalse(claim.exists())
-        self.assertEqual([call.args for call in suspend.call_args_list], [(child_pid, True), (descendant_pid, True)])
         tree.kill.assert_not_called()
-        events = [json.loads(line) for path in slots.util_dir().glob("events-*.jsonl")
-                  for line in path.read_text(encoding="utf-8").splitlines()]
-        self.assertEqual([(event["id"], event.get("exit_code")) for event in events if event["event"] == "end"],
-                         [(claim_id, 23)])
 
     @needs_two
     def test_request_core_pool_is_contained_and_cannot_borrow_timed_cores(self):
