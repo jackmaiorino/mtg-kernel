@@ -766,14 +766,26 @@ fn restart_run_ids_parse_and_prepare_after_stopped_b1() {
         assert_eq!(parse_training_run(bad), None, "{bad}");
     }
 
+    // Prepare b1 first to produce the archived pinned initial checkpoint (state sha256 90cff6d7...).
     let root = Scratch::new();
     let (mut args, mut spec, _) = fixture(&root.0);
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+    assert!(launch(&args).unwrap());
+    let b1_init_path = root.0.join("b1/initial/checkpoint.json");
+    let b1_init_pin = pinned(&b1_init_path);
+    let b1_ckpt: Value = serde_json::from_slice(&fs::read(&b1_init_path).unwrap()).unwrap();
+    assert_eq!(
+        b1_ckpt["state_sha256"],
+        "90cff6d7f7c58ad606c71d14274457a2cbe2836e2113e192d8012eec9fd2016f"
+    );
+
+    let b1_run_pin = pinned(&root.0.join("b1/run.json"))["sha256"].clone();
     let mut manifest = fs::read_to_string(root.0.join("manifest")).unwrap();
     append_entry(
         &mut manifest,
         5,
         "training_run",
-        json!({"run_id":"shakedown-pods/b1","tripwire":{"mode":"q9"},"files":{"b1/run.json":"0".repeat(64)}}),
+        json!({"run_id":"shakedown-pods/b1","tripwire":{"mode":"q9"},"files":{"b1/run.json":b1_run_pin}}),
     );
     append_entry(
         &mut manifest,
@@ -783,26 +795,31 @@ fn restart_run_ids_parse_and_prepare_after_stopped_b1() {
     );
     spec["manifest"] = write_pin(&root.0, "manifest", manifest.as_bytes());
     spec["manifest_prefix_sha256"] = spec["manifest"]["sha256"].clone();
-    fs::write(&args.inputs, spec.to_string()).unwrap();
 
+    // Restart b2 refuses without pinned initial_checkpoint (D0.12 / D0.18).
     args.run = "b2".into();
     args.prepare = true;
-    let init = seed(&[
-        SeedPart::Str("shakedown-pods"),
-        SeedPart::Str("pod"),
-        SeedPart::Str("i1"),
-        SeedPart::Int(0),
-    ])
-    .unwrap();
-    let inputs_for_b2: Inputs = serde_json::from_value(spec.clone()).unwrap();
-    let data_for_b2 = inputs_for_b2.load().unwrap();
-    let cfg_b2 = inputs_for_b2.config(&args, &data_for_b2).unwrap();
-    let b2_init_sha =
-        TrainingDriver::initial_state_sha256(&cfg_b2, &data_for_b2.rows, init).unwrap();
-    assert_ne!(b2_init_sha, spec["initial_state_sha256"].as_str().unwrap());
-    spec["initial_state_sha256"] = json!(b2_init_sha);
     fs::write(&args.inputs, spec.to_string()).unwrap();
+    assert!(launch(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("initial_checkpoint"));
+    assert!(!root.0.join("b2").exists());
 
+    // Restart b2 refuses if initial_state_sha256 does not match the archived file's signed state digest.
+    let mut wrong_pin = spec.clone();
+    wrong_pin["initial_checkpoint"] = b1_init_pin.clone();
+    wrong_pin["initial_state_sha256"] = json!("0".repeat(64));
+    fs::write(&args.inputs, wrong_pin.to_string()).unwrap();
+    assert!(launch(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("state sha256 mismatch"));
+    assert!(!root.0.join("b2").exists());
+
+    // Restart b2 loads the archived b1 initial checkpoint under its signed digest 90cff6d7... with no seed draw.
+    spec["initial_checkpoint"] = b1_init_pin.clone();
+    fs::write(&args.inputs, spec.to_string()).unwrap();
     assert!(launch(&args).unwrap());
     assert!(root.0.join("b2/run.json").is_file());
     assert!(!root.0.join("b2/updates/update-0000").exists());
@@ -810,10 +827,16 @@ fn restart_run_ids_parse_and_prepare_after_stopped_b1() {
         serde_json::from_slice(&fs::read(root.0.join("b2/initial/checkpoint.json")).unwrap())
             .unwrap();
     assert_eq!(b2_ckpt["run"], "b2");
-    assert_eq!(b2_ckpt["state_sha256"], b2_init_sha);
+    assert_eq!(b2_ckpt["model"], b1_ckpt["model"]);
+    let b2_run_doc: Value =
+        serde_json::from_slice(&fs::read(root.0.join("b2/run.json")).unwrap()).unwrap();
     assert_eq!(
-        b2_ckpt["parameter_layout_sha256"],
-        "da3770aecef52011764d3cc330fb783eaf76ab63cdafefc843c9381aeff1fd0b"
+        b2_run_doc["launch_pins"]["initial_state"],
+        "90cff6d7f7c58ad606c71d14274457a2cbe2836e2113e192d8012eec9fd2016f"
+    );
+    assert_eq!(
+        b2_run_doc["launch_pins"]["initial_checkpoint"],
+        b1_init_pin["sha256"]
     );
 
     // Authorizing b2 at seq 7 passes verify_run and rejects k2 prepare before b2 completes.

@@ -1760,6 +1760,93 @@ impl TrainingDriver {
         Self::open_from_state(config, rows, model, optimizer, lineage, Vec::new(), None)
     }
 
+    /// Open a restarted builder-only run by loading an archived pinned initial
+    /// checkpoint (D0.12 / D0.18) without drawing the initialiser seed again.
+    pub fn open_from_initial_checkpoint(
+        config: RunConfig,
+        rows: Arc<ModelCardRowsV1>,
+        source_checkpoint: &Checkpoint,
+        expected_source_state_sha256: &str,
+    ) -> Result<Self, TrainingDriverError> {
+        if config.segment != Segment::BuilderOnly {
+            return Err(invalid(
+                "initial checkpoint restart requires a builder configuration",
+            ));
+        }
+        source_checkpoint.validate()?;
+        if source_checkpoint.state_sha256 != expected_source_state_sha256 {
+            return Err(invalid(
+                "archived initial checkpoint state sha256 differs from pin",
+            ));
+        }
+        if source_checkpoint.segment != Segment::BuilderOnly
+            || source_checkpoint.update != 0
+            || source_checkpoint.head_updates != HeadUpdates::default()
+            || source_checkpoint.boundary.is_some()
+            || !source_checkpoint.lineage.is_empty()
+        {
+            return Err(invalid(
+                "archived initial checkpoint is not an untrained builder checkpoint 0",
+            ));
+        }
+        if source_checkpoint.card_index_sha256 != config.pins.card_index
+            || source_checkpoint.cube_table_sha256 != config.pins.cube_table
+            || source_checkpoint.card_database_sha256 != config.metadata.card_database_sha256
+            || source_checkpoint.column_scales != config.metadata.column_scales
+            || source_checkpoint.dense_fields != config.metadata.dense_fields
+            || source_checkpoint.training_math != config.metadata.training_math
+            || source_checkpoint.sampler != config.metadata.sampler
+            || source_checkpoint.constants != config.metadata.constants
+            || source_checkpoint.model_identity != config.metadata.model_identity
+        {
+            return Err(invalid(
+                "archived initial checkpoint metadata differs from run configuration",
+            ));
+        }
+        let template =
+            ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 0)
+                .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
+        if source_checkpoint.parameter_layout_sha256 != model_layout_pin(&template) {
+            return Err(invalid(
+                "archived initial checkpoint parameter layout differs from model",
+            ));
+        }
+        let (model, optimizer) = source_checkpoint
+            .model
+            .restore(template, source_checkpoint.head_updates)
+            .map_err(TrainingDriverError::Update)?;
+        Self::open_from_state(config, rows, model, optimizer, Vec::new(), Vec::new(), None)
+    }
+
+    /// Open an already-prepared pick-phase run from its staged initial checkpoint
+    /// without drawing any initialiser seed.
+    pub fn open_existing_pick_phase(
+        config: RunConfig,
+        rows: Arc<ModelCardRowsV1>,
+    ) -> Result<Self, TrainingDriverError> {
+        if config.segment != Segment::PickPhase || config.open_intent != OpenIntent::Run {
+            return Err(invalid(
+                "open_existing_pick_phase requires a prepared pick-phase run",
+            ));
+        }
+        let initial_path = config.root.join("initial/checkpoint.json");
+        let checkpoint: Checkpoint = read_json(&initial_path)?;
+        checkpoint.validate()?;
+        let template =
+            ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 0)
+                .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
+        if checkpoint.parameter_layout_sha256 != model_layout_pin(&template) {
+            return Err(invalid(
+                "pick-phase initial checkpoint parameter layout differs from model",
+            ));
+        }
+        let (model, optimizer) = checkpoint
+            .model
+            .restore(template, checkpoint.head_updates)
+            .map_err(TrainingDriverError::Update)?;
+        Self::open_from_state(config, rows, model, optimizer, Vec::new(), Vec::new(), None)
+    }
+
     fn open_from_state(
         mut config: RunConfig,
         rows: Arc<ModelCardRowsV1>,
