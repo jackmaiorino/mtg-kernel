@@ -12424,15 +12424,14 @@ pub(crate) mod tests {
 
     /// First reached slot of `sd1_capture_without_head_compare_keeps_its_bytes`.
     const SD1_CAPTURE_FIXTURE_SLOT_V1: usize = 0;
-    /// The fixture uses platform libm. The Windows digest was measured on
-    /// 3ca7b1ad4 before the head comparison. The non-Windows digest comes
-    /// from the pre-comparison main probe run 45767846527.
+    /// The fixture uses platform libm. Both digests were measured on
+    /// 3ca7b1ad4 before the head comparison.
     #[cfg(windows)]
     const SD1_CAPTURE_FIXTURE_SHA256_V1: &str =
         "750720bab1985de1e1d35fa628da3393e8c0a34386d89cce1720382040b1c735";
     #[cfg(not(windows))]
     const SD1_CAPTURE_FIXTURE_SHA256_V1: &str =
-        "1914e32a1e5fea6dfaa1407c5acb31ccf33c87c6b76e966f4e8609ef1d6385db";
+        "b31f6de2191e1007f24819af8796c9dad30aa4f509bda742067ce2cc3aad21f5";
 
     /// The head comparison changes no existing capture: the SD1 capture of a
     /// fixture (rollout and value-leaf arms, both reference halves, the root
