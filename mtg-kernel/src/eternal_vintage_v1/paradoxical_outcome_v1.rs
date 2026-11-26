@@ -308,8 +308,13 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     if returned.arrivals != owned_arrivals(state, &pending.ctx, batch) {
         return Err("Paradoxical Outcome changed its actual hand arrivals".into());
     }
-    let (path, remaining) = crate::eternal_vintage_e7b_v1::dredge::draw_stage(pending)
-        .ok_or("Paradoxical Outcome lost its original draw stage")?;
+    let Some((path, remaining)) = crate::eternal_vintage_e7b_v1::dredge::draw_stage(pending) else {
+        // The staged next draw waits for a miracle reveal.
+        if miracle_draw_stage(state, pending) {
+            return Ok(());
+        }
+        return Err("Paradoxical Outcome lost its original draw stage".into());
+    };
     if !draw_stage_matches(state, pending, path, remaining) {
         return Err("Paradoxical Outcome draw changed its progress or remaining effects".into());
     }
@@ -321,6 +326,37 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         remaining,
         "Paradoxical Outcome draw",
     )
+}
+
+/// The next draw of a copied Paradoxical Outcome, staged with no
+/// replacement choice yet, while its controller's first draw this turn (a
+/// miracle card, drawn by an earlier draw of this copy after its return
+/// batch) waits for its reveal (702.94a). Its frames are exactly the stage
+/// `complete` leaves.
+pub(crate) fn miracle_draw_stage(state: &GameState, pending: &EffectContinuation) -> bool {
+    let Some(progress) = progress(state, pending) else {
+        return false;
+    };
+    let Some((
+        EffectFrame::Program {
+            op:
+                EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                },
+            path,
+        },
+        below,
+    )) = pending.frames.split_last()
+    else {
+        return false;
+    };
+    pending.choice.is_none()
+        && pending.answered_choice_guard.is_none()
+        && progress.completed > 0
+        && crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, progress.controller)
+            .is_some_and(|(at, _)| at >= progress.returned.end)
+        && draw_stage_matches(state, pending, path, below)
 }
 
 pub(crate) fn draw_stage_matches(

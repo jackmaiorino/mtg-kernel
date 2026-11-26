@@ -376,11 +376,16 @@ pub enum EventKindV1 {
     EtaliPrimalStormReceiptV1,
     SpellCopyCostPaidV1,
     LinkedExileDepartureV1,
+    MiracleDrawSuspendedV1,
+    MiracleDrawResumedV1,
+    ResolutionDiscardWaitsV1,
+    ResolutionDrawChoiceOfferedV1,
+    ResolutionDrawChoiceAnsweredV1,
     CastLifeXPaidV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 334;
+pub const EVENT_KIND_COUNT_V1: usize = 339;
 const _: () = assert!(EventKindV1::CastLifeXPaidV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
@@ -819,8 +824,17 @@ impl CommittedEvent {
             }
             Self::EtaliPrimalStormReceiptV1 { .. } => EventKindV1::EtaliPrimalStormReceiptV1,
             Self::SpellCopyCostPaidV1 { .. } => EventKindV1::SpellCopyCostPaidV1,
-            Self::CastLifeXPaidV1 { .. } => EventKindV1::CastLifeXPaidV1,
             Self::LinkedExileDepartureV1 { .. } => EventKindV1::LinkedExileDepartureV1,
+            Self::MiracleDrawSuspendedV1 { .. } => EventKindV1::MiracleDrawSuspendedV1,
+            Self::MiracleDrawResumedV1 { .. } => EventKindV1::MiracleDrawResumedV1,
+            Self::ResolutionDiscardWaitsV1 { .. } => EventKindV1::ResolutionDiscardWaitsV1,
+            Self::ResolutionDrawChoiceOfferedV1 { .. } => {
+                EventKindV1::ResolutionDrawChoiceOfferedV1
+            }
+            Self::ResolutionDrawChoiceAnsweredV1 { .. } => {
+                EventKindV1::ResolutionDrawChoiceAnsweredV1
+            }
+            Self::CastLifeXPaidV1 { .. } => EventKindV1::CastLifeXPaidV1,
         }
     }
 }

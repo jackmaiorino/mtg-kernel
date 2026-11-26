@@ -791,6 +791,105 @@ fn frantic_search_draws_two_discards_two_and_untaps_three_lands() {
 }
 
 #[test]
+fn frantic_search_refuses_a_restored_discard_that_skips_its_draw_and_untap() {
+    // A miracle first draw defers captures, so Frantic Search's last
+    // instruction, its discard, waits inside the resolution once reached.
+    // A restored snapshot that stages that discard at the reveal, before the
+    // second draw and the untap, is refused.
+    let mut state = islands();
+    let lands: Vec<ObjectId> = (0..3)
+        .map(|_| put(&mut state, P0, "Island", Zone::Battlefield))
+        .collect();
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+    let search = put(&mut state, P0, "Frantic Search", Zone::Hand);
+    // A third card in hand makes the discard of two a real choice, so it
+    // waits for its Discard decision instead of taking the whole hand.
+    put(&mut state, P0, "Island", Zone::Hand);
+    next(&mut state);
+    for &land in &lands {
+        act(&mut state, Action::ActivateManaAbility(land));
+    }
+    cast(&mut state, search, &[]);
+    let mut revealing = None;
+    let mut discarding = None;
+    let mut untapped = Vec::new();
+    settle_with(&mut state, |state, decision| match decision {
+        Decision::ChooseEffectOption { source, .. } if source == terminus => {
+            revealing.get_or_insert_with(|| state.clone());
+            Action::ChooseEffectOption(0)
+        }
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets
+                .iter()
+                .any(|target| !untapped.contains(target)) =>
+        {
+            let target = *legal_targets
+                .iter()
+                .find(|target| !untapped.contains(*target))
+                .unwrap();
+            untapped.push(target);
+            Action::ChooseEffectTarget(target)
+        }
+        other => {
+            if matches!(other, Decision::Discard { .. }) {
+                discarding.get_or_insert_with(|| state.clone());
+            }
+            first_answer(other)
+        }
+    });
+    assert_eq!(state.players[0].hand.len(), 1, "drew two, discarded two");
+    let revealing = revealing.expect("the first draw is a miracle reveal");
+    let discarding = discarding.expect("the discard waits inside the resolution");
+    assert_eq!(
+        revealing.players[0].hand.len(),
+        2,
+        "one card drawn at the reveal"
+    );
+    let reached = discarding.engine.pending_discard.clone().unwrap();
+    let engine::DiscardResume::FinishEffectContinuation {
+        stack_item_id,
+        path,
+        ..
+    } = reached.resume.clone()
+    else {
+        panic!("the discard resumes its resolution");
+    };
+    let mut forged = revealing.clone();
+    forged.engine.pending_effect.as_mut().unwrap().frames = discarding
+        .engine
+        .pending_effect
+        .as_ref()
+        .unwrap()
+        .frames
+        .clone();
+    assert!(forged.eternal_v1.as_ref().unwrap().e7b.dredge_deferring);
+    let original_hand = forged.players[0]
+        .hand
+        .iter()
+        .map(|&object| mtg_kernel::effect::EffectObjectBinding {
+            object,
+            expected_zone: Zone::Hand,
+            expected_zone_change_count: forged.objects.get(object).zone_change_count,
+        })
+        .collect();
+    forged.engine.pending_discard = Some(engine::PendingDiscard {
+        player: P0,
+        count: reached.count,
+        resume: engine::DiscardResume::FinishEffectContinuation {
+            stack_item_id,
+            path,
+            original_hand,
+        },
+    });
+    // The reveal is answered first; the restored discard is refused next.
+    engine::step(&mut forged, Action::ChooseEffectOption(0)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut forged),
+        Decision::Halted { .. }
+    ));
+}
+
+#[test]
 fn fact_or_fiction_lets_the_opponent_split_and_the_caster_choose() {
     let mut state = game(&["Island", "Forest", "Plains", "Swamp", "Mountain", "Island"]);
     let top: Vec<ObjectId> = state.players[0].library.iter().copied().take(5).collect();

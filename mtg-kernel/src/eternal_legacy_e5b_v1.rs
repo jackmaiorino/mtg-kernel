@@ -1118,27 +1118,92 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
 /// Miracle (702.94a): a card with miracle drawn as its owner's first card
 /// this turn may be revealed as it is drawn. The owner answers the reveal
 /// before anything else happens (`pending_decision`).
-fn note_miracle_draws(state: &mut GameState, events: &[CommittedEvent]) {
-    let mut offers = Vec::new();
-    for (index, event) in events.iter().enumerate() {
+fn miracle_draws<'a>(
+    state: &'a GameState,
+    events: &'a [CommittedEvent],
+) -> impl Iterator<Item = ObjectId> + 'a {
+    events.iter().enumerate().filter_map(move |(index, event)| {
         let CommittedEvent::Draw {
             player,
             object: Some(card),
         } = *event
         else {
-            continue;
+            return None;
         };
-        if miracle_cost(state, card).is_none()
-            || draw_ordinal_at(events, index, player, state) != 1
-            || !state.players[player.index()].hand.contains(&card)
-        {
-            continue;
-        }
-        offers.push(live_link(state, card));
-    }
+        (miracle_cost(state, card).is_some()
+            && draw_ordinal_at(events, index, player, state) == 1
+            && state.players[player.index()].hand.contains(&card))
+        .then_some(card)
+    })
+}
+
+fn note_miracle_draws(state: &mut GameState, events: &[CommittedEvent]) {
+    let offers: Vec<_> = miracle_draws(state, events)
+        .map(|card| live_link(state, card))
+        .collect();
     if !offers.is_empty() {
         e5b_state(state).miracle_offers.extend(offers);
     }
+}
+
+pub(crate) fn uncollected_miracle_draw(state: &GameState) -> Option<ObjectId> {
+    miracle_draws(state, &state.engine.event_log).next()
+}
+
+pub(crate) fn next_draw_may_offer_miracle(state: &GameState, player: PlayerId) -> bool {
+    let owner = &state.players[player.index()];
+    owner.draws_this_turn == 0
+        && owner
+            .library
+            .first()
+            .is_some_and(|&card| miracle_cost(state, card).is_some())
+}
+
+/// The event history proves which card was drawn first this turn. The live
+/// offer also binds its hand incarnation independently of this draw receipt.
+pub(crate) fn is_first_miracle_draw(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
+    first_miracle_draw_at(state, player).is_some_and(|(_, first)| first == card)
+}
+
+/// The history position and card of `player`'s first draw this turn, when
+/// that card has miracle and is still in its owner's hand.
+pub(crate) fn first_miracle_draw_at(
+    state: &GameState,
+    player: PlayerId,
+) -> Option<(usize, ObjectId)> {
+    let owner = &state.players[player.index()];
+    let later = owner.draws_this_turn.checked_sub(1)?;
+    let history = &state.engine.event_history;
+    let (at, card) = history
+        .iter()
+        .rev()
+        .zip((0..history.len()).rev())
+        .filter_map(|(event, at)| match *event {
+            CommittedEvent::Draw {
+                player: drawer,
+                object: Some(object),
+            } if drawer == player => Some((at, object)),
+            _ => None,
+        })
+        .nth(usize::try_from(later).ok()?)?;
+    (owner.hand.contains(&card) && miracle_cost(state, card).is_some()).then_some((at, card))
+}
+
+/// Every live miracle offer must be its owner's first draw this turn. A
+/// restored offer for any other card cannot be answered, so it is refused
+/// before the reveal is presented.
+pub(crate) fn validate_miracle_offers(state: &GameState) -> Result<(), String> {
+    let Some(e5b) = read_state(state) else {
+        return Ok(());
+    };
+    for &offer in &e5b.miracle_offers {
+        if link_live_in(state, offer, Zone::Hand)
+            && !is_first_miracle_draw(state, state.objects.get(offer.object).owner, offer.object)
+        {
+            return Err("miracle offer lost its first-draw receipt".into());
+        }
+    }
+    Ok(())
 }
 
 /// `player`'s draws this turn up to and including `events[index]`.
@@ -1376,7 +1441,10 @@ pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
 /// A card's miracle cost (702.94), if it has one, as its colored pips and
 /// generic amount: Terminus, Miracle {W}, and wave S1l's Triumph of Saint
 /// Katherine, Miracle {1}{W}.
-fn miracle_cost(state: &GameState, card: ObjectId) -> Option<(&'static [ManaColor], u8)> {
+pub(crate) fn miracle_cost(
+    state: &GameState,
+    card: ObjectId,
+) -> Option<(&'static [ManaColor], u8)> {
     // A catalog downgrade must also disable the first-draw reveal offer.
     if !printed(state, card).is_executable() {
         return None;
@@ -1423,6 +1491,9 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
         return Err("a miracle reveal has two options".to_string());
     }
     let player = state.objects.get(offer.object).owner;
+    if !is_first_miracle_draw(state, player, offer.object) {
+        return Err("miracle offer lost its first-draw receipt".into());
+    }
     let remaining = read_state(state)
         .map(|e5b| {
             e5b.miracle_offers
