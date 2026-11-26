@@ -2,15 +2,20 @@
 
 A ready pull request whose files all map to one scope runs only that scope's checks; files of more than one
 scope, or any file no rule names, run the whole pull request set. Docs files never decide. The full matrix
-still runs on every merge (main, tags, release lines) as a monitor, so a scope only decides what gates a merge
-(collab HANDOFFS/20261117/COORD.md, "Standing rule, merges (2026-11-21 07:27 ET)").
+still runs on every push to main and every tag (and on a dispatch without `scope`, the way release lines are
+checked) as a monitor, so a scope only decides what gates a merge (collab HANDOFFS/20261117/COORD.md, "Standing
+rule, merges (2026-11-21 07:27 ET)"). One exception: a dispatch without inputs at the head of a ready pull request
+runs only the Windows complement when that pull request's own run at the same commit says (its ci-plan job) and
+shows that it scheduled the whole pull request set: every Linux Rust group, and the Python build on both systems
+unless its paths were not Python-relevant (tools/ci/pr_lookup.py pr-run); otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out.
+A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. A Rust-only pull request runs no Python before the merge.
+`full_matrix=true` skips that lookup; `fallback_scope` and an explicit `scope` input take precedence over it.
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE (the group set chosen before), INPUT_SCOPE,
                               LABELS (JSON list), and NUL-delimited paths on stdin for pull requests;
                               writes checks=<name> to GITHUB_OUTPUT
                               and a summary (with the bit-identity rows for trainer) to GITHUB_STEP_SUMMARY.
-  ci_scope.py file-scope      print the scope of the JSON pages from the GitHub pull request files API on stdin.
   ci_scope.py commands SCOPE  print the shell commands a scope's local run executes, one per line.
   ci_scope.py trainer-filters [--shard N]  print the trainer scope's library test filters (or shard N's).
   ci_scope.py markdown        print docs/CI-SCOPES.md.
@@ -298,25 +303,6 @@ def scope_of_files(paths: list[str]) -> str:
     return "pr"
 
 
-def pull_request_paths(pages: object) -> list[str]:
-    # GitHub's REST OpenAPI diff-entry.status enum.
-    statuses = ("added", "removed", "modified", "renamed", "copied", "changed", "unchanged")
-    if not isinstance(pages, list) or not pages or any(not isinstance(page, list) for page in pages):
-        raise ValueError("expected an array of file pages")
-    paths = []
-    for page in pages:
-        for entry in page:
-            if not isinstance(entry, dict) or entry.get("status") not in statuses:
-                raise ValueError("expected a changed-file object with a recognized status")
-            names = [entry.get("filename")]
-            if entry["status"] == "renamed" or "previous_filename" in entry:
-                names.append(entry.get("previous_filename"))
-            if any(not isinstance(name, str) or not name or "\0" in name for name in names):
-                raise ValueError("expected a nonempty filename for each changed path")
-            paths.extend(names)
-    return paths
-
-
 def choose(event: str, group_set: str, input_scope: str, labels: list[str], files: list[str]) -> str:
     """checks=all keeps the run's group set as chosen before (full, pr, draft, windows-*); a scope name runs
     only that scope's jobs."""
@@ -346,8 +332,13 @@ def markdown() -> str:
            "`tools/ci/tests/test_ci_scope.py` fails if this file and the table differ.", "",
            "A ready pull request whose files all map to one scope runs only that scope's checks. Files of more than "
            "one scope, a shared file, or a file no rule names run the whole pull request set. Docs files never "
-           "decide. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor: pushes to a "
-           "line share one concurrency group (one running, one waiting, a newer merge replaces the waiting one), and "
+           "decide. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor (one exception: a "
+           "dispatch without inputs at the head of a ready pull request runs only the Windows complement when that "
+           "pull request's own run at the same commit says (its ci-plan job) and shows that it scheduled the whole pull "
+           "request set, every Linux Rust group and, unless its paths were not Python-relevant, the Python build on "
+           "both systems; otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out. A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. A Rust-only pull request "
+           "runs no Python before the merge; `full_matrix=true` skips that lookup, and `fallback_scope` or an "
+           "explicit `scope` input takes precedence over it): pushes to a line share one concurrency group (one running, one waiting, a newer merge replaces the waiting one), and "
            "a red monitor's report names every merge it covers. `ci:full` on a pull request forces the whole pull "
            "request set from the next push, reopen or ready-for-review event (adding the label starts no run); "
            "labels never narrow a run. `gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one "
@@ -400,14 +391,6 @@ def main(argv: list[str]) -> int:
             print(f"no local command list for scope {scope}", file=sys.stderr)
             return 2
         print("\n".join(lines))
-        return 0
-    if command == "file-scope":
-        try:
-            paths = pull_request_paths(json.load(sys.stdin.buffer))
-        except ValueError as exc:
-            print(f"Invalid pull request files response: {exc}", file=sys.stderr)
-            return 2
-        print(scope_of_files(paths))
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")

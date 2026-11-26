@@ -102,8 +102,7 @@ class FallbackTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         # the workflow accepts every value the script sends, and the fallback job hands it the set
         step = text[text.index("      - name: Choose the group set"):text.index("      - name: Classify changed paths")]
-        assert '--paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$1/files"' in step
-        assert 'pr_files "$pr_number" | python3 tools/ci/ci_scope.py file-scope' in step
+        assert 'python3 tools/ci/pr_lookup.py pr-run "$GITHUB_SHA"' in step
         for value in set(fb.FALLBACK_SCOPES.values()):
             assert value in step
         block = text[text.index("  hosted-fallback:"):]
