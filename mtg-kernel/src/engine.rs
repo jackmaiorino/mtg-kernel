@@ -23885,6 +23885,17 @@ enum PendingActivationActionStage {
     ChooseManaX,
 }
 
+/// Whether a staged cast's next action is its X announcement
+/// (`PendingCastActionStage::ChooseXValue`). Read-only.
+pub(crate) fn pending_cast_awaits_x_v1(state: &GameState) -> bool {
+    state.engine.pending_cast.as_ref().is_some_and(|pending| {
+        matches!(
+            pending_cast_action_stage(state, pending),
+            Ok(PendingCastActionStage::ChooseXValue)
+        )
+    })
+}
+
 /// Purely derives the one action family, if any, exposed by a staged cast.
 /// `step` consults this before matching the requested action, so priority,
 /// combat, and unrelated choice actions cannot overwrite a pending cast or

@@ -330,6 +330,16 @@ fn the_export_scores_in_game_decisions_as_the_flat_v7_policy_does() {
     let result = flat_v7_v4_equality_v1(&request).unwrap();
     assert_eq!(result["mismatches"], json!(0), "{result:#}");
     assert_eq!(result["v7_only_refusals"], json!(0), "{result:#}");
+    assert_eq!(result["v4_only_refusals"], json!(0), "{result:#}");
+    assert_eq!(result["v4_refusal_games"], json!(0), "{result:#}");
+    assert_eq!(result["equal_rows"], result["compared_rows"], "{result:#}");
+    assert_eq!(
+        result["scored_decisions"].as_u64(),
+        Some(
+            result["compared_rows"].as_u64().unwrap()
+                + result["numeric_choice_decisions"].as_u64().unwrap()
+        )
+    );
     assert_eq!(result["equal"], json!(true));
     // Cast X announcements are Nyxborn Hydra's only, and every numeric-choice
     // decision is one of them.
@@ -344,21 +354,55 @@ fn the_export_scores_in_game_decisions_as_the_flat_v7_policy_does() {
         .sum();
     assert_eq!(result["numeric_choice_decisions"], json!(forced));
     eprintln!(
-        "equality: rows {} numeric {} cast_x {} kinds {}",
-        result["rows"],
+        "equality: compared rows {} numeric {} cast_x {} kinds {}",
+        result["compared_rows"],
         result["numeric_choice_decisions"],
         result["cast_x_decisions"],
         result["action_kind_rows"]
     );
-    assert!(result["rows"].as_u64().unwrap() >= 120, "{result:#}");
+    assert!(
+        result["compared_rows"].as_u64().unwrap() >= 120,
+        "{result:#}"
+    );
     assert_eq!(
         result["model_state_sha256"],
         json!(fixture.saved.state_sha256)
     );
     for game in result["games"].as_array().unwrap() {
         assert_eq!(game["v4_refusal"], Value::Null, "{game:#}");
+        assert_eq!(game["mismatches"], json!(0), "{game:#}");
+        assert_eq!(game["equal_rows"], game["compared_rows"], "{game:#}");
     }
+}
 
+/// Each admission check of the equality check, with the refusal it gives.
+/// Every case breaks exactly one check, so without that check it either
+/// compares (and returns a receipt) or fails later with another message.
+#[cfg(not(feature = "limited-fdn-fixtures"))]
+#[test]
+fn the_equality_check_refuses_every_request_it_cannot_compare() {
+    let fixture = Fixture::new("equality-refusals");
+    let output = fixture.output("checkpoint-v4.json");
+    let receipt = export_flat_v7_to_v4_inference_v1(&fixture.v7, &output).unwrap();
+    let v4_checkpoint: PinnedFileV1 =
+        serde_json::from_value(receipt["output"]["checkpoint"].clone()).unwrap();
+    let request = V7V4EqualityRequestV1 {
+        schema: V7_V4_EQUALITY_REQUEST_SCHEMA_V1.into(),
+        v7_source: fixture.v7.clone(),
+        v4_checkpoint: v4_checkpoint.clone(),
+        max_decisions_per_game: 4,
+        neutral_choices: false,
+        games: vec![V7V4EqualityGameV1 {
+            seed: 7,
+            starting_player: 0,
+            decks: ["Burn".into(), "Faeries".into()],
+        }],
+    };
+    // The control: the same request, unbroken, compares.
+    assert_eq!(
+        flat_v7_v4_equality_v1(&request).unwrap()["equal"],
+        json!(true)
+    );
     // Safeguard: a V4 checkpoint of another state is refused, not compared.
     let other = fixture.write_record("other-v4", |saved| {
         saved.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V4.into();
@@ -380,15 +424,102 @@ fn the_export_scores_in_game_decisions_as_the_flat_v7_policy_does() {
             hex(&snapshot.state_sha256_v1().unwrap())
         };
     });
-    let refused = flat_v7_v4_equality_v1(&V7V4EqualityRequestV1 {
-        v4_checkpoint: other,
-        ..request
-    })
-    .unwrap_err();
-    assert_eq!(
-        refused,
-        "the V4 checkpoint is not the FlatV7 checkpoint's state"
-    );
+    let with = |change: &dyn Fn(&mut V7V4EqualityRequestV1)| {
+        let mut changed = request.clone();
+        change(&mut changed);
+        changed
+    };
+    let cases: Vec<(&str, V7V4EqualityRequestV1, &str)> = vec![
+        (
+            "an unknown schema",
+            with(&|r| r.schema = "x".into()),
+            "unknown V7-V4 equality request schema",
+        ),
+        (
+            "no games",
+            with(&|r| r.games.clear()),
+            "the equality check needs games and a positive decision bound",
+        ),
+        (
+            "a zero decision bound",
+            with(&|r| r.max_decisions_per_game = 0),
+            "the equality check needs games and a positive decision bound",
+        ),
+        (
+            "a V4-identity FlatV7 side",
+            with(&|r| {
+                r.v7_source.feature_transfer =
+                    transfer(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4)
+            }),
+            "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
+        ),
+        (
+            "the export itself as the FlatV7 side's checkpoint",
+            with(&|r| r.v7_source.checkpoint = Some(v4_checkpoint.clone())),
+            "the V4 inference export takes a checkpoint with the FlatV7 contract digest",
+        ),
+        (
+            "a V4 checkpoint of another state",
+            with(&|r| r.v4_checkpoint = other.clone()),
+            "the V4 checkpoint is not the FlatV7 checkpoint's state",
+        ),
+        (
+            "an unknown deck",
+            with(&|r| r.games[0].decks[1] = "Nope".into()),
+            "unknown runtime deck \"Nope\"",
+        ),
+        (
+            "a third starting player",
+            with(&|r| r.games[0].starting_player = 2),
+            "starting_player is 0 or 1",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (label, request, message) in cases {
+        let outcome = flat_v7_v4_equality_v1(&request);
+        if outcome.as_ref().err().map(String::as_str) != Some(message) {
+            failures.push(format!(
+                "{label}: expected refusal {message:?}, got {:?}",
+                outcome.map(|receipt| receipt["equal"].clone())
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The post-write check: a V4 load that differs from the FlatV7 load is
+/// refused and its file removed, and a removal that fails is reported.
+#[test]
+fn a_failed_post_write_check_removes_the_output_and_reports_a_failed_removal() {
+    let fixture = Fixture::new("verify");
+    let output = fixture.output("checkpoint-v4.json");
+    export_flat_v7_to_v4_inference_v1(&fixture.v7, &output).unwrap();
+    let (v7_policy, v7_identity) = load_expanded_inference_v1(&fixture.v7).unwrap();
+    let copy = fixture.output("copy.json");
+    fs::copy(&output, &copy).unwrap();
+    let pin = PinnedFileV1 {
+        path: copy.clone(),
+        sha256: sha(&fs::read(&copy).unwrap()),
+    };
+    // The true FlatV7 load passes and keeps the file.
+    verify_or_remove_export_v1(&fixture.v7, &pin, &v7_policy, &v7_identity).unwrap();
+    assert!(copy.exists());
+    // A FlatV7 load of another state: refused, and the file is removed.
+    let other = ExpandedInferenceIdentityV1 {
+        state_sha256: "0".repeat(64),
+        ..v7_identity.clone()
+    };
+    let error = verify_or_remove_export_v1(&fixture.v7, &pin, &v7_policy, &other).unwrap_err();
+    assert_eq!(error, "the export's V4 load differs from the FlatV7 load");
+    assert!(!copy.exists(), "the refused output is removed");
+    // A written file that cannot be read back, nor removed: both reported.
+    let missing = PinnedFileV1 {
+        path: fixture.output("missing.json"),
+        sha256: "f".repeat(64),
+    };
+    let error =
+        verify_or_remove_export_v1(&fixture.v7, &missing, &v7_policy, &v7_identity).unwrap_err();
+    assert!(error.contains("could not be removed"), "{error}");
 }
 
 /// Each admission check, with the refusal it gives; the output is never
@@ -412,6 +543,14 @@ fn the_export_refuses_every_input_that_is_not_a_flat_v7_checkpoint() {
         "a half-V7 source",
         ExpandedModelSourceV1 {
             feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V4),
+            ..fixture.v7.clone()
+        },
+        "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
+    ));
+    cases.push((
+        "a source with the V4 contract and the FlatV7 encoding",
+        ExpandedModelSourceV1 {
+            feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V7),
             ..fixture.v7.clone()
         },
         "the V4 inference export takes a FlatV7 source (both FlatV7 feature digests)",
@@ -472,6 +611,16 @@ fn the_export_refuses_every_input_that_is_not_a_flat_v7_checkpoint() {
         fixture.v7_with(legacy_record),
         "the V4 inference export takes a fresh-lineage checkpoint",
     ));
+    let imported_record = fixture.write_record("imported-record", |saved| {
+        saved.source_import = FrozenPlayPolicyV1::training_fixture_v3()
+            .identity_v1()
+            .clone();
+    });
+    cases.push((
+        "a fresh-schema record with a non-fresh origin",
+        fixture.v7_with(imported_record),
+        "the V4 inference export takes a fresh-lineage checkpoint",
+    ));
     // The full FlatV7 load runs before anything is written.
     let tampered = fixture.write_record("tampered-record", |saved| {
         *saved.parameters[1].values.last_mut().unwrap() ^= 1;
@@ -495,14 +644,27 @@ fn the_export_refuses_every_input_that_is_not_a_flat_v7_checkpoint() {
             ));
         }
     }
-    assert!(
-        failures.is_empty(),
-        "{}",
-        failures.join(
-            "
-"
-        )
-    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+
+    // Malformed input: a pin that does not match its bytes, and bytes that
+    // are not a checkpoint. Refused, nothing written.
+    let garbage = fixture.root.join("garbage.json");
+    fs::write(&garbage, b"not a checkpoint").unwrap();
+    let malformed = [
+        PinnedFileV1 {
+            path: v7_pin.path.clone(),
+            sha256: "0".repeat(64),
+        },
+        PinnedFileV1 {
+            path: garbage.clone(),
+            sha256: sha(b"not a checkpoint"),
+        },
+    ];
+    for (index, pin) in malformed.into_iter().enumerate() {
+        let output = fixture.output(&format!("malformed-{index}.json"));
+        assert!(export_flat_v7_to_v4_inference_v1(&fixture.v7_with(pin), &output).is_err());
+        assert!(!output.exists());
+    }
 
     // An existing output is never replaced.
     let output = fixture.output("existing.json");
@@ -513,8 +675,8 @@ fn the_export_refuses_every_input_that_is_not_a_flat_v7_checkpoint() {
     assert_eq!(fs::read(&output).unwrap(), b"keep");
 }
 
-/// The cards of the eight board decks whose cast announces X (a mana cost
-/// or bestow cost with X): the only cards that can pose the forced X = 0
+/// The cards of the eight board decks whose cast announces X, under the
+/// engine's own conditions: the only cards that can pose the forced X = 0
 /// numeric choice.
 #[cfg(not(feature = "limited-fdn-fixtures"))]
 #[test]
@@ -524,7 +686,15 @@ fn the_board_decks_announce_x_only_for_nyxborn_hydra() {
         let deck = crate::runtime_decks::runtime_deck_by_id(deck).unwrap();
         for &card in deck.card_ids {
             let def = &crate::card_def::CARD_DEFS[card as usize];
-            if def.cost.x_count > 0 || def.bestow.as_ref().is_some_and(|b| b.cost.x_count > 0) {
+            // The cast announcements of `PendingCast::x_value` (engine.rs,
+            // begin_cast): an X mana cost, an X bestow cost, Sickening
+            // Dreams' discard X, replicate and splice.
+            let announces = def.cost.x_count > 0
+                || def.bestow.as_ref().is_some_and(|b| b.cost.x_count > 0)
+                || crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+                || crate::eternal_cards_v1::replicate_cost(def.name).is_some()
+                || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some();
+            if announces {
                 found.insert((deck.id, def.name));
             }
         }

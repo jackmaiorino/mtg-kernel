@@ -109,6 +109,19 @@ fn admit_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
     )
 }
 
+/// The admitted FlatV7 source's checkpoint: its pinned bytes and record,
+/// after both admissions. Shared by the export and the equality check, so
+/// neither runs on a V4 (transfer), FlatV8 or non-fresh record.
+fn read_admitted_checkpoint_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<(&PinnedFileV1, Vec<u8>, ExpandedCheckpointV1), String> {
+    let input = admit_source_v1(source)?;
+    let bytes = read_pinned_bytes(input)?;
+    let saved = checkpoint_container_v1::parse_checkpoint_v1(&bytes)?;
+    admit_checkpoint_v1(&saved)?;
+    Ok((input, bytes, saved))
+}
+
 /// SHA-256 of every tensor's little-endian `f32` bits, in record order.
 fn tensor_bytes_sha256_v1(rows: &[ParameterBitsV1]) -> String {
     let mut digest = Sha256::new();
@@ -141,16 +154,13 @@ pub fn export_flat_v7_to_v4_inference_v1(
     source: &ExpandedModelSourceV1,
     output: &Path,
 ) -> Result<Value, String> {
-    let input = admit_source_v1(source)?;
-    let input_bytes = read_pinned_bytes(input)?;
+    let (input, input_bytes, saved) = read_admitted_checkpoint_v1(source)?;
     let record = record_envelope_v1::open_v1(&input_bytes, MAX_FILE_BYTES)?;
     let input_form = if checkpoint_container_v1::is_container_v1(&record) {
         "checkpoint-container-v2"
     } else {
         "checkpoint-v1-json"
     };
-    let saved = checkpoint_container_v1::parse_checkpoint_v1(&input_bytes)?;
-    admit_checkpoint_v1(&saved)?;
     // The full FlatV7 load: parameter layout and shapes, moments, state
     // digest, provenance, loss, card database and math.
     let (v7_policy, v7_identity) = load_expanded_inference_v1(source)?;
@@ -212,14 +222,8 @@ pub fn export_flat_v7_to_v4_inference_v1(
         None
     };
     let written = publish_checkpoint_file_v1(output, &bytes)?;
-    let verified = verify_export_v1(source, &written, &v7_policy, &v7_identity);
-    let (v4_source, v4_identity) = match verified {
-        Ok(verified) => verified,
-        Err(error) => {
-            let _ = fs::remove_file(&written.path);
-            return Err(error);
-        }
-    };
+    let (v4_source, v4_identity) =
+        verify_or_remove_export_v1(source, &written, &v7_policy, &v7_identity)?;
     Ok(json!({
         "schema": V4_INFERENCE_EXPORT_RECEIPT_SCHEMA_V1,
         "purpose": "inference under the V4 feature identity; the parameters are the FlatV7 checkpoint's",
@@ -254,8 +258,27 @@ pub fn export_flat_v7_to_v4_inference_v1(
     }))
 }
 
+/// [`verify_export_v1`], removing the written file when it fails; a failed
+/// removal is part of the refusal.
+fn verify_or_remove_export_v1(
+    source: &ExpandedModelSourceV1,
+    written: &PinnedFileV1,
+    v7_policy: &FrozenPlayPolicyV1,
+    v7_identity: &ExpandedInferenceIdentityV1,
+) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
+    verify_export_v1(source, written, v7_policy, v7_identity).map_err(
+        |error| match fs::remove_file(&written.path) {
+            Ok(()) => error,
+            Err(removal) => format!(
+                "{error}; the refused output {} could not be removed: {removal}",
+                written.path.display()
+            ),
+        },
+    )
+}
+
 /// The written export, loaded in full under the V4 identity: the same state
-/// digest and model weights as the FlatV7 load.
+/// digest, Adam step, provenance and model weights as the FlatV7 load.
 fn verify_export_v1(
     source: &ExpandedModelSourceV1,
     written: &PinnedFileV1,
@@ -398,6 +421,27 @@ fn scorer_request_v1(
     .map_err(err)
 }
 
+/// Whether two tensors are equal bit for bit: every float member compared as
+/// its `u32` bits (so `-0.0` and `+0.0` differ), every index member exactly.
+fn same_tensor_bits_v1(a: &NativeFlatDecisionTensorV2, b: &NativeFlatDecisionTensorV2) -> bool {
+    let bits = |x: &[f32], y: &[f32]| {
+        x.len() == y.len() && x.iter().zip(y).all(|(x, y)| x.to_bits() == y.to_bits())
+    };
+    bits(&a.state, &b.state)
+        && bits(&a.object_features, &b.object_features)
+        && bits(&a.edge_features, &b.edge_features)
+        && bits(&a.action_features, &b.action_features)
+        && bits(&a.action_ref_features, &b.action_ref_features)
+        && a.object_card_ids == b.object_card_ids
+        && a.object_groups == b.object_groups
+        && a.object_node_ids == b.object_node_ids
+        && a.edge_source_indices == b.edge_source_indices
+        && a.edge_target_indices == b.edge_target_indices
+        && a.action_ref_card_ids == b.action_ref_card_ids
+        && a.action_ref_action_indices == b.action_ref_action_indices
+        && a.action_ref_node_indices == b.action_ref_node_indices
+}
+
 /// The action kinds (one-hot columns) present among `tensor`'s rows.
 fn action_kinds_v1(tensor: &NativeFlatDecisionTensorV2) -> BTreeSet<usize> {
     tensor
@@ -417,7 +461,9 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
         !request.games.is_empty() && request.max_decisions_per_game > 0,
         "the equality check needs games and a positive decision bound",
     )?;
-    admit_source_v1(&request.v7_source)?;
+    // The FlatV7 side must be a FlatV7 record: a V4 one would load through
+    // the V4-to-V7 transfer and compare the export with itself.
+    read_admitted_checkpoint_v1(&request.v7_source)?;
     let v4_source = v4_source_v1(&request.v7_source, request.v4_checkpoint.clone());
     let (v7_policy, v7_identity) = load_expanded_inference_v1(&request.v7_source)?;
     let (v4_policy, v4_identity) = load_expanded_inference_v1(&v4_source)?;
@@ -443,12 +489,13 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
     };
     let mut v7_scorer = scorer(&v7_policy, &v7_identity)?;
     let mut v4_scorer = scorer(&v4_policy, &v4_identity)?;
-    let (mut rows, mut mismatches, mut numeric_choice, mut v7_only_refusals) =
-        (0u64, 0u64, 0u64, 0u64);
+    let (mut rows, mut equal_rows, mut mismatches) = (0u64, 0u64, 0u64);
+    let (mut numeric_choice, mut v7_only_refusals, mut v4_only_refusals) = (0u64, 0u64, 0u64);
+    let mut v4_refusal_games = 0u64;
     let mut numeric_equal = 0u64;
     let mut numeric_cases = Vec::new();
     // Every cast X announcement posed to a seat, by card: the decisions where
-    // a cast waits for its X and every row announces one.
+    // a staged cast is at its X stage (`PendingCastActionStage::ChooseXValue`).
     let mut cast_x = std::collections::BTreeMap::<&'static str, [u64; 2]>::new();
     let mut kinds = std::collections::BTreeMap::<usize, u64>::new();
     let mut first_mismatch = Value::Null;
@@ -464,6 +511,7 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
             1 => PlayerId::P1,
             _ => return Err("starting_player is 0 or 1".into()),
         };
+        // The trainer's collection reset (`episode_session_v1`, no London).
         let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
             index as u64,
             game.seed,
@@ -474,14 +522,14 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
             starting,
         )
         .map_err(|error| format!("{error:?}"))?;
-        // The trainer's collection reset (`episode_session_v1`, no London).
         if request.neutral_choices {
             session.enable_spellbench_neutral_choices();
         }
         let mut v4_driver = v4_policy.duplicate_loaded_v1()?;
         let mut v7_driver = v7_policy.duplicate_loaded_v1()?;
         let mut seeds = SplitMix64::seed(game.seed ^ 0x7e57_e9a1_17f4_0001);
-        let (mut game_rows, mut game_numeric, mut decisions) = (0u64, 0u64, 0u64);
+        let (mut game_rows, mut game_equal, mut game_mismatches) = (0u64, 0u64, 0u64);
+        let (mut game_numeric, mut decisions) = (0u64, 0u64);
         let mut ending = "decision bound";
         let mut v4_refusal = Value::Null;
         while decisions < request.max_decisions_per_game {
@@ -491,10 +539,21 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
             };
             decisions += 1;
             if let Err(error) = v4_driver.score_fast_session_v1(&session) {
-                // The V4 policy cannot encode this decision either: the game
-                // ends here and the receipt says why.
+                // The board's side cannot encode this decision: the game ends
+                // here. If the FlatV7 side can, the two differ.
                 ending = "V4 refusal";
-                v4_refusal = json!(error);
+                v4_refusal_games += 1;
+                let v7_outcome = v7_driver.score_fast_session_v1(&session);
+                let v7_accepts = v7_outcome.is_ok();
+                if v7_accepts {
+                    v4_only_refusals += 1;
+                    if first_mismatch.is_null() {
+                        first_mismatch = json!({"game": index, "step": decision.step,
+                            "v4_refusal": error, "v7_accepted": true});
+                    }
+                }
+                v4_refusal = json!({"v4": error, "v7_accepted": v7_accepts,
+                    "v7_refusal": v7_outcome.err()});
                 break;
             }
             let v4_tensor = v4_driver.last_scored_training_tensor_v4()?.common.clone();
@@ -530,7 +589,8 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
                     let v7_choice = v7_scorer
                         .score_line(&v7_line)
                         .map_err(|code| format!("the V7 scorer refused a request: {code}"))?;
-                    let same = v4_tensor == v7_tensor
+                    let tensors_equal = same_tensor_bits_v1(&v4_tensor, &v7_tensor);
+                    let same = tensors_equal
                         && !numeric
                         && [
                             "logits_bits",
@@ -542,14 +602,17 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
                         .all(|member| v4_choice[member] == v7_choice[member]);
                     rows += 1;
                     game_rows += 1;
+                    equal_rows += u64::from(same);
+                    game_equal += u64::from(same);
                     for kind in action_kinds_v1(&v4_tensor) {
                         *kinds.entry(kind).or_default() += 1;
                     }
                     if !same {
                         mismatches += 1;
+                        game_mismatches += 1;
                         if first_mismatch.is_null() {
                             first_mismatch = json!({"game": index, "step": decision.step,
-                                "tensors_equal": v4_tensor == v7_tensor, "numeric_choice": numeric,
+                                "tensors_equal": tensors_equal, "numeric_choice": numeric,
                                 "v4": v4_choice, "v7": v7_choice});
                         }
                     }
@@ -588,6 +651,7 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
                         }
                     } else {
                         v7_only_refusals += 1;
+                        game_mismatches += 1;
                         if first_mismatch.is_null() {
                             first_mismatch = json!({"game": index, "step": decision.step,
                                 "v7_refusal": error});
@@ -597,27 +661,11 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
                     v7_driver = v7_policy.duplicate_loaded_v1()?;
                 }
             }
-            let pending_x = session
-                .game_state()
-                .engine
-                .pending_cast
-                .as_ref()
-                .filter(|pending| pending.selected_x_v59().is_none())
-                .map(|pending| pending.spell);
-            if let Some(spell) = pending_x {
-                let semantics = session
-                    .diagnostic_current_action_semantics()
-                    .unwrap_or_default();
-                if !semantics.is_empty()
-                    && semantics.iter().all(|semantic| {
-                        matches!(
-                            semantic,
-                            crate::rl::ActionSemanticV1::ChooseEffectOption { .. }
-                                | crate::rl::ActionSemanticV1::ChooseEffectNumber { .. }
-                        )
-                    })
-                {
-                    let card = session.game_state().objects.get(spell).card_def;
+            if crate::engine::pending_cast_awaits_x_v1(session.game_state()) {
+                let state = session.game_state();
+                let spell = state.engine.pending_cast.as_ref().map(|p| p.spell);
+                if let Some(spell) = spell {
+                    let card = state.objects.get(spell).card_def;
                     let name = crate::card_def::CARD_DEFS[card as usize].name;
                     let entry = cast_x.entry(name).or_default();
                     entry[0] += 1;
@@ -632,7 +680,8 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
                 .map_err(|error| format!("{error:?}"))?;
         }
         games.push(
-            json!({"game": game, "decisions": decisions, "equal_rows": game_rows,
+            json!({"game": game, "decisions": decisions, "compared_rows": game_rows,
+            "equal_rows": game_equal, "mismatches": game_mismatches,
             "numeric_choice_decisions": game_numeric, "ending": ending,
             "v4_refusal": v4_refusal}),
         );
@@ -640,13 +689,17 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
     ensure(rows > 0, "the equality check compared no rows")?;
     Ok(json!({
         "schema": V7_V4_EQUALITY_RECEIPT_SCHEMA_V1,
-        "definition": "each decision of each game goes to two Spellbench scorers at the same sample seed: the FlatV7 policy with its own FlatV7 tensors and digests, and the V4 export with its V4 tensors and digests; a row is equal when the tensors, every logit's f32 bits, the value's bits, the sampled row and the model state digest are equal; the game follows the V4 scorer's choice; a numeric-choice decision (action-kind column 15, which the FlatV7 tensorizer refuses) is counted apart and is equal when it is the forced X = 0 singleton, the V4 scorer chooses its one row, and the board's explicit X = 0 and the trainer's automatic X = 0 lead to the same next decision and the same game-state bytes",
+        "definition": "each decision of each game goes to two Spellbench scorers at the same sample seed: the FlatV7 policy with its own FlatV7 tensors and digests, and the V4 export with its V4 tensors and digests; a row is equal when the tensors (every float as its u32 bits), every logit's f32 bits, the value's bits, the sampled row and the model state digest are equal; the game follows the V4 scorer's choice; a numeric-choice decision (action-kind column 15, which the FlatV7 tensorizer refuses) is counted apart and is equal when it is the forced X = 0 singleton, the V4 scorer chooses its one row, and the board's explicit X = 0 and the trainer's automatic X = 0 lead to the same next decision and the same game-state bytes; a V4 refusal ends its game and is a mismatch when the FlatV7 side accepts the decision; scored_decisions = compared_rows + numeric_choice_decisions",
         "v7_source": request.v7_source,
         "v4_checkpoint": request.v4_checkpoint,
         "model_state_sha256": v4_identity.state_sha256,
         "games": games,
-        "rows": rows,
+        "compared_rows": rows,
+        "equal_rows": equal_rows,
         "mismatches": mismatches,
+        "scored_decisions": rows + numeric_choice,
+        "v4_refusal_games": v4_refusal_games,
+        "v4_only_refusals": v4_only_refusals,
         "neutral_choices": request.neutral_choices,
         "numeric_choice_decisions": numeric_choice,
         "numeric_choice_equal_to_trainer_path": numeric_equal,
@@ -655,7 +708,11 @@ pub fn flat_v7_v4_equality_v1(request: &V7V4EqualityRequestV1) -> Result<Value, 
         "v7_only_refusals": v7_only_refusals,
         "action_kind_rows": kinds.iter().map(|(kind, count)| (kind.to_string(), json!(count))).collect::<serde_json::Map<_, _>>(),
         "first_mismatch": first_mismatch,
-        "equal": mismatches == 0 && v7_only_refusals == 0 && numeric_equal == numeric_choice,
+        "equal": mismatches == 0
+            && v7_only_refusals == 0
+            && v4_only_refusals == 0
+            && equal_rows == rows
+            && numeric_equal == numeric_choice,
         "git_commit": env!("MTG_KERNEL_BUILD_GIT_HEAD"),
     }))
 }
