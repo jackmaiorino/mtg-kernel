@@ -171,6 +171,11 @@ class HostedInputTests(unittest.TestCase):
         self.assertRegex(workflow, r"\n      bins:\n        description: [^\n]+\n        required: false\n        type: string\n")
         self.assertIn("PINNED_BINS: ${{ inputs.bins }}", workflow)
         self.assertIn('sudo PINNED_TARGET_CPU="$PINNED_TARGET_CPU" PINNED_BINS="${PINNED_BINS:-}"', workflow)
+        # The free-form value reaches the shell as an environment variable, never as script text.
+        scripts = re.findall(r"run: \|\n((?:(?: {10}.*)?\n)+)", workflow)
+        self.assertTrue(scripts)
+        for script in scripts:
+            self.assertNotIn("inputs.bins", script)
 
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_build_helper_selects_the_default_pair_and_admits_explicit_binaries(self):
