@@ -2391,11 +2391,19 @@ fn flat_root_search(
 /// The flat root (collab LANES/searchpm-20261116): the tree is the root
 /// alone, every completed simulation is one root backup, the search repeats
 /// exactly, and with the option off the search is E unchanged (it grows
-/// nodes below the root).
+/// nodes below the root). FV-h0 and FV-t0 (collab
+/// LANES/lead/reviews/search-screen-20261125, section 4) are the same flat
+/// root with a different horizon: both take value leaves, back up every
+/// simulation as a leaf or a natural ending, and record their own horizon.
 #[test]
 fn flat_root_keeps_only_the_root_and_repeats() {
     let (session, prior) = value_leaf_root();
-    for leaf in [None, Some(value_leaf::Horizon::H0)] {
+    let mut censuses = Vec::new();
+    for leaf in [
+        None,
+        Some(value_leaf::Horizon::H0),
+        Some(value_leaf::Horizon::T0),
+    ] {
         let (a, ta) = flat_root_search(&session, &prior, true, leaf, 40);
         let (b, tb) = flat_root_search(&session, &prior, true, leaf, 40);
         assert!(!a.incomplete && a.faults.is_empty(), "{:?}", a.faults);
@@ -2405,10 +2413,229 @@ fn flat_root_keeps_only_the_root_and_repeats() {
         assert_eq!(root.n.iter().sum::<u64>(), root.visits);
         assert_eq!(root.visits, a.completed);
         assert_eq!(root.vsum.is_empty(), leaf.is_none());
+        if let Some(horizon) = leaf {
+            // The value leaf ran at this horizon (not vacuously: at least
+            // one simulation stopped at a leaf rather than a natural end).
+            let vl = &a.extra["value_leaf"];
+            assert_eq!(vl["horizon"], horizon.label());
+            let leaves = vl["census"]["leaves"].as_u64().unwrap();
+            let natural = vl["census"]["natural"].as_u64().unwrap();
+            assert!(leaves > 0, "{horizon:?}: no value leaf under the flat root");
+            assert_eq!(leaves + natural, a.completed, "{horizon:?}");
+            censuses.push(vl["census"].clone());
+        }
         let (e, te) = flat_root_search(&session, &prior, false, leaf, 40);
         assert!(!e.incomplete && e.faults.is_empty(), "{:?}", e.faults);
         assert!(te.nodes.len() > 1, "{leaf:?}");
     }
+    // The horizon changes where the leaves are taken: t0's leaves are not
+    // h0's (a t0 that fell back to h0 would repeat its census exactly).
+    assert_ne!(censuses[0], censuses[1]);
+}
+
+/// The screen's head comparison (`head_compare`) at `root` over `covered`,
+/// with fresh fixture roles and second head `b`.
+fn head_compare_at(
+    root: &crate::rl_session::FastActorSessionV1,
+    prior: &world::DeckPrior,
+    covered: &[usize],
+    worlds: u64,
+    b: &mut crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+) -> serde_json::Value {
+    let focal = play::acting(&play::decision(root).unwrap());
+    let key = head_compare::HeadCompareKeyV1 {
+        worlds,
+        seed: 20_261_125,
+        hash: 0x5eed,
+        step: play::decision(root).unwrap().step,
+    };
+    head_compare::head_compare_v1(
+        root,
+        prior,
+        focal,
+        covered,
+        true,
+        &key,
+        &mut fixture(),
+        &mut fixture(),
+        b,
+    )
+}
+
+/// The head comparison (collab LANES/lead/reviews/search-screen-20261125
+/// section 5): every h0 is the root player's choice with two or more legal
+/// actions, both heads read the same encoding there and at the root, scores
+/// follow the conversion, the estimate is the world mean, and the whole
+/// record repeats exactly and does not depend on the heads' history.
+#[test]
+fn head_compare_scores_both_heads_at_the_root_players_h0_and_repeats() {
+    let (session, prior) = value_leaf_root();
+    let d = play::decision(&session).unwrap();
+    let focal = play::acting(&d);
+    let covered: Vec<usize> = (0..(d.legal_action_count as usize).min(3)).collect();
+    let a = head_compare_at(&session, &prior, &covered, 3, &mut fixture());
+    assert_eq!(a["status"], "ok", "{a}");
+    // The same heads in another history (one used first elsewhere) give the
+    // same record.
+    let mut used = fixture();
+    used.score_fast_session_v1(&session).unwrap();
+    let b = head_compare_at(&session, &prior, &covered, 3, &mut used);
+    assert_eq!(a, b);
+    let checks = &a["checks"];
+    assert!(checks["h0"].as_u64().unwrap() > 0, "{checks}");
+    for k in ["digest_mismatch", "observer_not_root", "fault", "no_world"] {
+        assert_eq!(checks[k], 0, "{k}: {checks}");
+    }
+    assert_eq!(a["root"]["digests_equal"], true);
+    assert_eq!(a["root"]["a"]["value"], a["root"]["b"]["value"]);
+    for row in a["per_action"].as_array().unwrap() {
+        let mut sum = 0.0;
+        for w in row["worlds"].as_array().unwrap() {
+            let score = w["score_a"].as_f64().unwrap();
+            assert_eq!(w["score_a"], w["score_b"]);
+            sum += score;
+            if w["end"] == "h0" {
+                assert_eq!(w["observer"], u64::from(focal.0));
+                assert_eq!(w["observer_is_root"], true);
+                let v = w["heads"]["a"]["value"].as_f64().unwrap() as f32;
+                assert_eq!(score, head_compare::head_score_v1(v, true));
+            }
+        }
+        assert_eq!(row["estimate_a"].as_f64().unwrap(), sum / 3.0);
+    }
+    assert!(a["argmax_a"].is_u64());
+}
+
+/// A second head with another encoding (FlatV3 beside the FlatV4 frozen
+/// head): every h0 records a digest mismatch, which excludes its world, so
+/// no estimate or argmax is formed from it.
+#[test]
+fn head_compare_records_a_digest_mismatch_and_forms_no_estimate() {
+    let (session, prior) = value_leaf_root();
+    let d = play::decision(&session).unwrap();
+    let covered: Vec<usize> = (0..(d.legal_action_count as usize).min(2)).collect();
+    let mut v3 = crate::sideboard_play_policy_v1::FrozenPlayPolicyV1::training_fixture_v3();
+    let a = head_compare_at(&session, &prior, &covered, 2, &mut v3);
+    assert_eq!(a["status"], "ok", "{a}");
+    let checks = &a["checks"];
+    let h0 = checks["h0"].as_u64().unwrap();
+    assert!(h0 > 0, "{checks}");
+    assert_eq!(checks["digest_mismatch"], h0, "{checks}");
+    assert_eq!(a["root"]["digests_equal"], false);
+    for row in a["per_action"].as_array().unwrap() {
+        if row["worlds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["end"] == "h0")
+        {
+            assert!(row["estimate_a"].is_null() && row["estimate_b"].is_null());
+            assert!(row["excluded"]["digest_mismatch"].as_u64().unwrap() > 0);
+        }
+    }
+    assert!(a["argmax_a"].is_null() && a["argmax_b"].is_null());
+}
+
+/// h0 is the root player's choice: from an opponent's decision with two or
+/// more legal actions the continuation plays on (the opponent's choices are
+/// the policy's) to the root player's next choice with two or more actions,
+/// or to the end.
+#[test]
+fn play_to_h0_plays_through_the_opponents_choices() {
+    let cfg = test_cfg();
+    let mut checked = 0;
+    for game in 0..8_u64 {
+        let setup = game_setup(&cfg, 1, game);
+        let focal_id = PlayerId(setup.focal as u8);
+        let mut opponent_choices = Vec::new();
+        drive(&setup, &mut fixture(), &mut fixture(), |s, d, _| {
+            if play::acting(d) != focal_id
+                && d.legal_action_count >= 2
+                && opponent_choices.len() < 4
+            {
+                opponent_choices.push(s.clone());
+            }
+            Ok(false)
+        })
+        .unwrap();
+        for s in opponent_choices {
+            let mut play = fixture();
+            play.reset_sampling_v1([1, 2]);
+            let (to, transitions) = head_compare::play_to_h0_v1(s, focal_id, &mut play).unwrap();
+            assert!(transitions > 0, "stopped at the opponent's own choice");
+            if let head_compare::ToH0V1::H0(h0) = to {
+                let d = play::decision(&h0).unwrap();
+                assert_eq!(play::acting(&d), focal_id);
+                assert!(d.legal_action_count >= 2);
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no opponent choice in the fixture games");
+}
+
+/// Worlds that end before h0 score the terminal result for the root player,
+/// the same for both heads, and read neither head. The roots are the last
+/// choices of fixture games the focal player won, where games end.
+#[test]
+fn head_compare_scores_terminal_worlds_before_h0_for_both_heads() {
+    let cfg = test_cfg();
+    let prior = world::DeckPrior::new(&cfg.decks);
+    let mut terminal_worlds = 0;
+    let mut roots = 0;
+    for game in 0..64_u64 {
+        let setup = game_setup(&cfg, 1, game);
+        let focal_id = PlayerId(setup.focal as u8);
+        let mut last = None;
+        let (end, _) = drive(&setup, &mut fixture(), &mut fixture(), |s, d, _| {
+            if play::acting(d) == focal_id && d.legal_action_count >= 2 {
+                last = Some(s.clone());
+            }
+            Ok(false)
+        })
+        .unwrap();
+        let won = matches!(
+            play::terminal(&end, focal_id),
+            Some(play::End::Natural { win: true, .. })
+        );
+        let Some(root) = last.filter(|_| won) else {
+            continue;
+        };
+        roots += 1;
+        let width = play::decision(&root).unwrap().legal_action_count as usize;
+        let covered: Vec<usize> = (0..width.min(16)).collect();
+        let a = head_compare_at(&root, &prior, &covered, 4, &mut fixture());
+        assert_eq!(a["status"], "ok", "{a}");
+        for row in a["per_action"].as_array().unwrap() {
+            for w in row["worlds"].as_array().unwrap() {
+                if w["end"] != "terminal" {
+                    continue;
+                }
+                terminal_worlds += 1;
+                assert!(w.get("heads").is_none());
+                let expected = match w["result"].as_str().unwrap() {
+                    "win" => 1.0,
+                    "draw" | "nonnatural" => 0.5,
+                    "loss" => 0.0,
+                    other => panic!("{other}"),
+                };
+                assert_eq!(w["score_a"].as_f64().unwrap(), expected);
+                assert_eq!(w["score_b"].as_f64().unwrap(), expected);
+            }
+        }
+        if terminal_worlds > 0 {
+            // A terminal session ends at once, before any h0.
+            let (to, transitions) =
+                head_compare::play_to_h0_v1(end, focal_id, &mut fixture()).unwrap();
+            assert_eq!(transitions, 0);
+            assert!(matches!(to, head_compare::ToH0V1::Terminal(_)));
+            break;
+        }
+    }
+    assert!(
+        terminal_worlds > 0,
+        "no world ended before h0 at the last choice of {roots} won games"
+    );
 }
 
 /// The flat-root switch is honoured by the searched budget player only and

@@ -31,6 +31,11 @@ ARMS.json: {"version": "sd1-capture-v1", "half_rollouts": 64, "coverage_max": 16
                       "value_leaf": {"horizon": "h0", "sims": 512}}, ...]}
 Optional (collab LANES/searchpm-20261116): per arm "flat_root": true (the tree is the root alone), and top-level
 "root_value": true (the record takes the searching network's raw value-head output at the placed decision).
+Optional (collab LANES/lead/reviews/search-screen-20261125): top-level "decision_kind": true (every captured state,
+panel pass included, carries features.decision_kind, "pregame" or "game"; records copy features whole) and
+"head_compare": {"second_source": SOURCE.json or an inline source, "worlds": 16, "seed": 20261125} (arms pass only:
+both value heads on the h0 observations of sampled worlds per covered action; the source file is inlined into the
+job, so the job pins its bytes).
 """
 import argparse
 import hashlib
@@ -69,16 +74,42 @@ def sha256_file(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def jobs(base, dose, out_dir, updates, arms, first_update=0, chain='sd1/panel', key_memo_mib=512,
-         panel_only=False):
-    """One collect command per update (EX1's qualification construction, as capture0b.py builds it)."""
-    if arms.get('version') != VERSION:
-        raise SystemExit(f'stop: ARMS version must be {VERSION}')
+HEAD_COMPARE_KEYS = ('second_source', 'worlds', 'seed')
+
+
+def sd1_options(arms, panel_only):
+    """The engine's SD1 options from an ARMS document. Optional fields are written only when asked for, so every
+    existing ARMS document gives the same job bytes."""
     sd1 = {'version': VERSION, 'arms': [] if panel_only else arms['arms'],
            'half_rollouts': 0 if panel_only else int(arms['half_rollouts']),
            'coverage_max': int(arms['coverage_max'])}
     if arms.get('root_value') and not panel_only:
         sd1['root_value'] = True
+    if arms.get('head_compare') and not panel_only:
+        hc = arms['head_compare']
+        if sorted(hc) != sorted(HEAD_COMPARE_KEYS):
+            raise SystemExit(f'stop: head_compare takes exactly {HEAD_COMPARE_KEYS}')
+        source = hc['second_source']
+        if isinstance(source, str):
+            source = read(source)
+            # A dose record (ss1_jobs.py dose) carries its model source as `source`.
+            if 'play_import' not in source and isinstance(source.get('source'), dict):
+                source = source['source']
+        if not isinstance(source, dict) or 'play_import' not in source:
+            raise SystemExit('stop: head_compare second_source is not a model source')
+        sd1['head_compare'] = {'second_source': source, 'worlds': int(hc['worlds']), 'seed': int(hc['seed'])}
+    # Both passes: the panel is formed from the panel pass's labels.
+    if arms.get('decision_kind'):
+        sd1['decision_kind'] = True
+    return sd1
+
+
+def jobs(base, dose, out_dir, updates, arms, first_update=0, chain='sd1/panel', key_memo_mib=512,
+         panel_only=False):
+    """One collect command per update (EX1's qualification construction, as capture0b.py builds it)."""
+    if arms.get('version') != VERSION:
+        raise SystemExit(f'stop: ARMS version must be {VERSION}')
+    sd1 = sd1_options(arms, panel_only)
     budget = max([a.get('budget', 0) for a in arms['arms']] + [1])
     cfg = qual.build_config(base, dose, Path(out_dir) / 'unused', chain, chain, first_update, updates, 1)
     source = cfg['initial_source']
@@ -289,8 +320,9 @@ def records(out_dir):
                     record['arms'].append(row)
                 if 'references' in capture:
                     record['references'] = capture['references']
-                if 'root_value' in capture:
-                    record['root_value'] = capture['root_value']
+                for key in ('root_value', 'head_compare'):
+                    if key in capture:
+                        record[key] = capture[key]
             yield record
             ordinal += 1
 
