@@ -177,7 +177,9 @@ fn next(state: &mut GameState) -> Decision {
     let decision = engine::advance_until_decision(state);
     assert!(
         !matches!(decision, Decision::Halted { .. }),
-        "{decision:?}\nstack: {:#?}\npending triggers: {:#?}",
+        "{decision:?}\nvalidation: {:?}\nlast event: {:?}\nstack: {:#?}\npending triggers: {:#?}",
+        engine::step(&mut state.clone(), Action::Pass),
+        state.engine.event_history.last(),
         state.stack,
         state.engine.pending_triggers
     );
@@ -1608,7 +1610,7 @@ fn noncast_metamorph_face_down_and_peacekeeper_halt_only_on_selection() {
         let hidden = put(
             &mut state,
             actor.opponent(),
-            "Lava Spike",
+            "Show and Tell",
             Zone::Battlefield,
         );
         state.objects.get_mut(hidden).v4.face_down_v1 = Some(mtg_kernel::state::FaceDownV1 {
@@ -1638,7 +1640,7 @@ fn noncast_metamorph_face_down_and_peacekeeper_halt_only_on_selection() {
             .iter_mut()
             .find(|row| row["source"] == serde_json::json!(hidden))
             .unwrap();
-        face["card_def"] = id("Lava Spike").into();
+        face["card_def"] = id("Show and Tell").into();
         assert_copy_restore_refused(forged, Action::FinishEffectSelection);
         for unsupported in [keeper, hidden] {
             let mut selected = state.clone();
