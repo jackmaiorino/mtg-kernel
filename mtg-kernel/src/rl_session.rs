@@ -14380,9 +14380,7 @@ mod tests {
                 .legal_actions
                 .iter()
                 .find(|action| matches(&action.semantic))
-                .unwrap_or_else(|| {
-                    panic!("unexpected Limited menu: {:?}", decision.legal_actions)
-                });
+                .unwrap_or_else(|| panic!("unexpected Limited menu: {:?}", decision.legal_actions));
             session
                 .step(
                     decision.episode_id,
@@ -14441,7 +14439,10 @@ mod tests {
             // target made waits, and the second Cub chooses its target.
             let mut legit = session.state.clone();
             assert_eq!(legit.stack.len(), 1);
-            assert_eq!(engine::waiting_placement_triggers_for_test(&mut legit).len(), 1);
+            assert_eq!(
+                engine::waiting_placement_triggers_for_test(&mut legit).len(),
+                1
+            );
             let Decision::ChooseTargets {
                 spell,
                 legal_targets,
@@ -14487,7 +14488,10 @@ mod tests {
             placed.engine.pending_triggers.clear();
             for action in [Action::Pass, choose] {
                 let mut stepped = placed.clone();
-                assert!(engine::step(&mut stepped, action.clone()).is_err(), "{action:?}");
+                assert!(
+                    engine::step(&mut stepped, action.clone()).is_err(),
+                    "{action:?}"
+                );
                 assert_eq!(stepped, placed);
             }
         }
@@ -14501,7 +14505,10 @@ mod tests {
             let legit = session.state.clone();
             let pending = &legit.engine.pending_triggers;
             assert_eq!(
-                pending.iter().map(|trigger| trigger.source).collect::<Vec<_>>(),
+                pending
+                    .iter()
+                    .map(|trigger| trigger.source)
+                    .collect::<Vec<_>>(),
                 [first, second]
             );
             assert!(pending.iter().all(|trigger| !trigger.placement_ordered));
@@ -14515,13 +14522,17 @@ mod tests {
                     ("partly ordered group", |state: &mut GameState| {
                         state.engine.pending_triggers[0].placement_ordered = true;
                     }),
-                    ("unordered trigger with a target", |state: &mut GameState| {
-                        let target = Target::Object(state.engine.pending_triggers[0].source);
-                        let contract = crate::state::StackTargetContractV4::capture(state, target);
-                        let pending = &mut state.engine.pending_triggers[1];
-                        pending.targets.push(target);
-                        pending.target_contracts.push(contract);
-                    }),
+                    (
+                        "unordered trigger with a target",
+                        |state: &mut GameState| {
+                            let target = Target::Object(state.engine.pending_triggers[0].source);
+                            let contract =
+                                crate::state::StackTargetContractV4::capture(state, target);
+                            let pending = &mut state.engine.pending_triggers[1];
+                            pending.targets.push(target);
+                            pending.target_contracts.push(contract);
+                        },
+                    ),
                 ],
             );
         }

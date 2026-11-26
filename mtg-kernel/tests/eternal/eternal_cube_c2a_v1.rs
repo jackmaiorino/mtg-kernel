@@ -823,7 +823,10 @@ fn a_shockland_payment_precedes_ordering_its_landfall_triggers() {
     assert!(is_tapped(&state, land));
     match next(&mut state) {
         Decision::OrderTriggers { pending, .. } => assert_eq!(
-            pending.iter().map(|trigger| trigger.source).collect::<Vec<_>>(),
+            pending
+                .iter()
+                .map(|trigger| trigger.source)
+                .collect::<Vec<_>>(),
             [first, second]
         ),
         other => panic!("the landfall triggers are ordered next, got {other:?}"),
