@@ -232,6 +232,11 @@ impl PilotSchedule {
 }
 
 pub trait PilotProvider {
+    /// A launcher can supervise the same uniform policy in a worker process.
+    fn uniform_pilot(&self) -> Arc<dyn GamePilot + Sync> {
+        Arc::new(UniformPilot)
+    }
+
     fn load_checkpoint(
         &self,
         pin: &PilotPin,
@@ -348,6 +353,13 @@ pub struct RunConfig {
     #[serde(default)]
     pub tripwire_window_games: Vec<u64>,
     pub pins: PodPins,
+    /// Immutable launcher input identities which have no field in the pod wire format.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub launch_pins: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_prefix_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
     pub metadata: CheckpointMetadata,
     pub caps: crate::cube_pod_runner_v1::PodCaps,
     pub workers: usize,
@@ -376,6 +388,9 @@ impl RunConfig {
             resume: None,
             tripwire_window_games: Vec::new(),
             pins: PodPins::default(),
+            launch_pins: BTreeMap::new(),
+            manifest_prefix_sha256: None,
+            platform: None,
             metadata: CheckpointMetadata::default(),
             caps: crate::cube_pod_runner_v1::PodCaps::training_a2(),
             workers: 1,
@@ -957,6 +972,9 @@ fn check_run_plan(saved: &RunConfig, proposed: &RunConfig) -> Result<(), Trainin
         || saved.pods_per_update != proposed.pods_per_update
         || saved.caps != proposed.caps
         || saved.pins != proposed.pins
+        || saved.launch_pins != proposed.launch_pins
+        || saved.manifest_prefix_sha256 != proposed.manifest_prefix_sha256
+        || saved.platform != proposed.platform
         || saved.metadata != proposed.metadata
         || saved.tripwire_window_games != proposed.tripwire_window_games
         || saved.tripwire != proposed.tripwire
@@ -1959,7 +1977,10 @@ impl TrainingDriver {
             config.metadata.parameter_layout_sha256 =
                 previous.config.metadata.parameter_layout_sha256.clone();
         }
-        if config.pins != previous.config.pins || config.metadata != previous.config.metadata {
+        if config.pins != previous.config.pins
+            || config.metadata != previous.config.metadata
+            || config.launch_pins != previous.config.launch_pins
+        {
             return Err(invalid("the segment boundary changed model or input pins"));
         }
         let mut model = previous.model.model.as_ref().clone();
@@ -2009,6 +2030,11 @@ impl TrainingDriver {
 
     pub fn next_update(&self) -> u64 {
         self.next_update
+    }
+
+    /// Pin of the currently published state, also available after an abandoned batch.
+    pub fn checkpoint_state_sha256(&self) -> &str {
+        &self.current_pin
     }
 
     pub fn set_gate_pin(&mut self, pin: PilotPin) -> Result<(), TrainingDriverError> {
@@ -2241,7 +2267,7 @@ impl TrainingDriver {
             fs::remove_file(pause)?;
         }
         let pilot: Arc<dyn GamePilot + Sync> = match &selection {
-            PilotSelection::Uniform => Arc::new(UniformPilot),
+            PilotSelection::Uniform => pilots.uniform_pilot(),
             PilotSelection::Checkpoint { pin } => pilots.load_checkpoint(pin)?,
         };
         for entry in &self.league {

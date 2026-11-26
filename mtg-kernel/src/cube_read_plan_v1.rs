@@ -21,6 +21,7 @@
 
 mod attestation;
 mod shakedown;
+pub use shakedown::shakedown_entry_values;
 use shakedown::RestartKind;
 
 use crate::card_def::CARD_DEFS;
