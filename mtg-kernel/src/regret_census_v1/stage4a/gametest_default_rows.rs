@@ -77,5 +77,6 @@ fn unset_switches_keep_default_rows_byte_identical() {
 
 const DEFAULT_ROW_PINS: [&str; 2] = [
     "f7affc573c5a08df89f981dba13c86e3e26a769cc88ebbf33d1d8b6b62e348ad",
-    "5f28a97a68750cf3e42d79dd76d3a8805e535c2da18388f16af00f4421dcd570",
+    // Searched row measured with the pre-adapter executor at 3ca7b1ad4.
+    "178422f8b4ed0ccc957b85eac251d8cc87ddad52b4bdab29207c095bbf2d03dc",
 ];
