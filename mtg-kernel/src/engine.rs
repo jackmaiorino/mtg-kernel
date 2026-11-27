@@ -3538,6 +3538,11 @@ fn validate_physical_spell_cast_origin(
                             state,
                             item.source,
                             caster,
+                        )
+                        && crate::eternal_e5a_v1::permissions::library_bestow_allowed(
+                            state,
+                            caster,
+                            item.source,
                         ))
                     || (!is_pending_placeholder
                         && cast_method == CastMethodV4::Omen
@@ -4388,7 +4393,18 @@ fn storm_source_contract_is_structurally_valid(
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (contract.cast_method == CastMethodV4::Normal
                     || (contract.cast_method == CastMethodV4::Bestow
-                        && supported_bestow(definition).is_some()))
+                        && supported_bestow(definition).is_some()
+                        && !crate::eternal_e5a_v1::permissions::citadel_cast(
+                            state,
+                            contract.source,
+                            contract.controller,
+                        )
+                        && !crate::eternal_e5a_v1::permissions::library_cast_paid_life(
+                            state,
+                            contract.source,
+                            holder,
+                            permission_zone_change_count,
+                        )))
         }
         SpellCastRouteV4::OmniscienceHandV1 {
             holder,
@@ -12526,7 +12542,7 @@ pub(crate) fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenD
     .then_some(omen)
 }
 
-fn supported_bestow(def: &card_def::CardDef) -> Option<&card_def::BestowDef> {
+pub(crate) fn supported_bestow(def: &card_def::CardDef) -> Option<&card_def::BestowDef> {
     let bestow = def.bestow.as_ref()?;
     let x_ok = (def.cost.x_count == 1 && bestow.cost.x_count == 1)
         || (cfg!(feature = "eternal-fixtures")
@@ -12800,14 +12816,14 @@ fn viable_pending_spell_forms(
         };
     }
     let free = resolution_cast_v1::free_cast(state, pending.spell);
-    let citadel_cast = cfg!(feature = "eternal-fixtures")
-        && pending.origin_zone == Zone::Library
-        && crate::eternal_e5a_v1::permissions::citadel_cast(
-            state,
-            pending.spell,
-            pending.controller,
-        );
-    let alternative = if supported_bestow(def).is_some() && !free && !citadel_cast {
+    let library_bestow_ok = pending.origin_zone != Zone::Library
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_e5a_v1::permissions::library_bestow_allowed(
+                state,
+                pending.controller,
+                pending.spell,
+            ));
+    let alternative = if supported_bestow(def).is_some() && !free && library_bestow_ok {
         Some((CastMethodV4::Bestow, &[CardType::Enchantment][..]))
     } else if let Some(adventure) = supported_adventure(def) {
         (pending.origin_zone == Zone::Hand
@@ -13245,6 +13261,41 @@ fn kicker_has_x(def: &card_def::CardDef) -> bool {
 
 fn kicker_min_x(def: &card_def::CardDef, kicked: bool) -> u16 {
     u16::from(kicked && kicker_has_x(def))
+}
+
+/// Records the chosen spell form on `pending_cast`. When a library-top cast
+/// commits to Bestow through Future Sight while Bolas's Citadel is also active,
+/// clears Citadel's life-payment alternative cost (CR 118.9a) and re-seeds X
+/// so Bestow pays its own mana cost.
+fn select_pending_spell_mode(state: &mut GameState, mode: u8) {
+    let Some((spell, controller, origin_zone, kicked, card_def)) =
+        state.engine.pending_cast.as_ref().map(|pending| {
+            (
+                pending.spell,
+                pending.controller,
+                pending.origin_zone,
+                pending.kicked == Some(true),
+                state.objects.get(pending.spell).card_def,
+            )
+        })
+    else {
+        return;
+    };
+    let def = &card_def::CARD_DEFS[usize::from(card_def)];
+    state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(mode);
+    if cfg!(feature = "eternal-fixtures")
+        && mode == 1
+        && origin_zone == Zone::Library
+        && supported_bestow(def).is_some()
+        && crate::eternal_e5a_v1::permissions::clear_library_citadel_cast(state, spell, controller)
+    {
+        let free = resolution_cast_v1::free_cast(state, spell);
+        let airbent = crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, spell, controller);
+        let pending = state.engine.pending_cast.as_mut().unwrap();
+        let mana_replaced =
+            free || airbent || pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost);
+        pending.x_value = CastXCost::of(def, kicked).seed(def, mana_replaced);
+    }
 }
 
 /// Records a hand cast's pay-or-skip answer, fixing mana X when waived.
@@ -14007,9 +14058,10 @@ fn is_castable_with_cost_grant(
                         && crate::eternal_cube_c8b_v1::graveyard_bestow_allowed(state, id, player);
                     let eternal_permission_bestow = cfg!(feature = "eternal-fixtures")
                         && (graveyard_permission_zone_change_count(player, id, state).is_some()
-                            || crate::eternal_e5a_v1::permissions::library_top_cast(
-                                state, player, id,
-                            ) == Some(false));
+                            || (state.objects.get(id).zone == Zone::Library
+                                && crate::eternal_e5a_v1::permissions::library_bestow_allowed(
+                                    state, player, id,
+                                )));
                     (matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
                         || graveyard_bestow
                         || eternal_permission_bestow
@@ -19240,6 +19292,19 @@ pub(crate) fn validate_pending_cast(
     {
         return Err("overload cannot replace an already selected alternative cost".into());
     }
+    if pending.mode_chosen == Some(1)
+        && supported_bestow(def).is_some()
+        && (!resolution_cast_v1::form_allowed(state, pending.spell, CastMethodV4::Bestow)
+            || (cfg!(feature = "eternal-fixtures")
+                && pending.origin_zone == Zone::Library
+                && crate::eternal_e5a_v1::permissions::citadel_cast(
+                    state,
+                    pending.spell,
+                    pending.controller,
+                )))
+    {
+        return Err("bestow cannot replace an already selected alternative cost".into());
+    }
     if !mode_shape_valid {
         return Err("pending cast mode selection is noncanonical".to_string());
     }
@@ -20135,7 +20200,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             return None;
         }
         if viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
-            state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(viable_modes[0]);
+            select_pending_spell_mode(state, viable_modes[0]);
             return drain_pending_cast_or_decide(state);
         }
         return Some(Decision::ChooseSpellMode {
@@ -31100,7 +31165,7 @@ pub(crate) fn step_without_linked_aura_v1(
                 || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));
             }
-            state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(mode);
+            select_pending_spell_mode(state, mode);
             Ok(())
         }
         Action::ChooseEffectOption(option_index) => {
@@ -35221,8 +35286,9 @@ fn finalize_owned_cast(
             });
     }
     #[cfg(feature = "eternal-fixtures")]
-    if cast_method != CastMethodV4::Omen
-        || !crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+    if (cast_method != CastMethodV4::Omen
+        || !crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
+        && cast_method != CastMethodV4::Bestow
     {
         crate::eternal_e5a_v1::permissions::pay_citadel_life(
             state,
