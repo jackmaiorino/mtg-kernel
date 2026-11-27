@@ -13572,6 +13572,33 @@ fn plain_draw_instruction(
     Some((player, count))
 }
 
+fn exact_leaf_staged_draw(
+    leaf: &EffectOp,
+    path: &[u16],
+    ctx: &ExecCtx,
+    state: &GameState,
+) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
+    let draw = leaf_staged_draw(leaf, path, ctx, state)?;
+    // These leaves expose only a maximum to the continuation validator.
+    // Their native count must be bound before replacement can suspend them.
+    (draw.1 != u32::MAX
+        && !matches!(
+            leaf,
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::MayDiscardUpToThenDraw { .. }
+            )
+        ))
+    .then_some(draw)
+}
+
+pub(crate) fn exact_staged_draw_root(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
+    let root = validated_definition_owned_root_effect(state, pending).ok()?;
+    exact_leaf_staged_draw(&root, &[], &pending.ctx, state)
+}
+
 #[cfg(feature = "eternal-fixtures")]
 struct MiracleDrawSite {
     player: PlayerRef,
@@ -13596,19 +13623,9 @@ fn miracle_draw_site(
     let (player, count, staged_below) = match plain {
         Some((player, count)) => (player, count, Vec::new()),
         None => {
-            let Some(draw) = leaf_staged_draw(printed, path, &pending.ctx, state) else {
+            let Some(draw) = exact_leaf_staged_draw(printed, path, &pending.ctx, state) else {
                 return Ok(None);
             };
-            if draw.1 == u32::MAX
-                || matches!(
-                    printed,
-                    EffectOp::StandardV1(
-                        crate::standard_cards_v1::StandardOpV1::MayDiscardUpToThenDraw { .. }
-                    )
-                )
-            {
-                return Ok(None);
-            }
             draw
         }
     };
@@ -18317,6 +18334,11 @@ fn drive_resumable_in_departure_scope_v1(
                     state, &mut continuation, card_def, &path,
                 )?;
             }
+            EffectOp::DrawCards { player, count }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cards_v1::owned_draws_v1::staged::begin(
+                        state, &mut continuation, player, count, &path,
+                    )? => {}
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
                     && (crate::eternal_cards_v1::owned_draws_v1::draw_stage_matches(

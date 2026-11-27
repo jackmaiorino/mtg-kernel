@@ -2292,6 +2292,17 @@ fn occult_epiphany_fixes_riddler_attempts_before_dredge_and_miracle() {
         Some(Decision::ChooseEffectTargets { legal_targets, can_finish: true, .. })
             if legal_targets == [Target::Object(shenanigans)]
     ));
+
+    let mut dredged_twice = state.clone();
+    act(
+        &mut dredged_twice,
+        Action::ChooseEffectTarget(Target::Object(shenanigans)),
+    );
+    settle_with(&mut dredged_twice, choose_cards(vec![imp, shenanigans]));
+    assert_eq!(dredged_twice.players[0].draws_this_turn, 1);
+    assert_eq!(zone(&dredged_twice, miracle), Zone::Graveyard);
+    assert_eq!(dredged_twice.players[0].hand, [later]);
+
     act(&mut state, Action::FinishEffectSelection);
     assert!(matches!(
         settle(&mut state),
