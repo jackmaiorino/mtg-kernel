@@ -18,8 +18,11 @@
 
 use crate::card_def::{card_id_by_name, CardDef, Subtype, CARD_DEFS};
 use crate::effect::{EffectOp, LibraryCardFilter};
-use crate::limited_session_v1::LimitedJsonlServerV1;
+use crate::limited_session_v1::{
+    CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1, LimitedReplyBodyV1, LimitedRequestV1,
+};
 use crate::mana::{ManaColor, Pip};
+use crate::rl_session::RlSessionTerminalV1;
 use crate::state::{SplitMix64, Zone};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1175,17 +1178,23 @@ pub struct GameTally {
 impl GameTally {
     fn record_stack(&mut self, body: &Value) {
         if let Some(stack) = body["observation"]["projection"]["stack"].as_array() {
-            self.max_stack = self
-                .max_stack
-                .max(u32::try_from(stack.len()).unwrap_or(u32::MAX));
+            self.record_stack_len(stack.len());
         }
+    }
+
+    fn record_stack_len(&mut self, len: usize) {
+        self.max_stack = self.max_stack.max(u32::try_from(len).unwrap_or(u32::MAX));
     }
 
     fn record_action(&mut self, action: &Value) {
         let source = action["semantic"]["source"]["card_db_id"]
             .as_u64()
-            .filter(|&id| id < CARD_DEFS.len() as u64)
-            .map(|id| id as u16);
+            .and_then(|id| u16::try_from(id).ok());
+        self.record_source(source);
+    }
+
+    fn record_source(&mut self, source: Option<u16>) {
+        let source = source.filter(|&id| usize::from(id) < CARD_DEFS.len());
         self.last_action_source = source;
         if source.is_some() {
             self.latest_source = source;
@@ -1345,6 +1354,18 @@ pub(crate) fn drive_uniform_attempt(
     action_seed: u64,
     caps: &GameCaps,
 ) -> (u64, GameEnd, GameTally) {
+    drive_uniform_attempt_with_transport(decks, seats, episode, env_seed, action_seed, caps, false)
+}
+
+pub(crate) fn drive_uniform_attempt_with_transport(
+    decks: [&Deck; 2],
+    seats: [usize; 2],
+    episode: u64,
+    env_seed: u64,
+    action_seed: u64,
+    caps: &GameCaps,
+    typed: bool,
+) -> (u64, GameEnd, GameTally) {
     let setup = GameSetup {
         decks,
         seats,
@@ -1353,8 +1374,8 @@ pub(crate) fn drive_uniform_attempt(
         action_seed,
     };
     let mut tally = GameTally::default();
-    let (decisions, end) =
-        catch_game_panic(|decisions| drive_game(&setup, caps, decisions, &mut tally));
+    let drive = if typed { drive_game_typed } else { drive_game };
+    let (decisions, end) = catch_game_panic(|decisions| drive(&setup, caps, decisions, &mut tally));
     (decisions, end, tally)
 }
 
@@ -1546,9 +1567,196 @@ fn drive_game(
     }
 }
 
+/// The card under the semantic action's `source` field. Other card fields
+/// (such as a declared attacker or a card chosen for discard) are distinct.
+fn action_source(semantic: &crate::rl::ActionSemanticV1) -> Option<u16> {
+    use crate::rl::ActionSemanticV1::*;
+
+    match semantic {
+        PlayLand { source, .. }
+        | CastSpell { source, .. }
+        | ActivateManaAbility { source, .. }
+        | ActivateAbility { source, .. }
+        | PlotSpell { source, .. }
+        | ChooseTarget { source, .. }
+        | ChooseCostTarget { source, .. }
+        | ChooseCastMode { source, .. }
+        | ChooseKicker { source, .. }
+        | ChooseSpellMode { source, .. }
+        | ChooseEffectOption { source, .. }
+        | ChooseEffectTarget { source, .. }
+        | FinishEffectSelection { source, .. }
+        | ChooseEffectColor { source, .. }
+        | ChooseEffectNumber { source, .. }
+        | ChooseEffectBoolean { source, .. }
+        | FinishTargetSelection { source, .. }
+        | ChooseSpellCopyPayment { source, .. }
+        | ChooseSpellCopyRetarget { source, .. }
+        | ChooseCombatDamageRange { source, .. }
+        | TurnFaceUp { source, .. }
+        | ChooseDivineKickerV44 { source, .. }
+        | ChooseDivineTargetV44 { source, .. }
+        | FinishDivineTargetsV44 { source, .. }
+        | ChooseFullRangeCastXValueV59 { source, .. }
+        | ActivateManaAbilityWithTwoCostTargetsV1 { source, .. }
+        | ChooseTextColorWordV1 { source, .. } => Some(source.card_db_id),
+        #[cfg(feature = "limited-fdn-fixtures")]
+        ChooseTriggerOrderNext { source, .. } => Some(source.card_db_id),
+        Pass { .. }
+        | ChooseOptionalCostUse { .. }
+        | ChooseOptionalCostWhich { .. }
+        | ChooseMadnessCast { .. }
+        | Discard { .. }
+        | DeclareAttackers { .. }
+        | DeclareBlockersForAttacker { .. }
+        | ChooseAttackerInclusion { .. }
+        | ChooseBlockerInclusion { .. }
+        | OrderTriggers { .. }
+        | Ambiguous { .. }
+        | ChooseLegendPermanent { .. }
+        | ChooseLondonMulligan { .. }
+        | ChooseLondonBottom { .. }
+        | ChooseAttackTarget { .. }
+        | ChooseEntryColorV36 { .. }
+        | ChooseEntryCreatureTypeV60 { .. }
+        | ChooseMeddlingMageNameV1 { .. } => None,
+    }
+}
+
+fn typed_terminal_end(terminal: RlSessionTerminalV1, seats: [usize; 2]) -> GameEnd {
+    use crate::rl::{PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2};
+
+    let reason = terminal.terminal_reason;
+    let code = match terminal.terminal_code {
+        TerminalSafeCodeV2::NaturalGameOver => {
+            return GameEnd::Natural {
+                winner_seat: terminal.winner.map(|winner| match winner {
+                    PlayerSeatV1::P0 => seats[0],
+                    PlayerSeatV1::P1 => seats[1],
+                }),
+                reason,
+            };
+        }
+        TerminalSafeCodeV2::DecisionCap => "decision_cap",
+        TerminalSafeCodeV2::FailClosed => "fail_closed",
+    };
+    let classification = match terminal.terminal_classification {
+        TerminalClassificationV1::Natural => "natural",
+        TerminalClassificationV1::Truncated => "truncated",
+        TerminalClassificationV1::Halted => "halted",
+    };
+    GameEnd::Terminal {
+        code: code.to_owned(),
+        classification: classification.to_owned(),
+        reason,
+    }
+}
+
+fn drive_game_typed(
+    setup: &GameSetup<'_>,
+    caps: &GameCaps,
+    decisions: &mut u64,
+    tally: &mut GameTally,
+) -> GameEnd {
+    let observed = game_decision_counter();
+    observed.store(0, Ordering::Relaxed);
+    let mut rng = SplitMix64::seed(setup.action_seed);
+    let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+    let mut request = LimitedRequestV1::Reset {
+        schema_version: SESSION_SCHEMA_VERSION,
+        request_id: "reset".to_owned(),
+        decks: setup.decks.map(|deck| CustomDeckV1 {
+            cards: deck
+                .entries
+                .iter()
+                .map(|entry| CustomCardCountV1 {
+                    name: entry.name.clone(),
+                    count: entry.count,
+                })
+                .collect(),
+            companion: None,
+        }),
+        episode_id: setup.episode,
+        env_seed: setup.env_seed,
+        max_physical_decisions: caps.max_physical_decisions,
+        max_policy_steps: caps.max_policy_steps,
+        max_stack_objects: caps.max_stack_objects,
+        outside_the_game: None,
+    };
+    loop {
+        let decision = match server.handle_request(&request).body {
+            LimitedReplyBodyV1::Decision { decision } => decision,
+            LimitedReplyBodyV1::Error { error } => {
+                return GameEnd::SessionError {
+                    code: error.code,
+                    message: error.message,
+                }
+            }
+            LimitedReplyBodyV1::Terminal { terminal } => {
+                tally.policy_steps = Some(terminal.policy_step_count);
+                tally.physical_decisions = Some(terminal.physical_decision_count);
+                return typed_terminal_end(terminal, setup.seats);
+            }
+        };
+        tally.record_stack_len(decision.observation.projection.surface.stack.len());
+        tally.last_step = Some(decision.step);
+        tally.last_physical_decision_id = Some(decision.physical_decision_id);
+        let actions = &decision.legal_actions;
+        if actions.is_empty() {
+            return GameEnd::SessionError {
+                code: "no_legal_actions".to_owned(),
+                message: "decision without legal actions: \"decision\"".to_owned(),
+            };
+        }
+        if *decisions >= caps.max_decisions {
+            return GameEnd::DecisionCap;
+        }
+        let action = &actions[uniform_index(&mut rng, actions.len())];
+        *decisions += 1;
+        observed.store(*decisions, Ordering::Relaxed);
+        tally.record_source(action_source(&action.semantic));
+        request = LimitedRequestV1::Step {
+            schema_version: SESSION_SCHEMA_VERSION,
+            request_id: format!("step-{decisions}"),
+            episode_id: decision.episode_id,
+            expected_step: decision.step,
+            selected_index: action.selected_index,
+            selected_action_id: action.stable_id.clone(),
+        };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_uniform_attempt_matches_jsonl() {
+        let mut deck = Deck::default();
+        deck.push(card_id_by_name("Forest").unwrap(), 40);
+        let mut invalid = deck.clone();
+        invalid.entries[0].name = "No such Cube card".to_owned();
+        let caps = GameCaps::default();
+        let driver_cap = GameCaps {
+            max_decisions: 3,
+            ..caps
+        };
+        let session_cap = GameCaps {
+            max_physical_decisions: 3,
+            ..caps
+        };
+        for (decks, caps) in [
+            ([&deck, &deck], caps),
+            ([&deck, &deck], driver_cap),
+            ([&deck, &deck], session_cap),
+            ([&invalid, &deck], caps),
+        ] {
+            let jsonl =
+                drive_uniform_attempt_with_transport(decks, [1, 0], 2, 42, 18, &caps, false);
+            let typed = drive_uniform_attempt_with_transport(decks, [1, 0], 2, 42, 18, &caps, true);
+            assert_eq!(typed, jsonl, "decks {decks:?}, caps {caps:?}");
+        }
+    }
 
     #[test]
     fn stack_tally_keeps_the_peak_from_decision_and_terminal_replies() {

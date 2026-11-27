@@ -6,10 +6,10 @@
 //! baselines only, never teachers or opponents in training.
 
 use crate::cube_draft_v1::{
-    basic_land_ids, drive_uniform_attempt, generate_packs, picker_seed, receiving_seat,
-    uniform_index, CubeDraftError, CubePool, Deck, DraftRecord, GameCaps, GameEnd, PickRecord,
-    StatedRuleDeckBuilder, DECK_CARDS, DRAFTED_CARDS, DRAFT_RECORD_SCHEMA, PACK_SIZE, POOL_CARDS,
-    SEATS,
+    basic_land_ids, drive_uniform_attempt_with_transport, generate_packs, picker_seed,
+    receiving_seat, uniform_index, CubeDraftError, CubePool, Deck, DraftRecord, GameCaps, GameEnd,
+    PickRecord, StatedRuleDeckBuilder, DECK_CARDS, DRAFTED_CARDS, DRAFT_RECORD_SCHEMA, PACK_SIZE,
+    POOL_CARDS, SEATS,
 };
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
@@ -469,20 +469,35 @@ pub struct UniformPilot;
 
 impl GamePilot for UniformPilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
-        let (decisions, end, tally) = drive_uniform_attempt(
-            spec.decks,
-            spec.seats,
-            spec.episode,
-            spec.env_seed,
-            spec.action_seed,
-            caps,
-        );
-        AttemptOutcome {
-            decisions,
-            physical_decisions: tally.physical_decisions,
-            policy_steps: tally.policy_steps,
-            end,
-            last_action_source: tally.last_action_source,
-        }
+        uniform_attempt(spec, caps, false)
+    }
+}
+
+/// Uniform policy with an in-process Limited transport for trusted Cube decks.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TypedUniformPilot;
+
+impl GamePilot for TypedUniformPilot {
+    fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        uniform_attempt(spec, caps, true)
+    }
+}
+
+fn uniform_attempt(spec: &AttemptSpec<'_>, caps: &GameCaps, typed: bool) -> AttemptOutcome {
+    let (decisions, end, tally) = drive_uniform_attempt_with_transport(
+        spec.decks,
+        spec.seats,
+        spec.episode,
+        spec.env_seed,
+        spec.action_seed,
+        caps,
+        typed,
+    );
+    AttemptOutcome {
+        decisions,
+        physical_decisions: tally.physical_decisions,
+        policy_steps: tally.policy_steps,
+        end,
+        last_action_source: tally.last_action_source,
     }
 }
