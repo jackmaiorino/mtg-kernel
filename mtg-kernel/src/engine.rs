@@ -2452,30 +2452,28 @@ fn spell_copy_origin_chain(
     Ok(())
 }
 
-/// Checks that a committed life loss at `loss_index` matches a positive
-/// nominal payment, accounting for the exact active-player Bloodletter of
-/// Aclazotz count at `loss_index` (CR 118.11).
-fn life_loss_matches_nominal(
+/// Computes the exact expected life loss for `nominal` at payment time,
+/// authenticating `payment_world` whenever an opponent-turn Bloodletter of
+/// Aclazotz could have applied (CR 118.11).
+fn expected_cast_life_loss(
     state: &GameState,
     player: PlayerId,
-    lost: i32,
     nominal: i32,
-    loss_index: usize,
-) -> bool {
-    if nominal <= 0 || lost <= 0 {
-        return false;
+    payment_world: Option<&GameState>,
+) -> Result<i32, String> {
+    if nominal <= 0 {
+        return Err("non-positive nominal life payment".into());
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     {
-        lost == crate::standard_statics_v1::modified_life_loss_at_event(
-            state, player, nominal, loss_index,
-        )
+        if let Some(world) = payment_world {
+            return Ok(crate::standard_statics_v1::modified_life_loss(
+                world, player, nominal,
+            ));
+        }
     }
-    #[cfg(not(feature = "standard-magezero-fixtures"))]
-    {
-        let _ = (state, player, loss_index);
-        lost == nominal
-    }
+    let _ = (state, player, payment_world);
+    Ok(nominal)
 }
 
 /// The receipt identifies the nominal cost and the committed loss after
@@ -2499,18 +2497,77 @@ fn validate_cast_life_x(
                 player,
                 amount,
                 loss,
-            } if *stack_item == item.v4.stack_item_id => {
-                Some((at, *spell, *player, *amount, *loss))
-            }
+                payment_world,
+            } if *stack_item == item.v4.stack_item_id => Some((
+                at,
+                *spell,
+                *player,
+                *amount,
+                *loss,
+                payment_world.as_deref(),
+            )),
             _ => None,
         });
-    let Some((at, spell, player, amount, loss)) = payments.next() else {
+    let Some((at, spell, player, amount, loss, payment_world)) = payments.next() else {
         return Err("spell lost its additional life payment".into());
     };
+    #[cfg(feature = "eternal-fixtures")]
+    let citadel_mv = if crate::eternal_e5a_v1::permissions::citadel_cast(state, item.source, caster)
+    {
+        i32::from(object_mana_value(state, item.source))
+    } else {
+        0
+    };
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let citadel_mv = 0;
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let needs_world = (amount > 0 || citadel_mv > 0)
+        && player != state.active_player
+        && crate::standard_statics_v1::game_contains_bloodletter(state);
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let needs_world = false;
+
+    if needs_world {
+        let Some(world) = payment_world else {
+            return Err("Bloodletter life payment lost its payment-time world".into());
+        };
+        if !world.engine.event_history.is_empty()
+            || !world.engine.event_log.is_empty()
+            || world.active_player != state.active_player
+            || world.turn != state.turn
+            || world.objects.len() > state.objects.len()
+            || !world.stack.last().is_some_and(|top| {
+                top.v4.stack_item_id == item.v4.stack_item_id
+                    && top.source == spell
+                    && top.controller == player
+            })
+            || world.players[player.index()].life < i32::from(amount).saturating_add(citadel_mv)
+            || world.players[world.active_player.index()]
+                .battlefield
+                .iter()
+                .any(|&id| {
+                    state.objects.try_get(id).is_none_or(|live| {
+                        world.objects.try_get(id).is_none_or(|prior| {
+                            prior.owner != live.owner || prior.card_def != live.card_def
+                        })
+                    })
+                })
+        {
+            return Err("Bloodletter payment-time world is malformed".into());
+        }
+    } else if payment_world.is_some() {
+        return Err("unexpected payment-time world on non-Bloodletter life payment".into());
+    }
+
     let loss_matches = match loss {
         None => amount == 0,
         Some((index, lost)) => {
+            let expected =
+                expected_cast_life_loss(state, player, i32::from(amount), payment_world)?;
             amount > 0
+                && lost > 0
+                && lost == expected
                 && at > 0
                 && u64::try_from(at - 1).ok() == Some(index)
                 && history.get(at - 1)
@@ -2518,7 +2575,6 @@ fn validate_cast_life_x(
                         player,
                         amount: lost,
                     })
-                && life_loss_matches_nominal(state, player, lost, i32::from(amount), at - 1)
                 && !history
                     .of_kinds_v2(&[EventKindV1::CastLifeXPaidV1])
                     .any(|(other_at, event)| {
@@ -2539,15 +2595,6 @@ fn validate_cast_life_x(
     {
         return Err("spell X disagrees with its additional life payment".into());
     }
-    #[cfg(feature = "eternal-fixtures")]
-    let citadel_mv = if crate::eternal_e5a_v1::permissions::citadel_cast(state, item.source, caster)
-    {
-        i32::from(object_mana_value(state, item.source))
-    } else {
-        0
-    };
-    #[cfg(not(feature = "eternal-fixtures"))]
-    let citadel_mv = 0;
     let tail_start = if citadel_mv > 0 {
         let Some(CommittedEvent::LifeLoss {
             player: citadel_player,
@@ -2556,9 +2603,8 @@ fn validate_cast_life_x(
         else {
             return Err("Citadel life payment missing after additional life X receipt".into());
         };
-        if *citadel_player != caster
-            || !life_loss_matches_nominal(state, caster, *citadel_lost, citadel_mv, at + 1)
-        {
+        let expected_citadel = expected_cast_life_loss(state, caster, citadel_mv, payment_world)?;
+        if *citadel_player != caster || *citadel_lost != expected_citadel {
             return Err("Citadel life payment disagrees with spell mana value".into());
         }
         at + 2
@@ -2580,6 +2626,7 @@ fn validate_cast_life_x(
             if publications.next().is_some()
                 || receipt.spell != item.source
                 || receipt.controller != caster
+                || receipt.life_x_paid_v1 != Some(item.v4.x_value)
                 || history.get(pub_at + 1)
                     != Some(&CommittedEvent::SpellCast {
                         spell: item.source,
@@ -2588,6 +2635,26 @@ fn validate_cast_life_x(
                 || tail_start > pub_at
             {
                 return Err("additional life payment lies outside this spell's cast window".into());
+            }
+            if payment_world.is_some() && pub_at + 2 == history.len() {
+                if amount > 0
+                    && expected_cast_life_loss(state, player, i32::from(amount), payment_world)?
+                        != expected_cast_life_loss(state, player, i32::from(amount), Some(state))?
+                {
+                    return Err(
+                        "payment-time world disagrees with unchanged live Bloodletter multiplier"
+                            .into(),
+                    );
+                }
+                if citadel_mv > 0
+                    && expected_cast_life_loss(state, caster, citadel_mv, payment_world)?
+                        != expected_cast_life_loss(state, caster, citadel_mv, Some(state))?
+                {
+                    return Err(
+                        "payment-time world disagrees with unchanged live Citadel Bloodletter multiplier"
+                            .into(),
+                    );
+                }
             }
             pub_at
         }
@@ -2786,6 +2853,21 @@ fn validate_physical_spell_cast_origin(
     }
     if !is_pending_placeholder && x_cost == CastXCost::Life {
         validate_cast_life_x(state, item, caster, require_publication)?;
+    } else if !is_pending_placeholder
+        && state
+            .engine
+            .event_history
+            .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
+            .any(|(_, event)| {
+                matches!(
+                    event,
+                    CommittedEvent::PublishedCastIdentityV1 { receipt }
+                        if receipt.stack_item_id == item.v4.stack_item_id
+                            && receipt.life_x_paid_v1.is_some()
+                )
+            })
+    {
+        return Err("non-life-X cast carries a life-X publication binding".into());
     }
     let route_supports_method = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
@@ -21689,7 +21771,7 @@ fn validate_pending_trigger_for_stack(
     // producer/source/target metadata is still fully definition-validated.
     // Only this private placement probe uses the metadata path.
     validate_spell_stack_source(state, &candidate)?;
-    validated_stack_item_target_metadata(&candidate, state, false)?;
+    validated_stack_item_target_metadata(&candidate, state, false, false)?;
     Ok(())
 }
 
@@ -22917,7 +22999,7 @@ fn validated_stack_item_target_spec_inner(
     crate::ajani_full_v42::lifecycle::validate_item(state, item)?;
     crate::krenko_v1::validate_item(state, item)?;
     crate::fishing_pole_v39::lifecycle::validate_item(state, item)?;
-    validated_stack_item_target_metadata(item, state, true)
+    validated_stack_item_target_metadata(item, state, true, require_publication)
 }
 
 /// Pure metadata portion shared by the private prospective placement probe.
@@ -22926,6 +23008,7 @@ fn validated_stack_item_target_metadata(
     item: &StackItem,
     state: &GameState,
     require_publication: bool,
+    require_targeting_events: bool,
 ) -> Result<Option<TargetSpec>, String> {
     if !item.v4.full_text_activation_v1.is_empty() && item.kind != StackItemKind::ActivatedAbility {
         return Err("full-text producer belongs only to an activated ability".into());
@@ -23149,33 +23232,132 @@ fn validated_stack_item_target_metadata(
         return Err("stack target and contract cardinalities are malformed".to_string());
     }
     if item.kind == StackItemKind::Spell {
-        // CR 107.3b, 601.2c: finalized X-bounded single creature target spells
-        // (Blue Sun's Twilight, Dominate) cannot carry a battlefield creature
-        // whose mana value exceeds the spell's announced X.
+        // CR 107.3b, 601.2c, 608.2b: finalized X-bounded creature target spells
+        // (Blue Sun's Twilight, Dominate, and Kozilek's Command creature modes)
+        // must authenticate the targeted battlefield incarnation against
+        // announcement/retargeting (`CommittedEvent::Targeted`) and reject
+        // live same-incarnation targets whose MV exceeds X unless they were
+        // turned face up or transformed after targeting (CR 701.40b).
+        let validate_x_bounded_creature_slot = |slot: usize| -> Result<(), String> {
+            let Some(&Target::Object(target)) = item.targets.get(slot) else {
+                return Ok(());
+            };
+            let Some(&StackTargetContractV4::Object {
+                object: contract_object,
+                zone: Zone::Battlefield,
+                zone_change_count: contract_zcc,
+                ..
+            }) = item.v4.target_contracts.get(slot)
+            else {
+                return Ok(());
+            };
+            if contract_object != target {
+                return Err("stack target contract disagrees with target object".to_string());
+            }
+            let targeted_at = state
+                .engine
+                .event_history
+                .of_kinds_v2(&[EventKindV1::Targeted])
+                .filter_map(|(at, event)| match event {
+                    CommittedEvent::Targeted {
+                        target: targeted,
+                        target_zone_change_count,
+                        targeting_stack_item,
+                        ..
+                    } if *targeting_stack_item == item.v4.stack_item_id
+                        && *targeted == target
+                        && *target_zone_change_count == contract_zcc =>
+                    {
+                        Some(at)
+                    }
+                    _ => None,
+                })
+                .last();
+            let live = state.objects.try_get(target);
+            let same_battlefield_incarnation = live.is_some_and(|obj| {
+                obj.zone == Zone::Battlefield && obj.zone_change_count == contract_zcc
+            });
+            if require_targeting_events && !item.is_copy {
+                let Some(t_at) = targeted_at else {
+                    return Err(
+                        "X-bounded creature target lacks announcement targeting event".to_string(),
+                    );
+                };
+                if !same_battlefield_incarnation {
+                    let departed_after = state
+                        .engine
+                        .event_history
+                        .range_v2((t_at + 1)..)
+                        .iter()
+                        .any(|event| {
+                            matches!(
+                                event,
+                                CommittedEvent::ZoneChange {
+                                    object,
+                                    from: Zone::Battlefield,
+                                    ..
+                                } if *object == target
+                            )
+                        });
+                    if !departed_after {
+                        return Err(
+                            "stale X-bounded creature target did not leave after targeting"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            if same_battlefield_incarnation && object_mana_value(state, target) > item.v4.x_value {
+                let mv_changed_after_targeting = targeted_at.is_some_and(|t_at| {
+                    state
+                        .engine
+                        .event_history
+                        .range_v2((t_at + 1)..)
+                        .iter()
+                        .any(|event| {
+                            matches!(
+                                event,
+                                CommittedEvent::TurnedFaceUp {
+                                    object,
+                                    zone_change_count,
+                                } if *object == target && *zone_change_count == contract_zcc
+                            ) || matches!(
+                                event,
+                                CommittedEvent::Transformed { object, .. } if *object == target
+                            )
+                        })
+                });
+                if !mv_changed_after_targeting {
+                    return Err("stack target mana value exceeds announced X".to_string());
+                }
+            }
+            Ok(())
+        };
+
         if let Some(spell_obj) = state.objects.try_get(item.source) {
             let def = &crate::card_def::CARD_DEFS[usize::from(spell_obj.card_def)];
             if crate::standard_cards_v1::x_bounded_creature_target(def) {
-                if let Some(&Target::Object(target)) = item.targets.first() {
-                    if state.objects.try_get(target).is_some_and(|live| {
-                        live.zone == Zone::Battlefield
-                            && object_mana_value(state, target) > item.v4.x_value
-                    }) {
-                        return Err("stack target mana value exceeds announced X".to_string());
-                    }
+                validate_x_bounded_creature_slot(0)?;
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if def.name == "Kozilek's Command" {
+                match spec {
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1,
+                    ) => validate_x_bounded_creature_slot(1)?,
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+                    ) => validate_x_bounded_creature_slot(0)?,
+                    _ => {}
                 }
             }
         }
     }
     #[cfg(feature = "eternal-fixtures")]
     if item.kind == StackItemKind::Spell {
-        // CR 107.3b, 601.2c, 601.2d, 601.2f: finalized X-bounded target counts
-        // and MV-bounded creature targets cannot violate the spell's announced X.
-        let creature_mv_ok = |target: Option<&Target>| match target {
-            Some(&Target::Object(object)) => !state.objects.try_get(object).is_some_and(|live| {
-                live.zone == Zone::Battlefield && object_mana_value(state, object) > item.v4.x_value
-            }),
-            _ => true,
-        };
+        // CR 107.3b, 601.2d, 601.2f: finalized X-bounded target counts cannot
+        // exceed (or, for Fire Covenant's life-per-damage division, differ from)
+        // the spell's announced X.
         let x_cardinality_ok = match spec {
             TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::C1cV1(
                 crate::eternal_cube_c1c_v1::targets::C1cTargetV1::CreaturePicksPerLifeV1,
@@ -23184,17 +23366,9 @@ fn validated_stack_item_target_metadata(
                 crate::eternal_cube_c1b_v1::targets::C1bTargetV1::ArtifactsAndEnchantmentsV1,
             )) => item.targets.len() <= usize::from(item.v4.x_value),
             TargetSpec::StandardV1(
-                crate::standard_cards_v1::StandardTargetV1::PlayerThenGraveyardCardsV1,
+                crate::standard_cards_v1::StandardTargetV1::PlayerThenGraveyardCardsV1
+                | crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
             ) => item.targets.len().saturating_sub(1) <= usize::from(item.v4.x_value),
-            TargetSpec::StandardV1(
-                crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1,
-            ) => creature_mv_ok(item.targets.get(1)),
-            TargetSpec::StandardV1(
-                crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
-            ) => {
-                item.targets.len().saturating_sub(1) <= usize::from(item.v4.x_value)
-                    && creature_mv_ok(item.targets.first())
-            }
             spec if spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC => {
                 u16::from(
                     crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&item.targets),
@@ -34168,7 +34342,37 @@ fn finalize_owned_cast(
         .expect("begin_cast pushed this spell's StackItem and nothing can push another item while a cast is pending")
         .v4
         .stack_item_id;
-    if CastXCost::of(def, was_kicked) == CastXCost::Life {
+    let is_life_x_cast = CastXCost::of(def, was_kicked) == CastXCost::Life;
+    if is_life_x_cast {
+        #[cfg(feature = "eternal-fixtures")]
+        let citadel_mv = if crate::eternal_e5a_v1::permissions::citadel_cast(
+            state,
+            pending.spell,
+            pending.controller,
+        ) {
+            i32::from(object_mana_value(state, pending.spell))
+        } else {
+            0
+        };
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let citadel_mv = 0;
+        #[cfg(feature = "standard-magezero-fixtures")]
+        let payment_world = if (x_value > 0 || citadel_mv > 0)
+            && pending.controller != state.active_player
+            && crate::standard_statics_v1::game_contains_bloodletter(state)
+        {
+            let mut snapshot = state.clone();
+            snapshot.engine.event_history = Default::default();
+            snapshot.engine.event_log.clear();
+            Some(Box::new(snapshot))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "standard-magezero-fixtures"))]
+        let payment_world = {
+            let _ = citadel_mv;
+            None
+        };
         let loss = if x_value > 0 {
             let start = state.engine.event_history.len();
             event::propose_and_commit(
@@ -34204,6 +34408,7 @@ fn finalize_owned_cast(
                 player: pending.controller,
                 amount: x_value,
                 loss,
+                payment_world,
             });
     }
     #[cfg(feature = "eternal-fixtures")]
@@ -34357,6 +34562,7 @@ fn finalize_owned_cast(
         finalized_source_contract,
         stack_item_id,
         library_overload,
+        is_life_x_cast.then_some(x_value),
     );
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast_with_targets(state, pending.spell, pending.controller, storm_targets);

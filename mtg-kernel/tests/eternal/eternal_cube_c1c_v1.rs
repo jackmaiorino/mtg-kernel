@@ -3641,10 +3641,10 @@ mod cast_x_routes {
         top.v4.target_contracts = vec![fleshraker_contract];
         assert_refused(&forged_blue, blue_sun);
 
-        // Finalized Kozilek's Command Mode 1 (PlayerThenCreatureV1) and Mode 5
-        // (CreatureThenGraveyardCardsV1) at X = 0: forging the creature target
-        // to MV 3 Glaring Fleshraker must be rejected.
-        for (mode_idx, needs_finish) in [(1_u8, false), (5_u8, true)] {
+        // Finalized Kozilek's Command Modes 1 and 3 (PlayerThenCreatureV1) and
+        // Mode 5 (CreatureThenGraveyardCardsV1) at X = 0: forging the creature
+        // target to MV 3 Glaring Fleshraker must be rejected.
+        for (mode_idx, needs_finish) in [(1_u8, false), (3_u8, false), (5_u8, true)] {
             let mut state = plains();
             let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
             let ballista = put(&mut state, P1, "Walking Ballista", Zone::Battlefield);
@@ -3653,7 +3653,7 @@ mod cast_x_routes {
             act(&mut state, Action::CastSpell(cmd));
             let _ = next(&mut state);
             act(&mut state, Action::ChooseSpellMode(mode_idx));
-            if mode_idx == 1 {
+            if mode_idx == 1 || mode_idx == 3 {
                 let _ = next(&mut state);
                 act(&mut state, Action::ChooseTarget(Target::Player(P0)));
             }
@@ -3669,12 +3669,107 @@ mod cast_x_routes {
                 &forged_cmd,
                 Target::Object(fleshraker),
             );
-            let creature_pos = usize::from(mode_idx == 1);
+            let creature_pos = usize::from(mode_idx == 1 || mode_idx == 3);
             let top = forged_cmd.stack.last_mut().unwrap();
             top.targets[creature_pos] = Target::Object(fleshraker);
             top.v4.target_contracts[creature_pos] = fleshraker_contract;
             assert_refused(&forged_cmd, cmd);
         }
+
+        // Forged stale target on finalized Dominate at X = 0: exiling unrelated
+        // MV 3 Glaring Fleshraker above Dominate and substituting Fleshraker
+        // with its pre-exile battlefield contract must be refused.
+        let mut state = plains();
+        let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+        let fleshraker_contract =
+            mtg_kernel::state::StackTargetContractV4::capture(&state, Target::Object(fleshraker));
+        let ballista = put(&mut state, P1, "Walking Ballista", Zone::Battlefield);
+        state.objects.get_mut(ballista).counters.plus1_plus1 = 1;
+        let swords = put(&mut state, P0, "Swords to Plowshares", Zone::Hand);
+        let dominate = free_exile(&mut state, "Dominate");
+        act(&mut state, Action::CastSpell(dominate));
+        act(&mut state, Action::ChooseTarget(Target::Object(ballista)));
+        cast_finished(&mut state);
+        pool(&mut state, P0, &[ManaColor::W], 0);
+        cast(&mut state, swords, &[Target::Object(fleshraker)]);
+        cast_finished(&mut state);
+        while state.stack.len() > 1 {
+            let _ = next(&mut state);
+            act(&mut state, Action::Pass);
+        }
+        let _ = next(&mut state);
+        assert_eq!(zone(&state, fleshraker), Zone::Exile);
+        let mut forged_stale = restore(&state);
+        let top = forged_stale.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(fleshraker)];
+        top.v4.target_contracts = vec![fleshraker_contract];
+        assert_refused(&forged_stale, dominate);
+
+        // Genuine Dominate at X = 0 targeting a manifested (MV 0) Llanowar Elves
+        // that turns face up (MV 1) in response: must NOT halt at restore or
+        // resolution; must fizzle cleanly under CR 601.2c / 608.2b / 701.40b.
+        let mut state = plains();
+        put(&mut state, P1, "Abhorrent Oculus", Zone::Battlefield);
+        for _ in 0..2 {
+            put(&mut state, P1, "Llanowar Elves", Zone::Library);
+        }
+        // Advance through P1's turn to P0's Main1 so P1's Abhorrent Oculus
+        // manifests a genuine face-down Llanowar Elves on P0's upkeep.
+        pass_until(&mut state, |s| {
+            s.active_player == P1 && s.step == Step::Main1
+        });
+        pass_until(&mut state, |s| {
+            s.active_player == P0 && s.step == Step::Main1
+        });
+        let elves = state.players[1]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&o| state.objects.get(o).v4.face_down_v1.is_some())
+            .expect("Abhorrent Oculus manifested Llanowar Elves");
+        let dominate = free_exile(&mut state, "Dominate");
+        act(&mut state, Action::CastSpell(dominate));
+        act(&mut state, Action::ChooseTarget(Target::Object(elves)));
+        cast_finished(&mut state);
+        // Pass P0 priority to P1; P1 turns manifested Llanowar Elves face up for {G}.
+        let _ = next(&mut state);
+        act(&mut state, Action::Pass);
+        let _ = next(&mut state);
+        pool(&mut state, P1, &[ManaColor::G], 0);
+        act(&mut state, Action::ActivateAbility(elves, 255));
+        assert!(state.objects.get(elves).v4.face_down_v1.is_none());
+        let mut restored_turned = restore(&state);
+        settled(&mut restored_turned);
+        assert!(restored_turned.engine.halted.is_none());
+        assert_eq!(
+            restored_turned.objects.get(elves).controller,
+            P1,
+            "Dominate X = 0 must fizzle when face-down target turns face up to MV 1"
+        );
+
+        // Shared PlayerThenCreatureV1 regression: Flame of Anor's draw-two +
+        // deal-five mode has no X and must accept positive-MV creatures.
+        let mut state = plains();
+        put(&mut state, P0, "Snapcaster Mage", Zone::Battlefield);
+        let fleshraker = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+        let flame = put(&mut state, P0, "Flame of Anor", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::R], 1);
+        act(&mut state, Action::CastSpell(flame));
+        match next(&mut state) {
+            Decision::ChooseSpellMode { legal_modes, .. } => {
+                // Mode 4 is the combined draw-two (target player) + deal-five (target creature) mode.
+                assert!(legal_modes.contains(&4), "modes: {legal_modes:?}");
+                act(&mut state, Action::ChooseSpellMode(4));
+            }
+            other => panic!("expected Flame of Anor mode choice, got {other:?}"),
+        }
+        choose_target(&mut state, Target::Player(P0));
+        choose_target(&mut state, Target::Object(fleshraker));
+        cast_finished(&mut state);
+        let mut restored_flame = restore(&state);
+        settled(&mut restored_flame);
+        assert!(restored_flame.engine.halted.is_none());
+        assert_eq!(zone(&restored_flame, fleshraker), Zone::Graveyard);
     }
 
     #[test]
@@ -3712,26 +3807,33 @@ mod cast_x_routes {
         settled(&mut restored_valid);
         assert!(restored_valid.engine.halted.is_none());
 
-        // Forge X = 3 -> X = 6 (with 6 matching targets and receipt amount = 6)
+        // Forge X = 3 -> X = 6 (including finalized bindings, 6 targets,
+        // CastLifeXPaidV1.amount, and PublishedCastIdentityV1.life_x_paid_v1)
         // while keeping the genuine LifeLoss { player: P0, amount: 6 }.
         let mut forged_six = restore(&state);
+        set_final_x(&mut forged_six, covenant, 6);
         let wall_contract = mtg_kernel::state::StackTargetContractV4::capture(
             &forged_six,
             Target::Object(target_creature),
         );
         let top = forged_six.stack.last_mut().unwrap();
-        top.v4.x_value = 6;
         top.targets = vec![Target::Object(target_creature); 6];
         top.v4.target_contracts = vec![wall_contract; 6];
         for event in forged_six.engine.event_history.iter_mut() {
-            if let event::CommittedEvent::CastLifeXPaidV1 { amount, .. } = event {
-                *amount = 6;
+            match event {
+                event::CommittedEvent::CastLifeXPaidV1 { amount, .. } => *amount = 6,
+                event::CommittedEvent::PublishedCastIdentityV1 { receipt }
+                    if receipt.spell == covenant =>
+                {
+                    receipt.life_x_paid_v1 = Some(6);
+                }
+                _ => {}
             }
         }
         assert_refused(&forged_six, covenant);
 
         // If Bloodletter is exiled in response while Fire Covenant is still on
-        // the stack, historical reconstruction still accepts X = 3 / lost = 6.
+        // the stack, payment_world still accepts X = 3 / lost = 6.
         let mut after_removal = restore(&state);
         pool(&mut after_removal, P0, &[ManaColor::W], 0);
         cast(&mut after_removal, swords, &[Target::Object(bloodletter)]);
@@ -3749,7 +3851,47 @@ mod cast_x_routes {
         assert!(after_removal.engine.halted.is_none());
         assert_eq!(zone(&after_removal, bloodletter), Zone::Exile);
 
-        // 2. Two Bloodletters double 3 -> 12; forging X = 6 with lost = 12 is refused.
+        // If Dress Down resolves in response (removing Bloodletter's abilities
+        // without a ZoneChange on Bloodletter), the genuine cast still settles
+        // cleanly and a forged X = 3 -> X = 6 edit at that point is still refused.
+        let mut after_dress_down = restore(&state);
+        let dress_down = put(&mut after_dress_down, P0, "Dress Down", Zone::Hand);
+        pool(&mut after_dress_down, P0, &[ManaColor::U], 1);
+        cast(&mut after_dress_down, dress_down, &[]);
+        cast_finished(&mut after_dress_down);
+        while after_dress_down.stack.len() > 1 {
+            let _ = next(&mut after_dress_down);
+            act(&mut after_dress_down, Action::Pass);
+        }
+        let _ = next(&mut after_dress_down);
+        assert_eq!(zone(&after_dress_down, dress_down), Zone::Battlefield);
+        let mut forged_after_dd = restore(&after_dress_down);
+        set_final_x(&mut forged_after_dd, covenant, 6);
+        let wall_contract = mtg_kernel::state::StackTargetContractV4::capture(
+            &forged_after_dd,
+            Target::Object(target_creature),
+        );
+        let top = forged_after_dd.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(target_creature); 6];
+        top.v4.target_contracts = vec![wall_contract; 6];
+        for event in forged_after_dd.engine.event_history.iter_mut() {
+            match event {
+                event::CommittedEvent::CastLifeXPaidV1 { amount, .. } => *amount = 6,
+                event::CommittedEvent::PublishedCastIdentityV1 { receipt }
+                    if receipt.spell == covenant =>
+                {
+                    receipt.life_x_paid_v1 = Some(6);
+                }
+                _ => {}
+            }
+        }
+        assert_refused(&forged_after_dd, covenant);
+        let mut genuine_after_dd = restore(&after_dress_down);
+        settled(&mut genuine_after_dd);
+        assert!(genuine_after_dd.engine.halted.is_none());
+
+        // 2. Two Bloodletters double 3 -> 12; forging X = 6 with lost = 12 (with
+        //    complete finalized bindings) is refused.
         let mut state = plains();
         state.active_player = P1;
         state.priority_player = P0;
@@ -3774,22 +3916,147 @@ mod cast_x_routes {
             "2 Bloodletters quadruple 3 life loss to 12"
         );
         let mut forged_six = restore(&state);
+        set_final_x(&mut forged_six, covenant, 6);
         let wall_contract = mtg_kernel::state::StackTargetContractV4::capture(
             &forged_six,
             Target::Object(target_creature),
         );
         let top = forged_six.stack.last_mut().unwrap();
-        top.v4.x_value = 6;
         top.targets = vec![Target::Object(target_creature); 6];
         top.v4.target_contracts = vec![wall_contract; 6];
         for event in forged_six.engine.event_history.iter_mut() {
-            if let event::CommittedEvent::CastLifeXPaidV1 { amount, .. } = event {
-                *amount = 6;
+            match event {
+                event::CommittedEvent::CastLifeXPaidV1 { amount, .. } => *amount = 6,
+                event::CommittedEvent::PublishedCastIdentityV1 { receipt }
+                    if receipt.spell == covenant =>
+                {
+                    receipt.life_x_paid_v1 = Some(6);
+                }
+                _ => {}
             }
         }
         assert_refused(&forged_six, covenant);
 
-        // 3. Zero Bloodletters on P1's turn: genuine X = 3 loses 3; forging
+        // 2b. Stealing P1's Bloodletter in response via Dominate while Fire
+        //     Covenant waits on the stack: genuine restore settles cleanly and
+        //     forging X = 3 -> X = 6 is still refused.
+        let mut state = plains();
+        state.active_player = P1;
+        state.priority_player = P0;
+        let bloodletter = put(&mut state, P1, "Bloodletter of Aclazotz", Zone::Battlefield);
+        let target_creature = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let dominate = put(&mut state, P0, "Dominate", Zone::Hand);
+        let covenant = free_exile(&mut state, "Fire Covenant");
+        act(&mut state, Action::CastSpell(covenant));
+        for _ in 0..3 {
+            let _ = next(&mut state);
+            act(
+                &mut state,
+                Action::ChooseTarget(Target::Object(target_creature)),
+            );
+        }
+        let _ = next(&mut state);
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 14);
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 5);
+        act(&mut state, Action::CastSpell(dominate));
+        act(
+            &mut state,
+            Action::ChooseTarget(Target::Object(bloodletter)),
+        );
+        cast_finished(&mut state);
+        while state.stack.len() > 1 {
+            let _ = next(&mut state);
+            act(&mut state, Action::Pass);
+        }
+        let _ = next(&mut state);
+        assert_eq!(state.objects.get(bloodletter).controller, P0);
+        let mut genuine_stolen = restore(&state);
+        settled(&mut genuine_stolen);
+        assert!(genuine_stolen.engine.halted.is_none());
+        let mut forged_stolen = restore(&state);
+        set_final_x(&mut forged_stolen, covenant, 6);
+        let wall_contract = mtg_kernel::state::StackTargetContractV4::capture(
+            &forged_stolen,
+            Target::Object(target_creature),
+        );
+        let top = forged_stolen.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(target_creature); 6];
+        top.v4.target_contracts = vec![wall_contract; 6];
+        for event in forged_stolen.engine.event_history.iter_mut() {
+            match event {
+                event::CommittedEvent::CastLifeXPaidV1 { amount, .. } => *amount = 6,
+                event::CommittedEvent::PublishedCastIdentityV1 { receipt }
+                    if receipt.spell == covenant =>
+                {
+                    receipt.life_x_paid_v1 = Some(6);
+                }
+                _ => {}
+            }
+        }
+        assert_refused(&forged_stolen, covenant);
+
+        // 3. Manifested face-down Bloodletter turned face up in response after
+        //    an undoubled X = 3 cast: genuine restore settles cleanly.
+        let mut state = plains();
+        put(&mut state, P1, "Abhorrent Oculus", Zone::Battlefield);
+        for _ in 0..2 {
+            put(&mut state, P1, "Bloodletter of Aclazotz", Zone::Library);
+        }
+        pass_until(&mut state, |s| {
+            s.active_player == P1 && s.step == Step::Main1
+        });
+        pass_until(&mut state, |s| {
+            s.active_player == P0 && s.step == Step::Main1
+        });
+        pass_until(&mut state, |s| {
+            s.active_player == P1 && s.step == Step::Main1
+        });
+        let hidden_bl = state.players[1]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&o| state.objects.get(o).v4.face_down_v1.is_some())
+            .expect("Abhorrent Oculus manifested Bloodletter of Aclazotz");
+        let target_creature = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let covenant = free_exile(&mut state, "Fire Covenant");
+        // P1 passes priority to P0 on P1's Main1.
+        let _ = next(&mut state);
+        act(&mut state, Action::Pass);
+        let _ = next(&mut state);
+        act(&mut state, Action::CastSpell(covenant));
+        for _ in 0..3 {
+            let _ = next(&mut state);
+            act(
+                &mut state,
+                Action::ChooseTarget(Target::Object(target_creature)),
+            );
+        }
+        let _ = next(&mut state);
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        assert_eq!(
+            life(&state, P0),
+            17,
+            "face-down Bloodletter does not double"
+        );
+        let _ = next(&mut state);
+        act(&mut state, Action::Pass);
+        let _ = next(&mut state);
+        pool(
+            &mut state,
+            P1,
+            &[ManaColor::B, ManaColor::B, ManaColor::B],
+            1,
+        );
+        act(&mut state, Action::ActivateAbility(hidden_bl, 255));
+        assert!(state.objects.get(hidden_bl).v4.face_down_v1.is_none());
+        let mut restored_faceup = restore(&state);
+        settled(&mut restored_faceup);
+        assert!(restored_faceup.engine.halted.is_none());
+
+        // 4. Zero Bloodletters on P1's turn: genuine X = 3 loses 3; forging
         //    LifeLoss { amount: 6 } + receipt loss = 6 must be refused.
         let mut state = plains();
         state.active_player = P1;
@@ -3820,6 +4087,30 @@ mod cast_x_routes {
             }
         }
         assert_refused(&forged_double, covenant);
+
+        // 5. PublishedCastIdentityV1 independently binds nominal X: mutating
+        //    stack X, finalized bindings, LifeLoss, and CastLifeXPaidV1 without
+        //    updating PublishedCastIdentityV1.life_x_paid_v1 is refused.
+        let mut forged_pub = restore(&state);
+        set_final_x(&mut forged_pub, covenant, 2);
+        let top = forged_pub.stack.last_mut().unwrap();
+        top.targets.truncate(2);
+        top.v4.target_contracts.truncate(2);
+        for event in forged_pub.engine.event_history.iter_mut() {
+            match event {
+                event::CommittedEvent::LifeLoss { amount, .. } => *amount = 2,
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    amount,
+                    loss: Some((_, lost)),
+                    ..
+                } => {
+                    *amount = 2;
+                    *lost = 2;
+                }
+                _ => {}
+            }
+        }
+        assert_refused(&forged_pub, covenant);
     }
 
     #[test]

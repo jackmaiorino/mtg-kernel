@@ -2335,6 +2335,8 @@ pub enum CommittedEvent {
         player: PlayerId,
         amount: u16,
         loss: Option<(u64, i32)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        payment_world: Option<Box<crate::state::GameState>>,
     },
 }
 

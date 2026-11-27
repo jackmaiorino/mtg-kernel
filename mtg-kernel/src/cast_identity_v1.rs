@@ -31,6 +31,8 @@ pub struct ReceiptV1 {
     pub public_identity: PublicIdentityV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) future_sight_overload: Option<crate::eternal_e5a_v1::FutureSightOverloadV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life_x_paid_v1: Option<u16>,
 }
 
 impl Hash for ReceiptV1 {
@@ -48,6 +50,10 @@ impl Hash for ReceiptV1 {
             "future-sight-overload/v1".hash(state);
             permission.hash(state);
         }
+        if let Some(amount) = self.life_x_paid_v1 {
+            "life-x-paid/v1".hash(state);
+            amount.hash(state);
+        }
     }
 }
 
@@ -58,6 +64,7 @@ pub(crate) fn publish(
     source: StackSourceContractV4,
     stack_item_id: StackItemId,
     future_sight_overload: Option<crate::eternal_e5a_v1::FutureSightOverloadV1>,
+    life_x_paid_v1: Option<u16>,
 ) {
     let origin = source
         .spell_cast_origin
@@ -87,6 +94,7 @@ pub(crate) fn publish(
         stack_item_id,
         public_identity,
         future_sight_overload,
+        life_x_paid_v1,
     };
     state
         .engine
