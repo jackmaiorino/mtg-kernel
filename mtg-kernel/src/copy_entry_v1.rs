@@ -508,9 +508,6 @@ pub(crate) fn validate_retained_abilities(state: &GameState) -> Result<(), Strin
     if !has_receipts && !live_has_route {
         return Ok(());
     }
-    if !cfg!(feature = "eternal-fixtures") {
-        return Err("copy-producer ability receipt is invalid without eternal fixtures".into());
-    }
     let mut publications: HashMap<StackItemId, (usize, &AbilityPublicationV1)> = HashMap::new();
     for (at, event) in state
         .engine
@@ -520,6 +517,9 @@ pub(crate) fn validate_retained_abilities(state: &GameState) -> Result<(), Strin
         let CommittedEvent::CopyProducerAbilityPublishedV1 { publication } = event else {
             continue;
         };
+        if !cfg!(feature = "eternal-fixtures") {
+            return Err("copy-producer ability receipt is invalid without eternal fixtures".into());
+        }
         if publication.item.0 == 0
             || publication.item.0 > state.engine.next_stack_item_id
             || !ability_publication_evidence_matches(state, at, publication)
@@ -530,6 +530,9 @@ pub(crate) fn validate_retained_abilities(state: &GameState) -> Result<(), Strin
         {
             return Err("copy-producer ability receipt failed validation".into());
         }
+    }
+    if live_has_route && !cfg!(feature = "eternal-fixtures") {
+        return Err("copy-producer ability receipt is invalid without eternal fixtures".into());
     }
     let live_items = state.stack.iter().chain(
         state
