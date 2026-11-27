@@ -1442,6 +1442,69 @@ fn alpha_deathclaw_without_its_abilities_becomes_monstrous_and_destroys_nothing(
     assert_eq!(zone(&state, victim), Zone::Battlefield, "no trigger");
 }
 
+#[test]
+fn agathas_soul_cauldron_monstrosity_does_not_queue_alpha_deathclaw_trigger() {
+    // Agatha's Soul Cauldron exiles Alpha Deathclaw from a graveyard and grants
+    // "{5}{B}{G}: Monstrosity 4" (only the activated ability, not the
+    // "becomes monstrous" trigger) to another creature with a +1/+1 counter.
+    let mut state = plains();
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let host = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    let exiled_claw = put(&mut state, P1, "Alpha Deathclaw", Zone::Graveyard);
+    let victim = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+
+    activate(&mut state, cauldron, 0, &[Target::Object(exiled_claw)]);
+    settle_choosing(&mut state, host);
+    assert_eq!(zone(&state, exiled_claw), Zone::Exile);
+    assert_eq!(plus_counters(&state, host), 1);
+
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::G], 5);
+    let borrowed = priority(&mut state)
+        .1
+        .into_iter()
+        .find(|&(source, _)| source == host)
+        .map(|(_, index)| index)
+        .expect("Thraben Inspector has Cauldron-granted Monstrosity 4");
+    activate(&mut state, host, borrowed, &[]);
+    // Settles with no target choice (no destroy trigger) and no engine halt.
+    settled(&mut state);
+    assert!(state.engine.halted.is_none());
+    assert_eq!(plus_counters(&state, host), 5);
+    assert_eq!(
+        zone(&state, victim),
+        Zone::Battlefield,
+        "no destroy trigger"
+    );
+
+    // Already monstrous: activating borrowed Monstrosity 4 again adds no counters.
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::G], 5);
+    activate(&mut state, host, borrowed, &[]);
+    settled(&mut state);
+    assert!(state.engine.halted.is_none());
+    assert_eq!(plus_counters(&state, host), 5);
+    assert_eq!(zone(&state, victim), Zone::Battlefield);
+
+    // A genuine Alpha Deathclaw activating its own Monstrosity 4 still queues
+    // the destroy trigger.
+    let claw = put(&mut state, P0, "Alpha Deathclaw", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::G], 5);
+    activate(&mut state, claw, 0, &[]);
+    let mut prompted_target = false;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(victim)) =>
+        {
+            prompted_target = true;
+            Action::ChooseTarget(Target::Object(victim))
+        }
+        other => first_answer(other),
+    });
+    assert!(prompted_target, "genuine Alpha Deathclaw triggers");
+    assert!(state.engine.halted.is_none());
+    assert_eq!(plus_counters(&state, claw), 4);
+    assert_eq!(zone(&state, victim), Zone::Graveyard);
+}
+
 // ---- Ginger, Queen of Sweets ---------------------------------------------------------
 
 #[test]
