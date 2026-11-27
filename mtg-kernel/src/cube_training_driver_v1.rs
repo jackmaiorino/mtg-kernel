@@ -1891,7 +1891,7 @@ impl TrainingDriver {
         )
     }
 
-    /// Open an already-prepared pick-phase run from its staged initial checkpoint
+    /// Open an already-prepared pick-phase run from its staged boundary journal
     /// without drawing any initialiser seed.
     pub fn open_existing_pick_phase(
         config: RunConfig,
@@ -1902,20 +1902,21 @@ impl TrainingDriver {
                 "open_existing_pick_phase requires a prepared pick-phase run",
             ));
         }
-        let initial_path = config.root.join("initial/checkpoint.json");
-        let checkpoint: Checkpoint = read_json(&initial_path)?;
-        checkpoint.validate()?;
+        let journal = config.root.join("pick-boundary.json");
+        let record: BoundaryRecord = read_json(&journal)?;
+        record.checkpoint.validate()?;
         let template =
             ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 0)
                 .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
-        if checkpoint.parameter_layout_sha256 != model_layout_pin(&template) {
+        if record.checkpoint.parameter_layout_sha256 != model_layout_pin(&template) {
             return Err(invalid(
                 "pick-phase initial checkpoint parameter layout differs from model",
             ));
         }
-        let (model, optimizer) = checkpoint
+        let (model, optimizer) = record
+            .checkpoint
             .model
-            .restore(template, checkpoint.head_updates)
+            .restore(template, record.checkpoint.head_updates)
             .map_err(TrainingDriverError::Update)?;
         Self::open_from_state(
             config,
@@ -1925,7 +1926,7 @@ impl TrainingDriver {
             Vec::new(),
             Vec::new(),
             None,
-            false,
+            true,
         )
     }
 
@@ -1985,31 +1986,59 @@ impl TrainingDriver {
         let run_lock = RunLock::acquire(&config)?;
         config.check_open_intent(true)?;
         let initial_path = config.root.join("initial/checkpoint.json");
-        if verify_initial_checkpoint
-            && config.segment == Segment::BuilderOnly
-            && initial_path.exists()
-        {
-            let mut expected_initial = Checkpoint::new(
-                &config,
-                CubeModelState::from_model(&initial_model, &initial_optimizer),
-                initial_league.clone(),
-                0,
-                initial_lineage.clone(),
-                pin_reasons(&config, 0),
-                initial_optimizer.head_updates,
-            )?;
-            if expected_initial.league.is_empty() {
-                expected_initial
-                    .league
-                    .push(league_entry(&config.root, &expected_initial)?);
-                expected_initial.refresh_pin()?;
-            }
-            let stored_initial: Checkpoint = read_json(&initial_path)?;
-            stored_initial.validate()?;
-            if stored_initial.state_sha256 != expected_initial.state_sha256 {
-                return Err(invalid(
-                    "stored initial checkpoint differs from expected canonical checkpoint 0",
-                ));
+        if verify_initial_checkpoint {
+            if config.segment == Segment::BuilderOnly && initial_path.exists() {
+                let mut expected_initial = Checkpoint::new(
+                    &config,
+                    CubeModelState::from_model(&initial_model, &initial_optimizer),
+                    initial_league.clone(),
+                    0,
+                    initial_lineage.clone(),
+                    pin_reasons(&config, 0),
+                    initial_optimizer.head_updates,
+                )?;
+                if expected_initial.league.is_empty() {
+                    expected_initial
+                        .league
+                        .push(league_entry(&config.root, &expected_initial)?);
+                    expected_initial.refresh_pin()?;
+                }
+                let stored_initial: Checkpoint = read_json(&initial_path)?;
+                stored_initial.validate()?;
+                if stored_initial.state_sha256 != expected_initial.state_sha256 {
+                    return Err(invalid(
+                        "stored initial checkpoint differs from expected canonical checkpoint 0",
+                    ));
+                }
+            } else if config.segment == Segment::PickPhase {
+                let journal = config.root.join("pick-boundary.json");
+                let record: BoundaryRecord = read_json(&journal)?;
+                record.checkpoint.validate()?;
+                if record.config.boundary.is_none()
+                    || record.checkpoint.boundary != record.config.boundary
+                    || record.checkpoint.segment != Segment::PickPhase
+                    || record.checkpoint.run != config.run
+                    || record.checkpoint.update != 0
+                    || config
+                        .boundary
+                        .as_ref()
+                        .is_some_and(|requested| Some(requested) != record.config.boundary.as_ref())
+                {
+                    return Err(invalid(
+                        "pick phase boundary differs from its staged checkpoint",
+                    ));
+                }
+                let mut expected_cfg = config.clone();
+                expected_cfg.boundary = record.config.boundary.clone();
+                check_run_plan(&record.config, &expected_cfg)?;
+                if initial_path.exists()
+                    && fs::read(&initial_path)? != json_bytes(&record.checkpoint)?
+                {
+                    return Err(invalid(format!(
+                        "immutable file differs: {}",
+                        initial_path.display()
+                    )));
+                }
             }
         }
         let resume_receipt = check_resume(&config, &run_lock)?;
