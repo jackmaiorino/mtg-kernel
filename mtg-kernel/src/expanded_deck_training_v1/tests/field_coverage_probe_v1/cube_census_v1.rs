@@ -1029,26 +1029,35 @@ fn cube_json_limited_fast_engine_windows_parity_v1() {
             return stopped(index, seed, starting_seat, "error", 0, None, "deal", error);
         }
         let deck_labels = [0, 1].map(|seat| decks[seat].label(seed, seat));
-        // Both sides get the same library order before the shuffle: the
-        // JSON server expands each name/count row in order through
-        // `card_id_by_name`, so the fast session's mainboard is built from
-        // the same rows the same way.
-        let rows = [0, 1].map(|seat| {
-            let mut counts = BTreeMap::<&str, u32>::new();
-            for name in card_names(&decks[seat].mainboard(&pool.basics)) {
-                *counts.entry(name).or_default() += 1;
-            }
-            counts.into_iter().collect::<Vec<_>>()
-        });
+        // Both sides get the same library order before the shuffle. The
+        // JSON server keeps its row/copy order (`resolve_full`), while the
+        // fast engine-window reset sorts each mainboard by card id, so the
+        // coupled input is the id-sorted list: rows in ascending id order,
+        // resolved by name exactly as the JSON server resolves them.
         let mainboards = [0, 1].map(|seat| {
-            rows[seat]
-                .iter()
-                .flat_map(|&(name, count)| {
-                    let id = crate::card_def::card_id_by_name(name)
-                        .unwrap_or_else(|| panic!("unknown card {name:?}"));
-                    std::iter::repeat_n(id, count as usize)
+            let mut ids: Vec<u16> = card_names(&decks[seat].mainboard(&pool.basics))
+                .into_iter()
+                .map(|name| {
+                    crate::card_def::card_id_by_name(name)
+                        .unwrap_or_else(|| panic!("unknown card {name:?}"))
                 })
-                .collect::<Vec<_>>()
+                .collect();
+            ids.sort_unstable();
+            ids
+        });
+        let rows = [0, 1].map(|seat| {
+            let mut rows: Vec<(&'static str, u32)> = Vec::new();
+            for (id, name) in mainboards[seat].iter().zip(card_names(&mainboards[seat])) {
+                match rows.last_mut() {
+                    Some((last, count))
+                        if crate::card_def::card_id_by_name(last) == Some(*id) =>
+                    {
+                        *count += 1
+                    }
+                    _ => rows.push((name, 1)),
+                }
+            }
+            rows
         });
         let deck_rows = |seat: usize| {
             rows[seat]
