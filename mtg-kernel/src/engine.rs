@@ -12635,14 +12635,14 @@ fn selected_spell_target_spec(
     }
 }
 
-fn kicker_targets_complete(
+fn kicker_form_targets_complete(
     state: &GameState,
     def: &card_def::CardDef,
     pending: &PendingCast,
+    form: u8,
     kicked: bool,
 ) -> bool {
-    let Some(spec) = selected_spell_target_spec(def, pending.mode_chosen.unwrap_or(0), kicked)
-    else {
+    let Some(spec) = selected_spell_target_spec(def, form, kicked) else {
         return false;
     };
     target_prefix_can_complete_for_controller_and_source(
@@ -12652,6 +12652,19 @@ fn kicker_targets_complete(
         targeting_source_for_pending_cast(state, pending),
         state,
     )
+}
+
+fn kicker_targets_complete(
+    state: &GameState,
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    kicked: bool,
+) -> bool {
+    match pending.mode_chosen {
+        Some(form) => kicker_form_targets_complete(state, def, pending, form, kicked),
+        None => (0..printed_spell_form_count(def))
+            .any(|form| kicker_form_targets_complete(state, def, pending, form, kicked)),
+    }
 }
 
 fn spell_types_have_instant(types: &[CardType]) -> bool {
@@ -12812,21 +12825,23 @@ fn viable_pending_spell_forms(
             .collect();
     }
     if def.kicked_target_spec.is_some() && pending.kicked.is_some() {
-        return if kicker_targets_complete(state, def, pending, pending.kicked == Some(true))
-            && pending_cast_quote_v1(
-                def,
-                pending,
-                CastMethodV4::Normal,
-                pending.kicked == Some(true),
-                0,
-                state,
-            )
-            .is_some()
+        let kicked = pending.kicked == Some(true);
+        let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+        if pending_cast_quote_v1(
+            def,
+            pending,
+            method,
+            kicked,
+            kicker_min_x(def, kicked),
+            state,
+        )
+        .is_none()
         {
-            vec![0]
-        } else {
-            Vec::new()
-        };
+            return Vec::new();
+        }
+        return (0..printed_spell_form_count(def))
+            .filter(|&form| kicker_form_targets_complete(state, def, pending, form, kicked))
+            .collect();
     }
     let free = resolution_cast_v1::free_cast(state, pending.spell);
     let escaped_form = escape_restricted_to_first_form(state, pending, def);
@@ -13128,8 +13143,9 @@ fn pending_cast_quote_v1(
     x: u16,
     state: &GameState,
 ) -> Option<spell_costs_v1::SpellManaPaymentV1> {
-    // Target and kicker previews use the base form. An announced escape still
-    // owes its escape payment, including the selected graveyard cards.
+    // Form and target previews that quote the base form still owe any announced
+    // escape payment (including selected graveyard cards) or sphinx-lore grant;
+    // kicker validation passes `finalized_cast_method` directly.
     let method = if (method == CastMethodV4::Normal
         && (pending.sphinx_lore_v1.is_some()
             || pending.source_contract.cast_method == CastMethodV4::Escape))
@@ -46230,6 +46246,182 @@ mod tests {
 
         // The genuine parent still offers its copy.
         assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn tear_asunder_refuses_choose_kicker_true_on_saga_only_state() {
+        let forest = card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest; 4], &[forest; 4], |_| "Forest".into(), 9831);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Tear Asunder");
+        let saga = put_on_battlefield(&mut state, PlayerId::P1, "Urza's Saga");
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        let staged = state.clone();
+        assert_eq!(
+            state.engine.pending_cast.as_ref().unwrap().kicked,
+            None,
+            "cast starts before kicker is resolved"
+        );
+        assert!(
+            step(&mut state, Action::ChooseKicker(true)).is_err(),
+            "kicked Tear Asunder cannot target an enchantment land and must be refused"
+        );
+        assert_eq!(state, staged);
+
+        let decision = advance_until_decision(&mut state);
+        assert!(
+            matches!(
+                decision,
+                Decision::ChooseTargets {
+                    player: PlayerId::P0,
+                    spell: s,
+                    ref legal_targets,
+                    ..
+                } if s == spell && legal_targets == &[Target::Object(saga)]
+            ),
+            "expected kicker to be auto-declined straight into targeting Urza's Saga, got {decision:?}"
+        );
+        assert_eq!(
+            state.engine.pending_cast.as_ref().unwrap().kicked,
+            Some(false)
+        );
+        assert!(step(&mut state, Action::ChooseKicker(true)).is_err());
+
+        step(&mut state, Action::ChooseTarget(Target::Object(saga))).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let item = state.stack.last().unwrap();
+        assert_eq!(item.source, spell);
+        assert!(!item.kicked);
+        assert_eq!(item.targets, vec![Target::Object(saga)]);
+        pass_until_stack_resolves(&mut state);
+        assert_eq!(state.objects.get(saga).zone, Zone::Exile);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn tear_asunder_offers_kicker_with_nonland_artifact_and_urzas_saga() {
+        let forest = card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest; 4], &[forest; 4], |_| "Forest".into(), 9832);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Tear Asunder");
+        let saga = put_on_battlefield(&mut state, PlayerId::P1, "Urza's Saga");
+        let artifact = put_on_battlefield(&mut state, PlayerId::P1, "Basilisk Collar");
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        let decision = advance_until_decision(&mut state);
+        assert!(
+            matches!(
+                decision,
+                Decision::ChooseKicker {
+                    player: PlayerId::P0,
+                    spell: s,
+                } if s == spell
+            ),
+            "expected ChooseKicker when both a nonland artifact and Urza's Saga are present, got {decision:?}"
+        );
+
+        // Unkicked branch: both Urza's Saga (enchantment) and Basilisk Collar (artifact) are legal.
+        let mut unkicked = state.clone();
+        step(&mut unkicked, Action::ChooseKicker(false)).unwrap();
+        let unkicked_targets = advance_until_decision(&mut unkicked);
+        assert!(
+            matches!(
+                unkicked_targets,
+                Decision::ChooseTargets {
+                    player: PlayerId::P0,
+                    spell: s,
+                    ref legal_targets,
+                    ..
+                } if s == spell
+                    && legal_targets.contains(&Target::Object(saga))
+                    && legal_targets.contains(&Target::Object(artifact))
+            ),
+            "expected both Urza's Saga and Basilisk Collar as unkicked targets, got {unkicked_targets:?}"
+        );
+        step(&mut unkicked, Action::ChooseTarget(Target::Object(saga))).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut unkicked),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let unkicked_item = unkicked.stack.last().unwrap();
+        assert!(!unkicked_item.kicked);
+        assert_eq!(unkicked_item.targets, vec![Target::Object(saga)]);
+        pass_until_stack_resolves(&mut unkicked);
+        assert_eq!(unkicked.objects.get(saga).zone, Zone::Exile);
+        assert_eq!(unkicked.objects.get(artifact).zone, Zone::Battlefield);
+
+        // Kicked branch: only the nonland artifact is legal; Urza's Saga is a land.
+        let mut kicked = state;
+        step(&mut kicked, Action::ChooseKicker(true)).unwrap();
+        let kicked_targets = advance_until_decision(&mut kicked);
+        assert!(
+            matches!(
+                kicked_targets,
+                Decision::ChooseTargets {
+                    player: PlayerId::P0,
+                    spell: s,
+                    ref legal_targets,
+                    ..
+                } if s == spell
+                    && legal_targets.contains(&Target::Object(artifact))
+                    && !legal_targets.contains(&Target::Object(saga))
+            ),
+            "expected only Basilisk Collar (nonland) as kicked target, got {kicked_targets:?}"
+        );
+        step(&mut kicked, Action::ChooseTarget(Target::Object(artifact))).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut kicked),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let kicked_item = kicked.stack.last().unwrap();
+        assert!(kicked_item.kicked);
+        assert_eq!(kicked_item.targets, vec![Target::Object(artifact)]);
+        pass_until_stack_resolves(&mut kicked);
+        assert_eq!(kicked.objects.get(artifact).zone, Zone::Exile);
+        assert_eq!(kicked.objects.get(saga).zone, Zone::Battlefield);
+    }
+
+    #[test]
+    fn kicker_targets_complete_accepts_secondary_form_when_mode_unselected() {
+        let forest = card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest; 4], &[forest; 4], |_| "Forest".into(), 9833);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let _red_permanent = put_on_battlefield(&mut state, PlayerId::P1, "Goblin Bushwhacker");
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Blue Elemental Blast");
+        state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+
+        let def = &card_def::CARD_DEFS[state.objects.get(spell).card_def as usize];
+        let mut pending = state.engine.pending_cast.clone().unwrap();
+        pending.mode_chosen = None;
+
+        // No red spell on the stack: form 0 (RedSpellOnStack) has no legal target,
+        // while form 1 (RedPermanent) can target Goblin Bushwhacker.
+        assert!(kicker_targets_complete(&state, def, &pending, false));
+        pending.mode_chosen = Some(0);
+        assert!(!kicker_targets_complete(&state, def, &pending, false));
+        pending.mode_chosen = Some(1);
+        assert!(kicker_targets_complete(&state, def, &pending, false));
     }
 }
 
