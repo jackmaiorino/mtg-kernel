@@ -22678,6 +22678,8 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
     crate::drakuseth_damage_source_v76::publish(state, stack_item_id)?;
     crate::extra_turn_v1::record_trigger_publication(state, &finalized);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::copy_entry_v1::record_triggered_ability(state, &finalized)?;
     // Immediate capture hooks append to the queue. Preserve the exact
     // remaining batch and carry those captures into the next checkpoint.
     state
@@ -36314,6 +36316,20 @@ fn push_paid_activation(
         },
     );
     if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::record_paid(
+        state,
+        stack_item_id,
+        frozen.payment_history_start,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::copy_entry_v1::record_activated_ability(
         state,
         stack_item_id,
         frozen.payment_history_start,

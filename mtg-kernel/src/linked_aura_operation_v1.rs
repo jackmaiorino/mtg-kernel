@@ -3299,7 +3299,7 @@ pub(crate) fn prepare_copy_batch(state: &mut GameState, events: &mut [ProposedEv
     else {
         return true;
     };
-    for event in events {
+    for event in events.iter_mut() {
         let ProposedEvent::ZoneChange(change) = event else {
             continue;
         };
@@ -3329,6 +3329,30 @@ pub(crate) fn prepare_copy_batch(state: &mut GameState, events: &mut [ProposedEv
                 change.to_zone = Zone::Graveyard;
             }
             Ok(true) => {}
+        }
+    }
+    // CR 614.12: pay copy-entry discard costs only after every simultaneous
+    // entrant in the batch has finished its pre-entry choices.
+    for event in events.iter() {
+        let ProposedEvent::ZoneChange(change) = event else {
+            continue;
+        };
+        if change.to_zone != Zone::Battlefield {
+            continue;
+        }
+        if let Some(mut copy) = metamorph_mage_copy(state, change.object) {
+            if copy.discarded_at.is_none()
+                && (pay_copy_entry_cost(state, &mut copy).is_err()
+                    || crate::state::AbilitySourceContractV4::capture(state, copy.copied.source)
+                        != copy.copied
+                    || update_staged_metamorph_mage_copy(state, copy).is_err())
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    scope.ctx.source,
+                ));
+                return false;
+            }
         }
     }
     true
@@ -3573,8 +3597,6 @@ fn prepare_copy_entry(
         }
         if matches!(checkpoint, GeneralChoiceV36::VialMetamorphV1 { .. }) {
             mage_entry::vial::record_hand_answer(state, &copy)?;
-        }
-        if show_origin.is_none() {
             pay_copy_entry_cost(state, &mut copy)?;
         }
         // Validate against the unmodified battlefield before any simultaneous move.

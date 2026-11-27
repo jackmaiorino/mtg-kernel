@@ -231,6 +231,7 @@ pub(crate) fn capture(
             paid_at: at,
             chosen_at: state.engine.event_history.len(),
         }),
+        ability: None,
     }))
 }
 

@@ -469,6 +469,11 @@ pub(crate) fn finish(
                 state,
                 ProposedEvent::zone_change_to_battlefield_under_controller(card.object, player),
             );
+            if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                || state.engine.halted.is_some()
+            {
+                return Ok(false);
+            }
             if state.objects.get(card.object).zone != Zone::Battlefield {
                 return Ok(false);
             }
