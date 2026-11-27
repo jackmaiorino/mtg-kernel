@@ -38,9 +38,10 @@ impl QueueV1 {
 /// `step`, the next advance continues that drain. Until then only placement
 /// answers are taken, and they neither resolve, cast, activate nor move an
 /// object. So a non-empty queue has:
-/// - a triggered ability or Madness offer on top of the stack, the last one
-///   the batch placed (a spell or activated ability on top means no batch is
-///   being placed);
+/// - a triggered ability or Madness offer on top of the stack, and at least one
+///   triggered ability on the stack (a Madness offer itself never captures a
+///   trigger, so a lone Madness offer has no placed trigger that could have
+///   populated the waiting queue);
 /// - no decision `advance_until_decision` serves ahead of trigger placement;
 /// - only fresh captures: unordered and untargeted, with a valid source.
 pub(super) fn validate(state: &GameState) -> Result<(), String> {
@@ -52,7 +53,11 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
     if !matches!(
         top,
         Some(StackItemKind::TriggeredAbility | StackItemKind::MadnessOffer)
-    ) {
+    ) || !state
+        .stack
+        .iter()
+        .any(|item| item.kind == StackItemKind::TriggeredAbility)
+    {
         return Err("waiting placement captures have no placed trigger on top".into());
     }
     if decision_precedes_trigger_placement(state) {
