@@ -529,6 +529,7 @@ pub(super) fn validate_finalized(
     state: &GameState,
     item: &StackItem,
     pending: bool,
+    require_publication: bool,
 ) -> Result<(), String> {
     if pending || item.is_copy {
         return Ok(());
@@ -569,7 +570,13 @@ pub(super) fn validate_finalized(
     {
         return Err("Sphinx paid receipt reference changed".into());
     }
+    let caster = if require_publication {
+        super::published_spell_caster_v1(state, item)?.1
+    } else {
+        item.controller
+    };
     let mut unfinalized = source;
+    unfinalized.controller = caster;
     unfinalized.finalized_cast_binding = None;
     unfinalized.cast_method = original.cast_method;
     unfinalized
@@ -586,7 +593,7 @@ pub(super) fn validate_finalized(
         .ok_or("Sphinx paid route index")?;
     if *original != unfinalized
         || record.spell != item.source
-        || record.controller != item.controller
+        || record.controller != caster
         || record.card_def != source.card_def
         || (method(route) != source.cast_method
             && !(matches!(route, RouteV1::Normal | RouteV1::Retrace)
@@ -597,12 +604,7 @@ pub(super) fn validate_finalized(
         || source.spell_cast_origin.is_none_or(|o| {
             o.origin_zone_change_count != record.graveyard_generation
                 || o.route
-                    != selected_origin(
-                        route,
-                        item.controller,
-                        record.graveyard_generation,
-                        record.card_def,
-                    )
+                    != selected_origin(route, caster, record.graveyard_generation, record.card_def)
         })
     {
         return Err("Sphinx finalized route/source changed".into());
@@ -627,7 +629,7 @@ pub(crate) fn published_choice(
     {
         return Ok(None);
     }
-    validate_finalized(state, item, false)?;
+    validate_finalized(state, item, false, true)?;
     let Some(index) = item
         .v4
         .source_contract

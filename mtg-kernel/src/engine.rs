@@ -3245,7 +3245,12 @@ fn validate_physical_spell_cast_origin(
     }
     mandatory_cast_cost_v1::validate_finalized(state, item, def, is_pending_placeholder)?;
     greatwurm_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
-    sphinx_lore_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
+    sphinx_lore_cast_v1::validate_finalized(
+        state,
+        item,
+        is_pending_placeholder,
+        require_publication,
+    )?;
     omniscience_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     muldrotha_v1::validate_finalized(state, item, is_pending_placeholder)?;
     tinybones_v72::validate_finalized(state, item, is_pending_placeholder)?;
@@ -3477,7 +3482,7 @@ fn validate_physical_spell_cast_origin(
             graveyard_generation,
         } => {
             origin.origin_zone == Zone::Graveyard
-                && holder == item.controller
+                && holder == caster
                 && source.owner == holder
                 && graveyard_generation == origin.origin_zone_change_count
                 && cast_method == CastMethodV4::Flashback
@@ -33216,6 +33221,128 @@ fn has_supported_spell_copy_offer_program(state: &GameState, item: &StackItem) -
         ]))
 }
 
+/// Resolves the original caster of a finalized physical spell from its unique
+/// `PublishedCastIdentityV1` receipt, authenticating `e7b.casters` (or
+/// `item.controller` when control never changed) against that receipt.
+pub(super) fn published_spell_caster_v1(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<(usize, PlayerId), String> {
+    let source = state
+        .objects
+        .try_get(item.source)
+        .ok_or("spell source object is missing")?;
+    let history = &state.engine.event_history;
+    let mut matches = history
+        .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
+        .filter_map(|(at, event)| match event {
+            CommittedEvent::PublishedCastIdentityV1 { receipt }
+                if receipt.stack_item_id == item.v4.stack_item_id =>
+            {
+                Some((at, receipt))
+            }
+            _ => None,
+        });
+    let Some((pub_at, receipt)) = matches.next() else {
+        return Err("spell lost its published cast identity receipt".into());
+    };
+    if matches.next().is_some()
+        || receipt.spell != item.source
+        || receipt.owner != source.owner
+        || receipt.stack_zone_change_count != source.zone_change_count
+        || history.get(pub_at + 1)
+            != Some(&CommittedEvent::SpellCast {
+                spell: item.source,
+                controller: receipt.controller,
+            })
+    {
+        return Err("spell cast receipt disagrees with its stack incarnation".into());
+    }
+    let caster = receipt.controller;
+    if cfg!(feature = "eternal-fixtures") {
+        match crate::eternal_vintage_e7b_v1::spell_caster(state, item) {
+            Some(recorded) if recorded != caster => {
+                return Err("spell caster record disagrees with its cast receipt".into());
+            }
+            None if item.controller != caster => {
+                return Err("spell controller changed without a matching caster record".into());
+            }
+            _ => {}
+        }
+    } else if item.controller != caster {
+        return Err("spell controller disagrees with its cast receipt".into());
+    }
+    Ok((pub_at, caster))
+}
+
+fn route_payment_ref_matches_object(
+    state: &GameState,
+    spell_source: ObjectId,
+    caster: PlayerId,
+    card: &PaidCostRefV4,
+) -> bool {
+    let Some(live) = state.objects.try_get(card.object) else {
+        return false;
+    };
+    card.object != spell_source
+        && card.card_def == live.card_def
+        && card.owner == caster
+        && live.owner == caster
+        && card.controller == caster
+        && card.visible_to_mask == 0b11
+        && card.power_lki.is_none()
+        && !live.v4.is_token
+        && card.zone_change_count > 0
+        && card.zone_change_count <= live.zone_change_count
+        && (card.zone_change_count != live.zone_change_count || live.zone == card.zone)
+}
+
+/// Walks backwards from `pub_at` (`PublishedCastIdentityV1`) past the
+/// spell's own post-payment publication markers to find the index directly
+/// following its committed object-cost zone changes.
+fn pre_cast_payment_window_end(
+    state: &GameState,
+    parent: &StackItem,
+    caster: PlayerId,
+    pub_at: usize,
+) -> usize {
+    let history = &state.engine.event_history;
+    let mut end = pub_at;
+    while end > 0 {
+        let is_post_payment_marker = match &history[end - 1] {
+            CommittedEvent::Targeted {
+                targeting_stack_item,
+                ..
+            }
+            | CommittedEvent::CrimeCommitted {
+                targeting_stack_item,
+                ..
+            }
+            | CommittedEvent::SphinxLoreCastSelectedV1 {
+                stack_item_id: targeting_stack_item,
+                ..
+            }
+            | CommittedEvent::CastLifeXPaidV1 {
+                stack_item: targeting_stack_item,
+                ..
+            } => *targeting_stack_item == parent.v4.stack_item_id,
+            CommittedEvent::MandatoryCastPaymentV1 { item, .. } => {
+                item.v4.stack_item_id == parent.v4.stack_item_id
+            }
+            CommittedEvent::TinybonesV72 { .. }
+            | CommittedEvent::HarvesterGraveyardEntryV1 { .. } => true,
+            CommittedEvent::LifeLoss { player, .. }
+            | CommittedEvent::LifeLossWideV59 { player, .. } => *player == caster,
+            _ => false,
+        };
+        if !is_post_payment_marker {
+            break;
+        }
+        end -= 1;
+    }
+    end
+}
+
 /// The object payments a spell-copy parent may carry: none, except the
 /// route-owned ones of escape (exactly the escape cost's other graveyard
 /// cards, now exiled, of the caster) and a retrace cast (exactly one land
@@ -33229,12 +33356,10 @@ fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackI
     let Some(def) = card_def::CARD_DEFS.get(usize::from(source.card_def)) else {
         return false;
     };
-    let caster = if cfg!(feature = "eternal-fixtures") {
-        crate::eternal_vintage_e7b_v1::spell_caster(state, parent).unwrap_or(parent.controller)
-    } else {
-        parent.controller
-    };
     let refs = &parent.v4.paid_cost_refs;
+    if parent.is_copy {
+        return refs.is_empty() && parent.discarded.is_empty();
+    }
     let origin = source.v4.spell_cast_origin;
     let route = origin.map(|origin| origin.route);
     // Retrace (702.81, Wrenn and Six's emblem) is the route that discards a
@@ -33248,6 +33373,9 @@ fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackI
         });
     match (parent.v4.cast_method, route) {
         (Some(CastMethodV4::Escape), Some(route)) if route.is_escape() => {
+            let Ok((pub_at, caster)) = published_spell_caster_v1(state, parent) else {
+                return false;
+            };
             let count =
                 spell_costs_v1::escape_cost_v1(def, route == SpellCastRouteV4::BreachEscapeV1)
                     .and_then(|cost| {
@@ -33258,15 +33386,33 @@ fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackI
                             _ => None,
                         })
                     });
-            parent.discarded.is_empty()
-                && count == Some(refs.len())
-                && refs.iter().enumerate().all(|(index, card)| {
-                    card.owner == caster
-                        && card.zone == Zone::Exile
-                        && card.object != parent.source
+            if !parent.discarded.is_empty() || count != Some(refs.len()) {
+                return false;
+            }
+            let payments_end = pre_cast_payment_window_end(state, parent, caster, pub_at);
+            if payments_end < refs.len() {
+                return false;
+            }
+            let history = &state.engine.event_history;
+            let pre_cast_events = &history[payments_end - refs.len()..payments_end];
+            refs.iter()
+                .enumerate()
+                .zip(pre_cast_events.iter())
+                .all(|((index, card), event)| {
+                    card.zone == Zone::Exile
+                        && route_payment_ref_matches_object(state, parent.source, caster, card)
                         && !refs[..index]
                             .iter()
                             .any(|prior| prior.object == card.object)
+                        && matches!(
+                            *event,
+                            CommittedEvent::ZoneChange {
+                                object,
+                                from: Zone::Graveyard,
+                                to: Zone::Exile,
+                                controller_before,
+                            } if object == card.object && controller_before == caster
+                        )
                 })
         }
         // A retrace cast pays with exactly one discarded land card of the
@@ -33275,18 +33421,36 @@ fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackI
         // Voidwalker; 614.6). Retrace's discard is an object cost, recorded
         // only in `paid_cost_refs`; `discarded` holds a printed discard cost,
         // which a copy-offer spell has none of.
-        (Some(CastMethodV4::Normal), Some(_)) if retrace => match refs.as_slice() {
-            [land] => {
-                parent.discarded.is_empty()
-                    && land.object != parent.source
-                    && land.owner == caster
-                    && matches!(land.zone, Zone::Graveyard | Zone::Exile)
-                    && card_def::CARD_DEFS
-                        .get(usize::from(land.card_def))
-                        .is_some_and(|land_def| land_def.has_type(CardType::Land))
+        (Some(CastMethodV4::Normal), Some(_)) if retrace => {
+            let Ok((pub_at, caster)) = published_spell_caster_v1(state, parent) else {
+                return false;
+            };
+            let [land] = refs.as_slice() else {
+                return false;
+            };
+            let payments_end = pre_cast_payment_window_end(state, parent, caster, pub_at);
+            if payments_end == 0 {
+                return false;
             }
-            _ => false,
-        },
+            parent.discarded.is_empty()
+                && matches!(land.zone, Zone::Graveyard | Zone::Exile)
+                && route_payment_ref_matches_object(state, parent.source, caster, land)
+                && card_def::CARD_DEFS
+                    .get(usize::from(land.card_def))
+                    .is_some_and(|land_def| land_def.has_type(CardType::Land))
+                && matches!(
+                    state.engine.event_history[payments_end - 1],
+                    CommittedEvent::ZoneChange {
+                        object,
+                        from: Zone::Hand,
+                        to,
+                        controller_before,
+                    } if object == land.object
+                        && to == land.zone
+                        && matches!(to, Zone::Graveyard | Zone::Exile)
+                        && controller_before == caster
+                )
+        }
         _ => refs.is_empty() && parent.discarded.is_empty(),
     }
 }
@@ -46229,6 +46393,161 @@ mod tests {
         assert_eq!(forged, before);
 
         // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Issue #987 item 1 (retrace): the parent's retrace payment and caster
+    /// must match `state.objects` (full visibility, no power LKI, non-token),
+    /// the pre-cast hand-to-graveyard/exile zone change before the cast
+    /// receipt, and `PublishedCastIdentityV1`'s controller.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_authenticates_retrace_payment_and_caster_against_cast_receipt() {
+        let (mut state, _, land) = chain_lightning_cast_from_graveyard(true, false);
+        let unrelated_land = put_in_graveyard(&mut state, PlayerId::P0, "Mountain");
+        assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+
+        let mut bad_vis = state.clone();
+        bad_vis.stack.last_mut().unwrap().v4.paid_cost_refs[0].visible_to_mask = 0b01;
+        assert!(step(&mut bad_vis, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        let mut with_lki = state.clone();
+        with_lki.stack.last_mut().unwrap().v4.paid_cost_refs[0].power_lki = Some(1);
+        assert!(step(&mut with_lki, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        let mut token_land = state.clone();
+        token_land.objects.get_mut(land).v4.is_token = true;
+        assert!(step(&mut token_land, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        let mut forged_ref = state.clone();
+        let fake_payment = crate::state::PaidCostRefV4::capture(&forged_ref, unrelated_land);
+        forged_ref.stack.last_mut().unwrap().v4.paid_cost_refs[0] = fake_payment;
+        assert!(step(&mut forged_ref, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        let mut bad_caster = state.clone();
+        let stack_id = bad_caster.stack.last().unwrap().v4.stack_item_id;
+        crate::eternal_vintage_e7b_v1::e7b_state(&mut bad_caster)
+            .casters
+            .push((stack_id, PlayerId::P1));
+        assert!(step(&mut bad_caster, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Issue #987 item 1 (escape): escape payments on a copy-offer parent must
+    /// match `state.objects` (full visibility, no power LKI, non-token), the
+    /// pre-cast graveyard-to-exile zone changes directly before the cast
+    /// receipt, and the receipt's caster (including after a control change).
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_authenticates_escape_payments_and_caster_against_cast_receipt() {
+        let mut state = ready_game_in_main1(0);
+        put_on_battlefield(&mut state, PlayerId::P0, "Underworld Breach");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        let chain = put_in_graveyard(&mut state, PlayerId::P0, "Chain Lightning");
+        let fodder1 = put_in_graveyard(&mut state, PlayerId::P0, "Mountain");
+        let fodder2 = put_in_graveyard(&mut state, PlayerId::P0, "Mountain");
+        let fodder3 = put_in_graveyard(&mut state, PlayerId::P0, "Mountain");
+        let unrelated = put_in_graveyard(&mut state, PlayerId::P0, "Mountain");
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(unrelated, Zone::Exile),
+        );
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        let mut picks = vec![fodder1, fodder2, fodder3].into_iter();
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { .. } => step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(PlayerId::P1)),
+                )
+                .unwrap(),
+                Decision::ChooseCostTargets { .. } => {
+                    step(&mut state, Action::ChooseCostTarget(picks.next().unwrap())).unwrap()
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision escaping Chain Lightning: {other:?}"),
+            }
+        }
+        assert!(gain_control_of_spell_v1(&mut state, chain, PlayerId::P1).is_some());
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+
+        let mut bad_vis = state.clone();
+        bad_vis.stack.last_mut().unwrap().v4.paid_cost_refs[0].visible_to_mask = 0b01;
+        assert!(step(&mut bad_vis, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        let mut with_lki = state.clone();
+        with_lki.stack.last_mut().unwrap().v4.paid_cost_refs[0].power_lki = Some(2);
+        assert!(step(&mut with_lki, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        let mut token_card = state.clone();
+        token_card.objects.get_mut(fodder1).v4.is_token = true;
+        assert!(step(&mut token_card, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        let mut forged_ref = state.clone();
+        let fake_payment = crate::state::PaidCostRefV4::capture(&forged_ref, unrelated);
+        forged_ref.stack.last_mut().unwrap().v4.paid_cost_refs[0] = fake_payment;
+        assert!(step(&mut forged_ref, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        let mut bad_caster = state.clone();
+        let stack_id = bad_caster.stack.last().unwrap().v4.stack_item_id;
+        for (id, caster) in &mut crate::eternal_vintage_e7b_v1::e7b_state(&mut bad_caster).casters {
+            if *id == stack_id {
+                *caster = PlayerId::P1;
+            }
+        }
+        assert!(step(&mut bad_caster, Action::ChooseSpellCopyPayment(false)).is_err());
+
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Issue #987 item 2: a graveyard cast with competing routes
+    /// (`SphinxLoreCastSelectedV1`, here Yawgmoth's Will + Wrenn and Six's
+    /// emblem) still validates and resolves after a Commandeer-style control
+    /// change, while rejecting a mismatched `e7b.casters` entry.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn competing_graveyard_routes_survive_control_change_via_cast_receipt() {
+        let (mut state, chain, _) = chain_lightning_cast_from_graveyard(true, true);
+        assert!(
+            state
+                .stack
+                .last()
+                .unwrap()
+                .v4
+                .source_contract
+                .and_then(|c| c.finalized_cast_binding)
+                .and_then(|b| b.sphinx_lore_cast_v1)
+                .is_some(),
+            "competing graveyard routes record a SphinxLoreCastSelectedV1 receipt"
+        );
+        assert!(gain_control_of_spell_v1(&mut state, chain, PlayerId::P1).is_some());
+        let item = state.stack.last().unwrap().clone();
+        validate_spell_stack_source(&state, &item).unwrap();
+
+        let mut bad_caster = state.clone();
+        for (id, caster) in &mut crate::eternal_vintage_e7b_v1::e7b_state(&mut bad_caster).casters {
+            if *id == item.v4.stack_item_id {
+                *caster = PlayerId::P1;
+            }
+        }
+        assert!(validate_spell_stack_source(&bad_caster, &item).is_err());
+
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { player, .. } if player == PlayerId::P1
+        ));
+        assert!(state.engine.halted.is_none());
         assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
     }
 }
