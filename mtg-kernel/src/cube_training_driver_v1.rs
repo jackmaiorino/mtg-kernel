@@ -2845,10 +2845,19 @@ impl TrainingDriver {
                     &bytes,
                 )
                 .map_err(CollectFailure::Error)?;
-                // Fail closed on timing-sidecar I/O failure so incomplete
-                // timing records are never silently dropped on a live host.
-                self.write_timing_sidecar(update, execution, out.record.pod_index, &out.timings)
+                // Fail closed on timing-sidecar I/O failure on v3 (M5) runs so
+                // incomplete timing records are never silently dropped on a
+                // live host; v2 (D0/D8) runs omit timing sidecars to preserve
+                // bit-identical directory trees.
+                if self.config.pod_record_version.is_v3() {
+                    self.write_timing_sidecar(
+                        update,
+                        execution,
+                        out.record.pod_index,
+                        &out.timings,
+                    )
                     .map_err(CollectFailure::Error)?;
+                }
                 if let (Some(agg), Some(pod_sample)) = (pilot_sample.as_mut(), &out.pilot_sample) {
                     agg.merge_from(pod_sample);
                 }
@@ -3008,14 +3017,22 @@ impl TrainingDriver {
         sync_directory(pending)?;
         sync_directory(&self.config.root.join("pending"))?;
 
-        // Restore any persisted execution-0 watchdog void so an L3 host-loss
-        // replay during execution 1 never resets the 1-rerun watchdog budget.
-        let mut first_watchdog = first_watchdog(&self.config.root, update)?;
-        let mut void_execution = if first_watchdog.is_some() {
-            Some(fs::read(watchdog_path(&self.config.root, update))?)
-        } else {
-            None
-        };
+        // Under L3 host-loss replay, restore any persisted execution-0
+        // watchdog void so a host loss during execution 1 never resets the
+        // 1-rerun watchdog budget. Under D0/D8 AbandonTouchedBatch, start
+        // clean so conflicting pre-existing watchdog files fail at publish.
+        let (mut first_watchdog, mut void_execution) =
+            if self.config.host_loss_policy == HostLossPolicy::ReplayInterruptedBatch {
+                let first = first_watchdog(&self.config.root, update)?;
+                let void_bytes = if first.is_some() {
+                    Some(fs::read(watchdog_path(&self.config.root, update))?)
+                } else {
+                    None
+                };
+                (first, void_bytes)
+            } else {
+                (None, None)
+            };
         let partial = pending.join("partial");
         let (pods, pilot_sample) = loop {
             let execution = u8::from(void_execution.is_some());
