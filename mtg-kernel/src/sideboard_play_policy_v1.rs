@@ -16,7 +16,7 @@ use crate::fast_sampler::{
     WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
 };
 use crate::flat_policy_v2::{
-    FlatCompletedDungeonV2, FlatContextPathElementV2, FlatDecisionEncoderV2,
+    FlatCompletedDungeonV2, FlatContextPathElementV2, FlatDecisionEncoderV2, FlatDecisionErrorV2,
     FlatEffectSubtypeChangeV2, FlatGlobalsV2, FlatObjectAbilityUseV2, FlatObjectCoreV2,
     FlatObjectGoadV2, FlatObjectSubtypeV2, FlatRelationV2, FlatScorerActionCoreV2,
     FlatScorerActionRefV2, FlatScoringDecisionViewV2, FlatScoringOwnedBuffersV2,
@@ -87,6 +87,37 @@ pub use origin::{
     FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, TransferredFreshPlayPolicyIdentityV1,
     FRESH_PLAY_INITIALIZATION_SCHEMA_V1, TRANSFERRED_FRESH_PLAY_SCHEMA_V1,
 };
+
+/// Distinguishes a V4 encoder refusal from other selection failures while
+/// preserving the legacy diagnostic at callers that return a string.
+#[derive(Debug)]
+pub(crate) enum SelectionErrorV1 {
+    Encoding {
+        error: FlatDecisionErrorV2,
+        text: String,
+    },
+    Other(String),
+}
+
+impl From<SelectionErrorV1> for String {
+    fn from(error: SelectionErrorV1) -> Self {
+        match error {
+            SelectionErrorV1::Encoding { text, .. } | SelectionErrorV1::Other(text) => text,
+        }
+    }
+}
+
+impl From<String> for SelectionErrorV1 {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+impl From<&str> for SelectionErrorV1 {
+    fn from(message: &str) -> Self {
+        Self::Other(message.into())
+    }
+}
 
 const DESTINATION_REGISTRY: &[u8] = include_bytes!("../../data/cards_v1.json");
 const EXPORT_SCHEMA: &str = "mtg-kernel-native-inference-export/v1";
@@ -2452,6 +2483,18 @@ impl FrozenPlayPolicyV1 {
             crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1,
         >,
     ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
+        self.select_with_training_tensor_offset_typed_v4(session, london_keep_offset)
+            .map_err(String::from)
+    }
+
+    pub(crate) fn select_with_training_tensor_offset_typed_v4(
+        &mut self,
+        session: &FastActorSessionV1,
+        london_keep_offset: Option<
+            crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1,
+        >,
+    ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), SelectionErrorV1>
+    {
         require(
             self.fresh_successor.is_some(),
             "training requires explicit V4 successor features",
@@ -2459,7 +2502,7 @@ impl FrozenPlayPolicyV1 {
         let FastActorResponseV1::Decision(decision) = session.current_response() else {
             return Err("cannot collect a terminal decision".into());
         };
-        let scores = self.score_fast_session_v1(session)?;
+        let scores = self.score_fast_session_typed_v1(session)?;
         let tensor = self
             .fresh_successor
             .as_ref()
@@ -2585,6 +2628,14 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         session: &FastActorSessionV1,
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        self.score_fast_session_typed_v1(session)
+            .map_err(String::from)
+    }
+
+    fn score_fast_session_typed_v1(
+        &mut self,
+        session: &FastActorSessionV1,
+    ) -> Result<FrozenPlayDecisionScoresV1, SelectionErrorV1> {
         let FastActorResponseV1::Decision(decision) = session.current_response() else {
             return Err("cannot score a terminal session".into());
         };
@@ -2601,9 +2652,9 @@ impl FrozenPlayPolicyV1 {
             self.owned.globals = encoded.globals;
             successor.extensions = encoded.extensions;
             drop(span);
-            return self
-                .score_owned()
-                .map_err(|error| format!("{error}; decision={decision:?}"));
+            return self.score_owned().map_err(|error| {
+                SelectionErrorV1::Other(format!("{error}; decision={decision:?}"))
+            });
         }
         if let Some(fresh) = &mut self.fresh_successor {
             let span =
@@ -2614,13 +2665,16 @@ impl FrozenPlayPolicyV1 {
                     &mut fresh.encoder,
                     &mut self.owned.buffers(),
                 )
-                .map_err(|e| format!("V4 actor-visible encoding: {e:?}; decision={decision:?}"))?;
+                .map_err(|error| SelectionErrorV1::Encoding {
+                    text: format!("V4 actor-visible encoding: {error:?}; decision={decision:?}"),
+                    error,
+                })?;
             self.owned.globals = encoded.globals;
             fresh.extensions = encoded.extensions;
             drop(span);
-            return self
-                .score_owned()
-                .map_err(|error| format!("{error}; decision={decision:?}"));
+            return self.score_owned().map_err(|error| {
+                SelectionErrorV1::Other(format!("{error}; decision={decision:?}"))
+            });
         }
         let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyEncode);
         let encoded = session
@@ -2632,7 +2686,7 @@ impl FrozenPlayPolicyV1 {
             .map_err(|e| format!("actor-visible encoding: {e:?}; decision={decision:?}"))?;
         self.owned.globals = encoded.globals;
         drop(span);
-        self.score_owned()
+        Ok(self.score_owned()?)
     }
 
     /// Test-only cost split of one V3 `score_fast_session_v1` call:
@@ -4631,6 +4685,29 @@ mod tests {
     /// regression tests in `rl_session/flat_action_v3.rs` use, driven all
     /// the way through the frozen play policy's scorer instead of just the
     /// raw action slice.
+    #[test]
+    fn typed_v4_selection_retains_terminal_error_text_without_an_encoder_kind() {
+        let session = FastActorSessionV1::reset_with_limits(1, 91, 1, 0);
+        assert!(matches!(
+            session.current_response(),
+            FastActorResponseV1::Terminal(_)
+        ));
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        let error = policy
+            .select_with_training_tensor_offset_typed_v4(&session, None)
+            .err()
+            .expect("terminal selection must fail");
+        assert!(matches!(&error, SelectionErrorV1::Other(_)));
+        assert_eq!(String::from(error), "cannot collect a terminal decision");
+        assert_eq!(
+            policy
+                .select_with_training_tensor_offset_v4(&session, None)
+                .err()
+                .expect("terminal selection must fail"),
+            "cannot collect a terminal decision",
+        );
+    }
+
     #[test]
     fn score_fast_session_v1_reconciles_a_pending_trigger_hidden_source() {
         let (mut state, hunter, _goaded, _ordinary) =
