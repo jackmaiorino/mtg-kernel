@@ -95,7 +95,7 @@ pub(crate) fn begin(
     {
         return Err("Eternal fixed draw already started its original instruction".into());
     }
-    if dredge::owned_draw_needs_choice(state, drawer, count) {
+    if dredge::owned_draw_needs_stage(state, drawer, count) {
         start_instruction(state, pending, instruction, source, count, extra);
     } else {
         event::draw_instruction(state, drawer, count);
