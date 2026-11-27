@@ -498,7 +498,9 @@ impl MetamorphCopyV1 {
         let Some(paid_at) = receipt_at.checked_sub(1) else {
             return false;
         };
-        if at >= paid_at
+        if self.stack_item.0 == 0
+            || self.stack_item.0 > state.engine.next_stack_item_id
+            || at >= paid_at
             || !matches!(
                 history.get(paid_at),
                 Some(CommittedEvent::CopyEntryProvenanceV1 { journal })
@@ -515,6 +517,23 @@ impl MetamorphCopyV1 {
                             && *discard_at == at
                     )
             )
+            || history.iter().enumerate().any(|(i, ev)| {
+                i != paid_at
+                    && matches!(
+                        ev,
+                        CommittedEvent::CopyEntryProvenanceV1 { journal }
+                            if matches!(
+                                journal.as_ref(),
+                                crate::copy_entry_v1::ProvenanceV1::CopyDiscardPaid {
+                                    stack_item,
+                                    physical,
+                                    discard_at,
+                                    ..
+                                } if (*stack_item == self.stack_item && *physical == self.physical)
+                                    || *discard_at == at
+                            )
+                    )
+            })
             || !history[at + 1..paid_at]
                 .iter()
                 .all(|ev| Self::is_discard_companion_event(ev, at))
@@ -1182,7 +1201,29 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
     let mut show_choices = HashSet::new();
     let mut show_copies = HashSet::new();
     let mut used_discards = HashSet::new();
+    let mut paid_discard_keys = HashSet::new();
+    let mut paid_discard_indices = HashSet::new();
+    let mut paid_discard_stack_items = BTreeMap::new();
     for (index, event) in state.engine.event_history.iter().enumerate() {
+        if let CommittedEvent::CopyEntryProvenanceV1 { journal } = event {
+            if let crate::copy_entry_v1::ProvenanceV1::CopyDiscardPaid {
+                stack_item,
+                physical,
+                discard_at,
+                ..
+            } = journal.as_ref()
+            {
+                if stack_item.0 == 0
+                    || stack_item.0 > state.engine.next_stack_item_id
+                    || !paid_discard_keys.insert((*stack_item, *physical))
+                    || !paid_discard_indices.insert(*discard_at)
+                {
+                    return Err("duplicate or out-of-bounds copy-entry discard receipt".into());
+                }
+                paid_discard_stack_items.insert(*discard_at, (*stack_item, physical.owner));
+            }
+            continue;
+        }
         let CommittedEvent::MeddlingMageEntryV1 { journal } = event else {
             continue;
         };
@@ -1369,6 +1410,23 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
             return Err("Show and Tell copy choice has no matching entry".into());
         }
     }
+    for (discard_at, (item, owner_player)) in paid_discard_stack_items {
+        if used_discards.contains(&discard_at) {
+            continue;
+        }
+        let pending_show = show_choices.contains(&(item, owner_player))
+            && !show_copies.contains(&(item, owner_player))
+            && owner::pending_original_operation(state).is_some_and(|(original, _)| {
+                original
+                    .stack
+                    .last()
+                    .is_some_and(|row| show_and_tell::printed(row) && row.v4.stack_item_id == item)
+            });
+        if !pending_show {
+            return Err("copy-entry discard receipt has no matching copy entry".into());
+        }
+    }
+    validate_same_turn_discard_conservation(state)?;
     if !prepared_entries.is_empty() {
         return Err("noncast copy preparation has no matching entry".into());
     }
@@ -1393,6 +1451,141 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
             })
         {
             return Err("Meddling Mage entry does not match its current operation".into());
+        }
+    }
+    Ok(())
+}
+
+/// Same-turn hand-discard conservation law: every activated ability with a
+/// fixed hand-discard cost (such as Putrid Imp) and every Mox Diamond
+/// `CopyDiscardPaid` receipt in the current turn consumes a distinct
+/// `Hand -> Graveyard | Exile | Library` move by that controller.
+///
+/// Residual boundary: once Untap clears `ability_uses_this_turn` and Cleanup
+/// expires temporary boosts on a subsequent turn, an unauthenticated JSON
+/// snapshot retains no permanent per-activation marker distinguishing an
+/// untargeted discard-cost activation from `pay_copy_entry_cost` in a prior
+/// turn beyond `CopyDiscardPaid` uniqueness and stack-item anchoring.
+fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), String> {
+    use crate::card_def::CostComponent;
+    use crate::state::AbilityKindV4;
+    if state.step == crate::state::Step::Untap {
+        return Ok(());
+    }
+    let history = &state.engine.event_history;
+    let turn_start = history
+        .iter()
+        .rposition(|ev| matches!(ev, CommittedEvent::UpkeepBegan { .. }))
+        .map_or(0, |idx| idx + 1);
+    let turn_slice = &history[turn_start..];
+
+    for controller in [PlayerId::P0, PlayerId::P1] {
+        let mut copy_discards = HashSet::new();
+        for ev in turn_slice {
+            match ev {
+                CommittedEvent::CopyEntryProvenanceV1 { journal } => {
+                    if let crate::copy_entry_v1::ProvenanceV1::CopyDiscardPaid {
+                        land,
+                        discard_at,
+                        ..
+                    } = journal.as_ref()
+                    {
+                        if land.controller == controller && *discard_at >= turn_start {
+                            copy_discards.insert(*discard_at);
+                        }
+                    }
+                }
+                CommittedEvent::MeddlingMageEntryV1 { journal } => {
+                    if let JournalV1::MetamorphCopied { entrant, copy, .. } = journal.as_ref() {
+                        if entrant.controller == controller {
+                            if let Some(at) = copy.discarded_at {
+                                if at >= turn_start {
+                                    copy_discards.insert(at);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if copy_discards.is_empty() {
+            continue;
+        }
+        let hand_discards = turn_slice
+            .iter()
+            .filter(|ev| {
+                matches!(
+                    ev,
+                    CommittedEvent::ZoneChange {
+                        from: Zone::Hand,
+                        to,
+                        controller_before,
+                        ..
+                    } if *controller_before == controller
+                        && !matches!(to, Zone::Hand | Zone::Battlefield | Zone::Stack)
+                )
+            })
+            .count();
+        let mut activated_discards: usize = 0;
+        for (id, live) in state.objects.iter() {
+            if live.zone != Zone::Battlefield
+                || live.controller != controller
+                || live.v4.ability_uses_this_turn.is_empty()
+                || crate::eternal_cube_c8b_v1::has_saheeli_copy(state, id)
+                || crate::standard_cards_v1::active_aegis_copy(state, id)
+                || crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+                || crate::eternal_legacy_e7a_v1::active_copy(state, id)
+            {
+                continue;
+            }
+            let stolen_this_turn = turn_slice.iter().any(|ev| {
+                matches!(
+                    ev,
+                    CommittedEvent::TemporaryControlInstalledV1 { installation }
+                        if matches!(
+                            installation.target,
+                            crate::state::StackTargetContractV4::Object { object, .. }
+                                if object == id
+                        )
+                )
+            });
+            if stolen_this_turn {
+                continue;
+            }
+            let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
+                continue;
+            };
+            for entry in &live.v4.ability_uses_this_turn {
+                if entry.ability_kind != AbilityKindV4::Activated || entry.uses == 0 {
+                    continue;
+                }
+                let Some(ability) = def
+                    .activated_abilities
+                    .get(usize::from(entry.ability_index))
+                else {
+                    continue;
+                };
+                if ability.activation_zone != Zone::Battlefield {
+                    continue;
+                }
+                let per_use: usize = ability
+                    .cost
+                    .iter()
+                    .map(|component| match component {
+                        CostComponent::DiscardCards(n) | CostComponent::DiscardLandCardsV1(n) => {
+                            usize::from(*n)
+                        }
+                        CostComponent::DiscardIslandAndAnotherCardV1 => 2,
+                        _ => 0,
+                    })
+                    .sum();
+                activated_discards = activated_discards
+                    .saturating_add(per_use.saturating_mul(usize::from(entry.uses)));
+            }
+        }
+        if hand_discards < activated_discards.saturating_add(copy_discards.len()) {
+            return Err("copy-entry discard violates same-turn hand-discard conservation".into());
         }
     }
     Ok(())

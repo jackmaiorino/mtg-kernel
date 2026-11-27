@@ -74,6 +74,8 @@ pub enum ProvenanceV1 {
         host: ObjectLinkV4,
         card_def: u16,
         until_end_of_turn: bool,
+        stack_item: crate::ids::StackItemId,
+        animation_timestamp: u64,
     },
     SaheeliApplied {
         source: AbilitySourceContractV4,
@@ -128,6 +130,8 @@ pub(crate) fn record_land_animated(
     host: ObjectLinkV4,
     card_def: u16,
     until_end_of_turn: bool,
+    stack_item: crate::ids::StackItemId,
+    animation_timestamp: u64,
 ) {
     push_provenance(
         state,
@@ -135,6 +139,8 @@ pub(crate) fn record_land_animated(
             host,
             card_def,
             until_end_of_turn,
+            stack_item,
+            animation_timestamp,
         },
     );
 }
@@ -801,6 +807,217 @@ fn face_after_transforms_between(
     Some(face)
 }
 
+fn stack_item_in_bounds(state: &GameState, stack_item: crate::ids::StackItemId) -> bool {
+    stack_item.0 > 0
+        && stack_item.0 <= state.engine.next_stack_item_id
+        && !state
+            .stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == stack_item)
+}
+
+fn event_uses_stack_item(
+    ev: &event::CommittedEvent,
+    stack_item: crate::ids::StackItemId,
+    allow_targeted: bool,
+) -> bool {
+    use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::JournalV1 as MageJournal;
+    match ev {
+        event::CommittedEvent::PublishedCastIdentityV1 { receipt } => {
+            receipt.stack_item_id == stack_item
+        }
+        event::CommittedEvent::Targeted {
+            targeting_stack_item,
+            ..
+        }
+        | event::CommittedEvent::CrimeCommitted {
+            targeting_stack_item,
+            ..
+        } => !allow_targeted && *targeting_stack_item == stack_item,
+        event::CommittedEvent::CastLifeXPaidV1 {
+            stack_item: item, ..
+        }
+        | event::CommittedEvent::MartyrRevealPaidV1 { item, .. } => *item == stack_item,
+        event::CommittedEvent::SpellCopyCostPaidV1 { parent, .. } => *parent == stack_item,
+        event::CommittedEvent::MiracleDrawSuspendedV1 { stack_item_id, .. }
+        | event::CommittedEvent::MiracleDrawResumedV1 { stack_item_id, .. }
+        | event::CommittedEvent::ResolutionDiscardWaitsV1 { stack_item_id, .. }
+        | event::CommittedEvent::ResolutionDrawChoiceOfferedV1 { stack_item_id, .. }
+        | event::CommittedEvent::ResolutionDrawChoiceAnsweredV1 { stack_item_id, .. }
+        | event::CommittedEvent::NivMizzetVisionaryDrawEndedV1 { stack_item_id, .. }
+        | event::CommittedEvent::CopiedTokenSacrificeFinishedV1 { stack_item_id, .. } => {
+            *stack_item_id == stack_item
+        }
+        event::CommittedEvent::CopiedTokenSacrificePublishedV1 { item, .. } => {
+            item.v4.stack_item_id == stack_item
+        }
+        event::CommittedEvent::MeddlingMageEntryV1 { journal } => match journal.as_ref() {
+            MageJournal::VialPaid { item, .. } => *item == stack_item,
+            MageJournal::NoncastCopyPrepared { copy }
+            | MageJournal::ShowAndTellMetamorphChosen { copy }
+            | MageJournal::MetamorphCopied { copy, .. } => copy.stack_item == stack_item,
+            _ => false,
+        },
+        event::CommittedEvent::CopyEntryProvenanceV1 { journal } => match journal.as_ref() {
+            ProvenanceV1::LandAnimated {
+                stack_item: item, ..
+            }
+            | ProvenanceV1::SaheeliApplied {
+                stack_item: item, ..
+            }
+            | ProvenanceV1::CopyDiscardPaid {
+                stack_item: item, ..
+            } => *item == stack_item,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn stack_item_collides_in_history(
+    state: &GameState,
+    stack_item: crate::ids::StackItemId,
+    exclude_at: usize,
+    allow_targeted: bool,
+) -> bool {
+    state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .any(|(i, ev)| i != exclude_at && event_uses_stack_item(ev, stack_item, allow_targeted))
+}
+
+fn turn_window_containing(state: &GameState, at: usize) -> (usize, usize) {
+    let history = &state.engine.event_history;
+    let start = history[..at]
+        .iter()
+        .rposition(|ev| matches!(ev, event::CommittedEvent::UpkeepBegan { .. }))
+        .map_or(0, |idx| idx + 1);
+    let end = history[at + 1..]
+        .iter()
+        .position(|ev| matches!(ev, event::CommittedEvent::UpkeepBegan { .. }))
+        .map_or(history.len(), |offset| at + 1 + offset);
+    (start, end)
+}
+
+fn link_could_have_card_def(state: &GameState, link: ObjectLinkV4, card_def: u16) -> bool {
+    state.objects.try_get(link.object).is_some_and(|live| {
+        live.card_def == card_def
+            || crate::standard_cards_v1::had_card_def(
+                state,
+                link.object,
+                link.zone_change_count,
+                card_def,
+            )
+    })
+}
+
+fn donor_def_and_face_match(
+    state: &GameState,
+    donor: ObjectLinkV4,
+    at: usize,
+    card_def: u16,
+    face_index: u8,
+    depth: u8,
+) -> bool {
+    if depth > 8 || face_index > 1 {
+        return false;
+    }
+    let Some(def) = crate::card_def::CARD_DEFS.get(usize::from(card_def)) else {
+        return false;
+    };
+    if face_index == 1 && def.transform_face.is_none() {
+        return false;
+    }
+    if !link_could_have_card_def(state, donor, card_def) {
+        return false;
+    }
+    if let Some((s_at, applied)) = saheeli_applied_at_entry(state, donor, at, depth + 1) {
+        return applied.card_def == card_def
+            && face_after_transforms_between(
+                state,
+                donor.object,
+                applied.face_index,
+                s_at + 1,
+                at,
+            ) == Some(face_index);
+    }
+    // If `donor` had an `EntryCopyApplied` (Phantasmal Image / Superior
+    // Spider-Man) before `at` and no active Absorbing Man copy at `at`, bind
+    // `card_def` and `face_index` to that entry copy.
+    let history = &state.engine.event_history[..at];
+    let has_active_absorbing = history.iter().enumerate().rev().any(|(i, ev)| {
+        let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = ev else {
+            return false;
+        };
+        let ProvenanceV1::AbsorbingCopyApplied {
+            host,
+            until_turn_of,
+            ..
+        } = journal.as_ref()
+        else {
+            return false;
+        };
+        *host == donor && !has_player_upkeep_between(state, *until_turn_of, i + 1, at)
+    });
+    if !has_active_absorbing {
+        if let Some((entry_at, entry_values)) =
+            history.iter().enumerate().rev().find_map(|(i, ev)| {
+                let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = ev else {
+                    return None;
+                };
+                let ProvenanceV1::EntryCopyApplied { host, values, .. } = journal.as_ref() else {
+                    return None;
+                };
+                (*host == donor).then_some((i, values))
+            })
+        {
+            if entry_values.card_def != card_def
+                || face_after_transforms_between(
+                    state,
+                    donor.object,
+                    entry_values.face_index,
+                    entry_at + 1,
+                    at,
+                ) != Some(face_index)
+            {
+                return false;
+            }
+        }
+    }
+    let Some(live) = state.objects.try_get(donor.object) else {
+        return false;
+    };
+    let same_incarnation = live.zone == crate::state::Zone::Battlefield
+        && live.zone_change_count == donor.zone_change_count;
+    if same_incarnation
+        && !crate::standard_cards_v1::active_aegis_copy(state, donor.object)
+        && !crate::eternal_legacy_e7a_v1::active_copy(state, donor.object)
+        && !crate::eternal_cube_c8c_v1::is_absorbing_copy(state, donor.object)
+    {
+        if crate::eternal_cube_c8b_v1::has_saheeli_copy(state, donor.object) {
+            if let Some(saved) = read_state(state)
+                .and_then(|c8b| c8b.saheeli_copies.iter().find(|c| c.host == donor))
+            {
+                if saved.card_def == card_def
+                    && reconstruct_face_at_entry(state, donor.object, saved.face_index, at)
+                        != Some(face_index)
+                {
+                    return false;
+                }
+            }
+        } else if live.card_def != card_def
+            || reconstruct_face_at_entry(state, donor.object, live.v4.face_index, at)
+                != Some(face_index)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
 fn validate_saheeli_provenance(
     state: &GameState,
     saheeli_at: usize,
@@ -809,9 +1026,13 @@ fn validate_saheeli_provenance(
     host: ObjectLinkV4,
     model: ObjectLinkV4,
     values: &CopiableValuesV1,
+    depth: u8,
 ) -> bool {
-    if host.object == model.object
+    if depth > 8
+        || host.object == model.object
         || !values.mods.added_artifact
+        || !stack_item_in_bounds(state, stack_item)
+        || stack_item_collides_in_history(state, stack_item, saheeli_at, true)
         || card_id_by_name(crate::eternal_cube_c8b_v1::SAHEELI) != Some(source.card_def)
         || zone_and_zcc_at(state, host.object, saheeli_at)
             != Some((crate::state::Zone::Battlefield, host.zone_change_count))
@@ -824,6 +1045,62 @@ fn validate_saheeli_provenance(
             values.card_def,
         )
     {
+        return false;
+    }
+    let Some(def) = crate::card_def::CARD_DEFS.get(usize::from(values.card_def)) else {
+        return false;
+    };
+    if !copy_mods_structurally_valid(def, values.face_index, &values.mods) {
+        return false;
+    }
+    // Planeswalker loyalty abilities can be activated at most once per turn per
+    // battlefield incarnation (CR 606.3). Reject duplicate SaheeliApplied
+    // receipts for the same Saheeli incarnation in the same turn.
+    let (turn_start, turn_end) = turn_window_containing(state, saheeli_at);
+    if state.engine.event_history[turn_start..turn_end]
+        .iter()
+        .enumerate()
+        .any(|(offset, ev)| {
+            let idx = turn_start + offset;
+            idx != saheeli_at
+                && matches!(
+                    ev,
+                    event::CommittedEvent::CopyEntryProvenanceV1 { journal }
+                        if matches!(
+                            journal.as_ref(),
+                            ProvenanceV1::SaheeliApplied {
+                                source: other_source,
+                                ..
+                            } if other_source.source == source.source
+                                && other_source.zone_change_count == source.zone_change_count
+                        )
+                )
+        })
+    {
+        return false;
+    }
+    // No `Targeted` event for `stack_item` may appear after `saheeli_at`, nor
+    // with a mismatched controller anywhere in history.
+    if state.engine.event_history[saheeli_at + 1..]
+        .iter()
+        .any(|ev| {
+            matches!(
+                ev,
+                event::CommittedEvent::Targeted {
+                    targeting_stack_item,
+                    ..
+                } if *targeting_stack_item == stack_item
+            )
+        }) || state.engine.event_history[..saheeli_at].iter().any(|ev| {
+        matches!(
+            ev,
+            event::CommittedEvent::Targeted {
+                targeting_stack_item,
+                targeting_controller,
+                ..
+            } if *targeting_stack_item == stack_item && *targeting_controller != source.controller
+        )
+    }) {
         return false;
     }
     // Bind slot 0 = host and slot 1 = model via the exact slot-ordered
@@ -848,6 +1125,7 @@ fn validate_saheeli_provenance(
     if targets.len() < 2 || !targets.len().is_multiple_of(2) {
         return false;
     }
+    let first_target_at = targets[0].0;
     let slot0 = targets[targets.len() - 2];
     let slot1 = targets[targets.len() - 1];
     if slot0.1 != host.object
@@ -855,25 +1133,141 @@ fn validate_saheeli_provenance(
         || slot1.1 != model.object
         || slot1.2 != model.zone_change_count
         || slot0.0.checked_add(1) != Some(slot1.0)
-        || has_upkeep_between(state, slot0.0 + 1, saheeli_at)
+        || has_upkeep_between(state, first_target_at + 1, saheeli_at)
+        || zone_and_zcc_at(state, source.source, first_target_at)
+            != Some((crate::state::Zone::Battlefield, source.zone_change_count))
         || !object_was_named_on_battlefield_at(
             state,
             source.source,
             crate::eternal_cube_c8b_v1::SAHEELI,
-            slot0.0,
+            first_target_at,
         )
     {
         return false;
+    }
+    // Enforce monotonic stack-item allocation order against all spell casts,
+    // and enforce sorcery-speed timing (CR 606.3: Saheeli's loyalty ability
+    // cannot be activated while a cast spell is still on the stack).
+    for (cast_idx, ev) in state.engine.event_history.iter().enumerate() {
+        let event::CommittedEvent::PublishedCastIdentityV1 { receipt } = ev else {
+            continue;
+        };
+        if cast_idx < first_target_at {
+            if receipt.stack_item_id >= stack_item {
+                return false;
+            }
+            let spell_left_before = state.engine.event_history[cast_idx + 1..first_target_at]
+                .iter()
+                .any(|later| {
+                    matches!(
+                        later,
+                        event::CommittedEvent::ZoneChange {
+                            object,
+                            from: crate::state::Zone::Stack,
+                            ..
+                        } if *object == receipt.spell
+                    )
+                });
+            if !spell_left_before {
+                return false;
+            }
+        } else if cast_idx > first_target_at && receipt.stack_item_id <= stack_item {
+            return false;
+        }
+    }
+    // Bind `values` to `model` at `saheeli_at`.
+    if !donor_def_and_face_match(
+        state,
+        model,
+        saheeli_at,
+        values.card_def,
+        values.face_index,
+        depth + 1,
+    ) {
+        return false;
+    }
+    let Some(mut expected_mods) = authenticated_mods_for_link(state, model, saheeli_at, depth + 1)
+    else {
+        return false;
+    };
+    expected_mods.added_artifact = true;
+    if values.mods != expected_mods {
+        return false;
+    }
+    // Same-turn live activation check on Saheeli herself.
+    if !has_upkeep_between(state, saheeli_at + 1, state.engine.event_history.len())
+        && state.step != crate::state::Step::Untap
+    {
+        if let Some(saheeli_live) = state.objects.try_get(source.source) {
+            if saheeli_live.zone == crate::state::Zone::Battlefield
+                && saheeli_live.zone_change_count == source.zone_change_count
+                && !saheeli_live.v4.ability_uses_this_turn.iter().any(|entry| {
+                    entry.ability_kind == crate::state::AbilityKindV4::Activated
+                        && entry.ability_index == 0
+                        && entry.uses > 0
+                })
+            {
+                return false;
+            }
+        }
     }
     let host_still_same = state.objects.try_get(host.object).is_some_and(|live| {
         live.zone == crate::state::Zone::Battlefield
             && live.zone_change_count == host.zone_change_count
     });
-    if host_still_same
-        && !has_cleanup_boundary_after(state, saheeli_at)
-        && !crate::eternal_cube_c8b_v1::has_saheeli_copy(state, host.object)
-    {
-        return false;
+    if host_still_same && !has_cleanup_boundary_after(state, saheeli_at) {
+        if !crate::eternal_cube_c8b_v1::has_saheeli_copy(state, host.object) {
+            return false;
+        }
+        let overwritten_later = state.engine.event_history[saheeli_at + 1..]
+            .iter()
+            .enumerate()
+            .any(|(offset, ev)| {
+                let later_at = saheeli_at + 1 + offset;
+                let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = ev else {
+                    return false;
+                };
+                let ProvenanceV1::SaheeliApplied {
+                    source: ls,
+                    stack_item: li,
+                    host: lh,
+                    model: lm,
+                    values: lv,
+                } = journal.as_ref()
+                else {
+                    return false;
+                };
+                *lh == host
+                    && validate_saheeli_provenance(
+                        state,
+                        later_at,
+                        *ls,
+                        *li,
+                        *lh,
+                        *lm,
+                        lv,
+                        depth + 1,
+                    )
+            });
+        if !overwritten_later
+            && !crate::standard_cards_v1::active_aegis_copy(state, host.object)
+            && !crate::eternal_cube_c8c_v1::is_absorbing_copy(state, host.object)
+            && !crate::eternal_legacy_e7a_v1::active_copy(state, host.object)
+        {
+            let Some(live_vals) = capture_battlefield_copiable_values(state, host.object) else {
+                return false;
+            };
+            if live_vals.card_def != values.card_def
+                || live_vals.mods != values.mods
+                || live_vals.prototyped != values.prototyped
+                || live_vals.copied_end_step_sacrifices_v1 != values.copied_end_step_sacrifices_v1
+                || live_vals.copied_nightmare_v1 != values.copied_nightmare_v1
+                || reconstruct_face_at_entry(state, host.object, live_vals.face_index, saheeli_at)
+                    != Some(values.face_index)
+            {
+                return false;
+            }
+        }
     }
     true
 }
@@ -885,7 +1279,11 @@ fn saheeli_applied_at_entry(
     state: &GameState,
     host_link: ObjectLinkV4,
     before: usize,
+    depth: u8,
 ) -> Option<(usize, &CopiableValuesV1)> {
+    if depth > 8 {
+        return None;
+    }
     for (at, ev) in state.engine.event_history[..before]
         .iter()
         .enumerate()
@@ -910,8 +1308,17 @@ fn saheeli_applied_at_entry(
         if *host != host_link {
             continue;
         }
-        return validate_saheeli_provenance(state, at, *source, *stack_item, *host, *model, values)
-            .then_some((at, values));
+        return validate_saheeli_provenance(
+            state,
+            at,
+            *source,
+            *stack_item,
+            *host,
+            *model,
+            values,
+            depth,
+        )
+        .then_some((at, values));
     }
     None
 }
@@ -942,7 +1349,16 @@ fn has_valid_post_entry_saheeli(state: &GameState, host_link: ObjectLinkV4, entr
             continue;
         }
         let at = entry + 1 + offset;
-        return validate_saheeli_provenance(state, at, *source, *stack_item, *host, *model, values);
+        return validate_saheeli_provenance(
+            state,
+            at,
+            *source,
+            *stack_item,
+            *host,
+            *model,
+            values,
+            0,
+        );
     }
     false
 }
@@ -1030,7 +1446,7 @@ fn authenticated_mods_for_link(
     }
     let live = state.objects.try_get(link.object)?;
 
-    if let Some((_, applied)) = saheeli_applied_at_entry(state, link, before) {
+    if let Some((_, applied)) = saheeli_applied_at_entry(state, link, before, depth + 1) {
         return Some(applied.mods.clone());
     }
 
@@ -1046,8 +1462,8 @@ fn authenticated_mods_for_link(
             donor,
             until_turn_of,
             card_def,
+            face_index,
             added_artifact,
-            ..
         } = journal.as_ref()
         else {
             continue;
@@ -1058,15 +1474,44 @@ fn authenticated_mods_for_link(
         if has_player_upkeep_between(state, *until_turn_of, at + 1, before) {
             break;
         }
-        if !link_had_name(state, link, crate::eternal_cube_c8c_v1::ABSORBING_MAN)
+        let has_target = history[..at].iter().enumerate().rev().any(|(t_at, t_ev)| {
+            !has_upkeep_between(state, t_at + 1, at)
+                && matches!(
+                    t_ev,
+                    event::CommittedEvent::Targeted {
+                        target,
+                        target_zone_change_count,
+                        targeting_controller,
+                        ..
+                    } if *target == donor.object
+                        && *target_zone_change_count == donor.zone_change_count
+                        && *targeting_controller == *until_turn_of
+                )
+        });
+        let host_still_same = live.zone == crate::state::Zone::Battlefield
+            && live.zone_change_count == host.zone_change_count;
+        if host.object == donor.object
+            || !link_had_name(state, link, crate::eternal_cube_c8c_v1::ABSORBING_MAN)
             || zone_and_zcc_at(state, host.object, at)
                 != Some((crate::state::Zone::Battlefield, host.zone_change_count))
+            || zone_and_zcc_at(state, donor.object, at)
+                != Some((crate::state::Zone::Battlefield, donor.zone_change_count))
+            || !has_target
             || !crate::standard_cards_v1::had_card_def(
                 state,
                 host.object,
                 host.zone_change_count,
                 *card_def,
             )
+            || !donor_def_and_face_match(state, *donor, at, *card_def, *face_index, depth + 1)
+            || (host_still_same
+                && !has_player_upkeep_between(
+                    state,
+                    *until_turn_of,
+                    at + 1,
+                    state.engine.event_history.len(),
+                )
+                && !crate::eternal_cube_c8c_v1::is_absorbing_copy(state, host.object))
             || authenticated_mods_for_link(state, *donor, at, depth + 1)
                 .is_none_or(|donor_mods| donor_mods.added_artifact != *added_artifact)
         {
@@ -1091,14 +1536,56 @@ fn authenticated_mods_for_link(
         if *host != link {
             continue;
         }
-        if zone_and_zcc_at(state, host.object, at)
-            != Some((crate::state::Zone::Battlefield, host.zone_change_count))
+        // Each battlefield incarnation enters at most once, so `EntryCopyApplied`
+        // must be unique per `host` link across all history.
+        let duplicate_entry_copy =
+            state
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .any(|(i, other)| {
+                    i != at
+                        && matches!(
+                            other,
+                            event::CommittedEvent::CopyEntryProvenanceV1 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    ProvenanceV1::EntryCopyApplied { host: h, .. } if *h == *host
+                                )
+                        )
+                });
+        let copied_def = crate::card_def::CARD_DEFS.get(usize::from(values.card_def))?;
+        let host_still_same = live.zone == crate::state::Zone::Battlefield
+            && live.zone_change_count == host.zone_change_count;
+        if duplicate_entry_copy
+            || host.object == donor.object
+            || zone_and_zcc_at(state, host.object, at)
+                != Some((crate::state::Zone::Battlefield, host.zone_change_count))
+            || !crate::standard_cards_v1::had_card_def(
+                state,
+                host.object,
+                host.zone_change_count,
+                values.card_def,
+            )
+            || !copy_mods_structurally_valid(copied_def, values.face_index, &values.mods)
+            || (host_still_same
+                && !read_state(state)
+                    .is_some_and(|c8b| c8b.permanent_copies.iter().any(|s| s.host == *host)))
         {
             return None;
         }
         if link_had_name(state, link, crate::eternal_cube_c8b_v1::PHANTASMAL_IMAGE) {
             if zone_and_zcc_at(state, donor.object, at)
                 != Some((crate::state::Zone::Battlefield, donor.zone_change_count))
+                || !donor_def_and_face_match(
+                    state,
+                    *donor,
+                    at,
+                    values.card_def,
+                    values.face_index,
+                    depth + 1,
+                )
             {
                 return None;
             }
@@ -1108,8 +1595,14 @@ fn authenticated_mods_for_link(
             return (values.mods == expected).then_some(expected);
         }
         if link_had_name(state, link, crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN) {
-            if zone_and_zcc_at(state, donor.object, at)
-                != Some((crate::state::Zone::Graveyard, donor.zone_change_count))
+            if values.face_index != 0
+                || zone_and_zcc_at(state, donor.object, at)
+                    != Some((crate::state::Zone::Graveyard, donor.zone_change_count))
+                || state
+                    .objects
+                    .try_get(donor.object)
+                    .is_none_or(|d| d.card_def != values.card_def)
+                || !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(copied_def)
             {
                 return None;
             }
@@ -1138,15 +1631,45 @@ fn authenticated_mods_for_link(
             if *token != link {
                 continue;
             }
-            if token.zone_change_count != 0
+            // Each token and each `CreateToken` event can be claimed by at most
+            // one `TokenCopyCreated` receipt across all history.
+            let duplicate_token_receipt =
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .enumerate()
+                    .any(|(i, other)| {
+                        i != at
+                            && matches!(
+                                other,
+                                event::CommittedEvent::CopyEntryProvenanceV1 { journal }
+                                    if matches!(
+                                        journal.as_ref(),
+                                        ProvenanceV1::TokenCopyCreated {
+                                            token: other_tok,
+                                            create_at: other_create,
+                                            ..
+                                        } if other_tok.object == token.object
+                                            || *other_create == *create_at
+                                    )
+                            )
+                    });
+            let copied_def = crate::card_def::CARD_DEFS.get(usize::from(values.card_def))?;
+            if duplicate_token_receipt
+                || token.zone_change_count != 0
                 || *create_at >= at
+                || !copy_mods_structurally_valid(copied_def, values.face_index, &values.mods)
                 || !matches!(
                     history.get(*create_at),
                     Some(event::CommittedEvent::CreateToken {
                         object,
                         token_def,
+                        controller,
                         ..
-                    }) if *object == token.object && *token_def == values.card_def
+                    }) if *object == token.object
+                        && *token_def == values.card_def
+                        && *controller == producer.controller
                 )
             {
                 return None;
@@ -1185,6 +1708,16 @@ fn authenticated_mods_for_link(
                             )
                             .then_some(i)
                         })?;
+                if !donor_def_and_face_match(
+                    state,
+                    *donor,
+                    died_at,
+                    values.card_def,
+                    values.face_index,
+                    depth + 1,
+                ) {
+                    return None;
+                }
                 let mut expected = authenticated_mods_for_link(state, *donor, died_at, depth + 1)?;
                 expected.added_artifact = true;
                 return (values.mods == expected).then_some(expected);
@@ -1192,14 +1725,115 @@ fn authenticated_mods_for_link(
             if card_id_by_name(crate::eternal_cube_c8b_v1::SPRINGHEART_NANTUKO)
                 == Some(producer.card_def)
             {
-                if !object_was_named_on_battlefield_at(
-                    state,
-                    producer.source,
-                    crate::eternal_cube_c8b_v1::SPRINGHEART_NANTUKO,
-                    *create_at,
-                ) || zone_and_zcc_at(state, donor.object, *create_at)
-                    != Some((crate::state::Zone::Battlefield, donor.zone_change_count))
+                if producer.source == donor.object
+                    || zone_and_zcc_at(state, producer.source, *create_at)
+                        != Some((crate::state::Zone::Battlefield, producer.zone_change_count))
+                    || !object_was_named_on_battlefield_at(
+                        state,
+                        producer.source,
+                        crate::eternal_cube_c8b_v1::SPRINGHEART_NANTUKO,
+                        *create_at,
+                    )
+                    || zone_and_zcc_at(state, donor.object, *create_at)
+                        != Some((crate::state::Zone::Battlefield, donor.zone_change_count))
+                    || !donor_def_and_face_match(
+                        state,
+                        *donor,
+                        *create_at,
+                        values.card_def,
+                        values.face_index,
+                        depth + 1,
+                    )
                 {
+                    return None;
+                }
+                // Require an actual Landfall entry controlled by `producer.controller`
+                // before `*create_at`.
+                let has_landfall = history[..*create_at].iter().any(|ev| match ev {
+                    event::CommittedEvent::ZoneChange {
+                        object: land,
+                        to: crate::state::Zone::Battlefield,
+                        controller_before,
+                        ..
+                    } => state.objects.try_get(*land).is_some_and(|land_live| {
+                        let is_land = crate::card_def::CARD_DEFS
+                            .get(usize::from(land_live.card_def))
+                            .is_some_and(|d| {
+                                d.has_type(crate::card_def::CardType::Land)
+                                    || d.transform_face.as_ref().is_some_and(|back| {
+                                        back.types.contains(&crate::card_def::CardType::Land)
+                                    })
+                            });
+                        is_land
+                            && (*controller_before == producer.controller
+                                || land_live.controller == producer.controller)
+                    }),
+                    event::CommittedEvent::CreateToken {
+                        token_def,
+                        controller,
+                        ..
+                    } => {
+                        *controller == producer.controller
+                            && crate::card_def::CARD_DEFS
+                                .get(usize::from(*token_def))
+                                .is_some_and(|d| d.has_type(crate::card_def::CardType::Land))
+                    }
+                    _ => false,
+                });
+                if !has_landfall {
+                    return None;
+                }
+                // Require Springheart Nantuko to be attached to `donor` (either live
+                // on the same incarnation, or via a committed Bestow cast targeting
+                // exact `donor` before `*create_at`).
+                let producer_live = state.objects.try_get(producer.source)?;
+                let donor_live = state.objects.try_get(donor.object)?;
+                let producer_same = producer_live.zone == crate::state::Zone::Battlefield
+                    && producer_live.zone_change_count == producer.zone_change_count;
+                let donor_same = donor_live.zone == crate::state::Zone::Battlefield
+                    && donor_live.zone_change_count == donor.zone_change_count;
+                let live_attached = producer_same && producer_live.v4.attached_to == Some(*donor);
+                if producer_same
+                    && donor_same
+                    && crate::engine::object_has_type(
+                        state,
+                        donor.object,
+                        crate::card_def::CardType::Creature,
+                    )
+                    && !live_attached
+                {
+                    return None;
+                }
+                let bestow_cast_attached =
+                    history[..*create_at]
+                        .iter()
+                        .enumerate()
+                        .any(|(cast_at, ev)| {
+                            let event::CommittedEvent::PublishedCastIdentityV1 { receipt } = ev
+                            else {
+                                return false;
+                            };
+                            if receipt.spell != producer.source
+                                || receipt.stack_zone_change_count.checked_add(1)
+                                    != Some(producer.zone_change_count)
+                            {
+                                return false;
+                            }
+                            history[cast_at + 1..*create_at].iter().any(|t_ev| {
+                                matches!(
+                                    t_ev,
+                                    event::CommittedEvent::Targeted {
+                                        target,
+                                        target_zone_change_count,
+                                        targeting_stack_item,
+                                        ..
+                                    } if *targeting_stack_item == receipt.stack_item_id
+                                        && *target == donor.object
+                                        && *target_zone_change_count == donor.zone_change_count
+                                )
+                            })
+                        });
+                if !live_attached && !bestow_cast_attached {
                     return None;
                 }
                 let expected = authenticated_mods_for_link(state, *donor, *create_at, depth + 1)?;
@@ -1313,9 +1947,63 @@ fn copy_mods_structurally_valid(
     mods.added_subtypes == expected_subtypes
 }
 
+fn animation_timestamp_valid_and_unique(
+    state: &GameState,
+    at: usize,
+    host_link: ObjectLinkV4,
+    timestamp: u64,
+) -> bool {
+    if timestamp >= state.engine.next_effect_timestamp {
+        return false;
+    }
+    // Enforce uniqueness and chronological monotonicity across all `LandAnimated` receipts.
+    for (i, ev) in state.engine.event_history.iter().enumerate() {
+        if i == at {
+            continue;
+        }
+        let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = ev else {
+            continue;
+        };
+        let ProvenanceV1::LandAnimated {
+            animation_timestamp: other_ts,
+            ..
+        } = journal.as_ref()
+        else {
+            continue;
+        };
+        if *other_ts == timestamp
+            || (i < at && *other_ts > timestamp)
+            || (i > at && *other_ts < timestamp)
+        {
+            return false;
+        }
+    }
+    // Must not collide with another permanent's live animation timestamp or any
+    // live `until_end_of_turn` continuous-effect timestamp.
+    if state
+        .objects
+        .iter()
+        .any(|(id, o)| id != host_link.object && o.v4.animation_timestamp == Some(timestamp))
+    {
+        return false;
+    }
+    if state.engine.until_end_of_turn.iter().any(|eff| match eff {
+        crate::engine::UntilEndOfTurnEffect::ResolvedSetEffect { timestamp: t, .. }
+        | crate::engine::UntilEndOfTurnEffect::ResolvedObjectEffect { timestamp: t, .. }
+        | crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+            timestamp: t, ..
+        } => *t == timestamp,
+        _ => false,
+    }) {
+        return false;
+    }
+    true
+}
+
 /// Authenticates that `donor` actually resolved `AnimateSource` or
 /// `AnimateSourcePermanentlyV1` on this exact battlefield incarnation before
-/// `entry` (and in the same turn for until-end-of-turn animations). A card
+/// `entry` (and in the same turn for until-end-of-turn animations), bound to
+/// an in-bounds unique `stack_item` and `animation_timestamp`. A card
 /// definition having `animation: Some(_)` is never provenance by itself.
 fn donor_land_animated_at_entry(
     state: &GameState,
@@ -1344,6 +2032,8 @@ fn donor_land_animated_at_entry(
                 host,
                 card_def,
                 until_end_of_turn,
+                stack_item,
+                animation_timestamp,
             } = journal.as_ref()
             else {
                 return false;
@@ -1351,9 +2041,31 @@ fn donor_land_animated_at_entry(
             if *host != host_link
                 || *card_def != donor.card_def
                 || *until_end_of_turn != anim.until_end_of_turn
+                || !stack_item_in_bounds(state, *stack_item)
+                || stack_item_collides_in_history(state, *stack_item, at, false)
+                || !animation_timestamp_valid_and_unique(state, at, host_link, *animation_timestamp)
             {
                 return false;
             }
+            let latest_later_ts =
+                state.engine.event_history[at + 1..]
+                    .iter()
+                    .rev()
+                    .find_map(|later_ev| {
+                        let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = later_ev
+                        else {
+                            return None;
+                        };
+                        match journal.as_ref() {
+                            ProvenanceV1::LandAnimated {
+                                host: h,
+                                animation_timestamp: ts,
+                                ..
+                            } if *h == host_link => Some(*ts),
+                            _ => None,
+                        }
+                    });
+            let expected_live_ts = latest_later_ts.unwrap_or(*animation_timestamp);
             if *until_end_of_turn {
                 if has_upkeep_between(state, at + 1, entry) {
                     return false;
@@ -1362,7 +2074,7 @@ fn donor_land_animated_at_entry(
                     && state
                         .objects
                         .try_get(donor.source)
-                        .is_none_or(|live| live.v4.animation_timestamp.is_none())
+                        .is_none_or(|live| live.v4.animation_timestamp != Some(expected_live_ts))
                 {
                     return false;
                 }
@@ -1370,9 +2082,39 @@ fn donor_land_animated_at_entry(
                 && state
                     .objects
                     .try_get(donor.source)
-                    .is_none_or(|live| live.v4.animation_timestamp.is_none())
+                    .is_none_or(|live| live.v4.animation_timestamp != Some(expected_live_ts))
             {
                 return false;
+            }
+            if donor_same_incarnation
+                && !has_upkeep_between(state, at + 1, state.engine.event_history.len())
+                && state.step != crate::state::Step::Untap
+            {
+                let has_animate_ability = def.activated_abilities.iter().any(|a| {
+                    matches!(
+                        (a.effect)(),
+                        crate::effect::EffectOp::AnimateSource
+                            | crate::effect::EffectOp::AnimateSourcePermanentlyV1
+                    )
+                });
+                if has_animate_ability
+                    && state.objects.try_get(donor.source).is_none_or(|live| {
+                        live.card_def == *card_def
+                            && !def.activated_abilities.iter().enumerate().any(|(idx, a)| {
+                                matches!(
+                                    (a.effect)(),
+                                    crate::effect::EffectOp::AnimateSource
+                                        | crate::effect::EffectOp::AnimateSourcePermanentlyV1
+                                ) && live.v4.ability_uses_this_turn.iter().any(|u| {
+                                    u.ability_kind == crate::state::AbilityKindV4::Activated
+                                        && u.ability_index == idx as u16
+                                        && u.uses > 0
+                                })
+                            })
+                    })
+                {
+                    return false;
+                }
             }
             zone_and_zcc_at(state, host.object, at)
                 == Some((crate::state::Zone::Battlefield, host.zone_change_count))
@@ -1664,7 +2406,7 @@ pub(crate) fn validate_completed_copy(
         && donor_live.zone_change_count == copy.copied.zone_change_count;
     let donor_saheeli_live = donor_same_incarnation
         && crate::eternal_cube_c8b_v1::has_saheeli_copy(state, copy.copied.source);
-    let saheeli_at_entry = saheeli_applied_at_entry(state, donor_link, entry);
+    let saheeli_at_entry = saheeli_applied_at_entry(state, donor_link, entry, 0);
     let saheeli_covered = saheeli_at_entry.is_some();
 
     if let Some((saheeli_at, applied)) = saheeli_at_entry {
