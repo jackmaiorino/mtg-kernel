@@ -544,6 +544,7 @@ pub(crate) mod vampire_gourmand_dispatch_v2;
 mod vampire_gourmand_v1;
 #[cfg(feature = "viewer-recording-v1")]
 pub mod viewer_capture_v1;
+pub(crate) mod waterbend_v1;
 pub mod wildwood_public_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
