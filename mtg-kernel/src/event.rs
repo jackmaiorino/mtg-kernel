@@ -2328,6 +2328,21 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         path: Vec<u16>,
     },
+    /// Nominal additional life payment for this stack incarnation (CR 118.11).
+    CastLifeXPaidV1 {
+        spell: ObjectId,
+        stack_item: StackItemId,
+        player: PlayerId,
+        amount: u16,
+        loss: Option<(u64, i32)>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bloodletters: Vec<crate::state::ObjectLinkV4>,
+    },
+    /// History-only provenance receipts emitted in Eternal builds to bind
+    /// completed noncast copy validation to exact entry-time effects and lineage.
+    CopyEntryProvenanceV1 {
+        journal: Box<crate::copy_entry_v1::ProvenanceV1>,
+    },
     /// Authenticated stack publication for a registered activated or triggered
     /// copy-entry producer (Goblin Welder, Oath of Druids, Recurring Nightmare,
     /// Animate Dead's return trigger).
@@ -9243,6 +9258,18 @@ fn materialize_zone_change_v1(
         );
     let enters_battlefield_tapped =
         to_zone == Zone::Battlefield && (force_battlefield_tapped || printed_entry_tapped);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_discard_uses(
+        state, id, from_zone,
+    );
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_effect_discard_uses(
+        state, id, from_zone,
+    );
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_animate_uses(
+        state, id, from_zone,
+    );
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;

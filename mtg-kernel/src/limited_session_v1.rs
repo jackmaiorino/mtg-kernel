@@ -554,7 +554,12 @@ impl LimitedJsonlServerV1 {
         response
     }
 
-    fn handle_request(&mut self, request: &LimitedRequestV1) -> LimitedReplyV1 {
+    /// Process a trusted, fresh request constructed by an in-process client.
+    ///
+    /// The caller supplies a new request ID and the server's schema version
+    /// for every call. JSONL input validation and retry caching stay in
+    /// `handle_line`. Do not mix the two transports within one session.
+    pub(crate) fn handle_request(&mut self, request: &LimitedRequestV1) -> LimitedReplyV1 {
         let request_id = request.request_id().to_string();
         match request {
             LimitedRequestV1::Reset {

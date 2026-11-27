@@ -3819,7 +3819,7 @@ pub fn blue_suns_twilight() -> EffectOp {
 
 /// "Target creature with mana value X or less": Blue Sun's Twilight, and
 /// Dominate in eternal builds (wave P3c).
-fn x_bounded_creature_target(def: &CardDef) -> bool {
+pub(crate) fn x_bounded_creature_target(def: &CardDef) -> bool {
     (def.cost.x_count != 0 && def.name == BLUE_SUNS_TWILIGHT)
         || (cfg!(feature = "eternal-fixtures")
             && crate::eternal_premodern_p3c_v1::statics::x_bounded_creature_target(def))
@@ -5961,18 +5961,38 @@ pub(crate) fn had_card_def(
     })
 }
 
-/// Whether any object (optionally excluding `exclude_object`) ever had
-/// `card_def` recorded in `copied_card_defs`.
-pub(crate) fn any_copied_card_def(
+/// Whether `object`'s battlefield incarnation `zone_change_count` was ever any
+/// `card_def` matching `predicate` through a copy effect.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn had_card_def_matching(
     state: &GameState,
-    card_def: u16,
-    exclude_object: Option<ObjectId>,
+    object: ObjectId,
+    zone_change_count: u32,
+    mut predicate: impl FnMut(u16) -> bool,
 ) -> bool {
     state.standard_v1.as_ref().is_some_and(|standard| {
         standard
             .copied_card_defs
             .iter()
-            .any(|&(id, _, def)| Some(id) != exclude_object && def == card_def)
+            .any(|&(obj, zcc, def)| obj == object && zcc == zone_change_count && predicate(def))
+    })
+}
+
+/// First `card_def` recorded in `copied_card_defs` for `(object, zone_change_count)`
+/// where `f(card_def)` returns `Some(value)`.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn find_had_card_def<T>(
+    state: &GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+    mut f: impl FnMut(u16) -> Option<T>,
+) -> Option<T> {
+    state.standard_v1.as_ref().and_then(|standard| {
+        standard
+            .copied_card_defs
+            .iter()
+            .filter(|&&(obj, zcc, _)| obj == object && zcc == zone_change_count)
+            .find_map(|&(_, _, def)| f(def))
     })
 }
 

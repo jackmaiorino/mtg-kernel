@@ -288,13 +288,31 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
         let Some(sash) = state.objects.try_get(attached) else {
             continue;
         };
-        if sash.v4.attached_to == Some(host) && active_named(state, attached, LION_SASH) {
+        if sash.v4.attached_to == Some(host)
+            && active_named(state, attached, LION_SASH)
+            && !crate::engine::object_has_type(state, attached, CardType::Creature)
+            && crate::engine::has_effective_subtype(
+                state,
+                attached,
+                crate::card_def::Subtype::Equipment,
+            )
+        {
             let counters = i128::from(sash.counters.plus1_plus1.max(0));
             boost.0 += counters;
             boost.1 += counters;
         }
     }
     boost
+}
+
+/// CR 702.151a: recognize the supported reconfigure keyword by its unattach
+/// ability's program, including when that definition was copied.
+pub(crate) fn has_reconfigure(state: &GameState, object: ObjectId) -> bool {
+    crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+        && CARD_DEFS[usize::from(state.objects.get(object).card_def)]
+            .activated_abilities
+            .iter()
+            .any(|ability| (ability.effect)() == super::lion_sash_unattach())
 }
 
 /// Lion Sash's reconfigure: "While attached, this isn't a creature."

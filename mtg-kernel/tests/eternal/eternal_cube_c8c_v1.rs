@@ -17,7 +17,7 @@ use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::planeswalker_v1::loyalty;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectLinkV4, ObjectStateV4, Step, Target, Zone};
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -1604,6 +1604,859 @@ fn zirda_activated_ability_prevents_blocking_this_turn_only() {
 }
 
 // ---- Absorbing Man -------------------------------------------------------------
+
+fn copied_equipment() -> (GameState, ObjectId, ObjectId) {
+    let mut state = plains();
+    let copy = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+    let greaves = put(&mut state, P0, "Lightning Greaves", Zone::Battlefield);
+    let starting_turn = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > starting_turn
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(greaves))),
+            _ => None,
+        },
+    );
+    assert_eq!(state.objects.get(copy).card_def, id("Lightning Greaves"));
+    assert!(engine::object_has_type(&state, copy, CardType::Creature));
+    assert!(engine::has_effective_subtype(
+        &state,
+        copy,
+        Subtype::Equipment
+    ));
+    (state, copy, greaves)
+}
+
+#[test]
+fn equipment_creature_can_target_itself_with_equip_and_resolves_after_restore() {
+    let (mut state, copy, _) = copied_equipment();
+    put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    activate(&mut state, copy, 0, &[Target::Object(copy)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.stack[0].targets, [Target::Object(copy)]);
+    let snapshot = state.snapshot();
+    settled(&mut state);
+    assert_eq!(state.objects.get(copy).v4.attached_to, None);
+    assert!(state.objects.get(copy).attachments.is_empty());
+    let resolved = state.snapshot();
+
+    state.restore(&snapshot);
+    settled(&mut state);
+    assert_eq!(state.snapshot(), resolved);
+}
+
+#[test]
+fn equipment_creature_snapshot_rejects_a_forged_self_attachment() {
+    let (mut state, copy, _) = copied_equipment();
+    let live = state.objects.get_mut(copy);
+    live.v4.attached_to = Some(ObjectLinkV4 {
+        object: copy,
+        zone_change_count: live.zone_change_count,
+    });
+    live.attachments.push(copy);
+    let forged = state.snapshot();
+    state.restore(&forged);
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::Halted {
+            mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        } if source == copy
+    ));
+}
+
+#[test]
+fn equipment_creature_cannot_attach_to_another_creature_but_ordinary_equip_can() {
+    let (mut state, copy, greaves) = copied_equipment();
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    activate(&mut state, copy, 0, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(copy).v4.attached_to, None);
+    assert!(state.objects.get(host).attachments.is_empty());
+
+    activate(&mut state, greaves, 0, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(greaves)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host)
+    );
+    assert_eq!(state.objects.get(host).attachments, [greaves]);
+}
+
+#[test]
+fn equipment_creature_losing_equipment_subtype_in_response_cannot_attach() {
+    let (mut state, copy, _) = copied_equipment();
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let reconfiguration = put(&mut state, P1, "Swift Reconfiguration", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::W], 0);
+    activate(&mut state, copy, 0, &[Target::Object(host)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    if state.priority_player == P0 {
+        act(&mut state, Action::Pass);
+    }
+    assert_eq!(state.priority_player, P1);
+    cast(&mut state, reconfiguration, &[Target::Object(copy)]);
+    settled(&mut state);
+
+    assert!(engine::has_effective_subtype(
+        &state,
+        copy,
+        Subtype::Vehicle
+    ));
+    assert!(!engine::has_effective_subtype(
+        &state,
+        copy,
+        Subtype::Equipment
+    ));
+    assert_eq!(state.objects.get(copy).v4.attached_to, None);
+    assert!(state.objects.get(host).attachments.is_empty());
+}
+
+#[test]
+fn absorbing_man_reconfigure_lion_sash_attaches_and_detaches_on_copy_expiry() {
+    let mut state = plains();
+    let ab_man = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+    let sash = put(&mut state, P0, "Lion Sash", Zone::Battlefield);
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Graveyard);
+
+    let turn_start = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > turn_start
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(sash))),
+            _ => None,
+        },
+    );
+    assert_eq!(state.objects.get(ab_man).card_def, id("Lion Sash"));
+    assert!(engine::object_has_type(&state, ab_man, CardType::Creature));
+
+    // Exile a permanent card so the copied Lion Sash has a +1/+1 counter, then
+    // Reconfigure {2} onto Elvish Mystic (CR 702.151b).
+    pool(&mut state, P0, &[ManaColor::W], 2);
+    activate(&mut state, ab_man, 0, &[Target::Object(ring)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(ab_man).counters.plus1_plus1, 1);
+
+    activate(&mut state, ab_man, 1, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(ab_man)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host),
+        "copied Lion Sash attaches via Reconfigure (CR 702.151b)"
+    );
+    assert_eq!(state.objects.get(host).attachments, [ab_man]);
+    assert!(
+        !engine::object_has_type(&state, ab_man, CardType::Creature),
+        "attached Reconfigure Equipment is not a creature"
+    );
+    assert_eq!(power_toughness(&state, host), (2, 2));
+
+    // Advance to P0's next Upkeep: Absorbing Man's copy expires in Untap,
+    // restoring it to a plain Human Villain creature, and CR 704.5n/704.5p
+    // SBAs detach it before P0 receives priority in Upkeep.
+    let copied_turn = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Upkeep
+                && s.turn > copied_turn
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, _| None,
+    );
+    assert_eq!(state.objects.get(ab_man).card_def, id("Absorbing Man"));
+    assert!(engine::object_has_type(&state, ab_man, CardType::Creature));
+    assert!(!engine::has_effective_subtype(
+        &state,
+        ab_man,
+        Subtype::Equipment
+    ));
+    assert_eq!(
+        state.objects.get(ab_man).v4.attached_to,
+        None,
+        "CR 704.5p SBA must detach reverted Absorbing Man"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert_eq!(power_toughness(&state, host), (1, 1));
+}
+
+#[test]
+fn attached_equipment_becoming_creature_or_losing_equipment_subtype_detaches_via_sba() {
+    // 1. Karn, the Great Creator (+1) animates attached Lightning Greaves -> SBA detaches.
+    let mut state = plains();
+    let greaves = put(&mut state, P0, "Lightning Greaves", Zone::Battlefield);
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    activate(&mut state, greaves, 0, &[Target::Object(host)]);
+    settled(&mut state);
+    assert!(keyword(&state, host, Keywords::SHROUD));
+    assert!(keyword(&state, host, Keywords::HASTE));
+    pool(&mut state, P0, &[], 4);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, karn, 0, &[Target::Object(greaves)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, greaves, CardType::Creature));
+    assert_eq!(
+        state.objects.get(greaves).v4.attached_to,
+        None,
+        "Karn-animated Equipment must detach via CR 704.5p SBA"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert!(!keyword(&state, host, Keywords::SHROUD));
+    assert!(!keyword(&state, host, Keywords::HASTE));
+
+    // 2. Oko, Thief of Crowns (+1) turns attached Lightning Greaves into a 3/3 Elk -> SBA detaches.
+    let mut state = plains();
+    let greaves = put(&mut state, P0, "Lightning Greaves", Zone::Battlefield);
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let oko = put(&mut state, P0, "Oko, Thief of Crowns", Zone::Hand);
+    activate(&mut state, greaves, 0, &[Target::Object(host)]);
+    settled(&mut state);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::U], 1);
+    cast(&mut state, oko, &[]);
+    settled(&mut state);
+    activate(&mut state, oko, 1, &[Target::Object(greaves)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, greaves, CardType::Creature));
+    assert_eq!(
+        state.objects.get(greaves).v4.attached_to,
+        None,
+        "Oko-Elk'd Equipment must detach via CR 704.5p SBA"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert!(!keyword(&state, host, Keywords::SHROUD));
+
+    // 3. Attached Lightning Greaves losing Equipment subtype (Swift Reconfiguration)
+    //    while remaining a noncreature Vehicle -> CR 704.5p SBA detaches it.
+    let mut state = plains();
+    let greaves = put(&mut state, P0, "Lightning Greaves", Zone::Battlefield);
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    activate(&mut state, greaves, 0, &[Target::Object(host)]);
+    settled(&mut state);
+    assert!(keyword(&state, host, Keywords::SHROUD));
+    let reconfig = put(&mut state, P0, "Swift Reconfiguration", Zone::Battlefield);
+    let greaves_zcc = state.objects.get(greaves).zone_change_count;
+    state.objects.get_mut(reconfig).v4.attached_to = Some(ObjectLinkV4 {
+        object: greaves,
+        zone_change_count: greaves_zcc,
+    });
+    state.objects.get_mut(greaves).attachments.push(reconfig);
+    assert!(!engine::object_has_type(
+        &state,
+        greaves,
+        CardType::Creature
+    ));
+    assert!(!engine::has_effective_subtype(
+        &state,
+        greaves,
+        Subtype::Equipment
+    ));
+    // Defense in depth: even before SBAs run, non-Equipment grants no Shroud.
+    assert!(!keyword(&state, host, Keywords::SHROUD));
+    // Trigger an SBA checkpoint by resolving an unrelated event.
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(bolt, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(greaves).v4.attached_to,
+        None,
+        "Equipment losing Equipment subtype must detach via CR 704.5p SBA"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert!(!keyword(&state, host, Keywords::SHROUD));
+
+    // 4. Unable to Scream attached to an attached Lion Sash -> becomes a 0/2 Toy
+    //    creature without Reconfigure -> CR 704.5p SBA detaches it.
+    let mut state = plains();
+    let sash = put(&mut state, P0, "Lion Sash", Zone::Battlefield);
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Graveyard);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 2);
+    activate(&mut state, sash, 0, &[Target::Object(ring)]);
+    settled(&mut state);
+    activate(&mut state, sash, 1, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, host), (2, 2));
+    assert!(!engine::object_has_type(&state, sash, CardType::Creature));
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Battlefield);
+    let sash_zcc = state.objects.get(sash).zone_change_count;
+    state.objects.get_mut(scream).v4.attached_to = Some(ObjectLinkV4 {
+        object: sash,
+        zone_change_count: sash_zcc,
+    });
+    state.objects.get_mut(sash).attachments.push(scream);
+    assert!(engine::object_has_type(&state, sash, CardType::Creature));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(bolt, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(sash).v4.attached_to,
+        None,
+        "Unable to Scream on attached Lion Sash must detach via CR 704.5p SBA"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert_eq!(power_toughness(&state, host), (1, 1));
+}
+
+#[test]
+fn forged_non_self_illegal_equipment_attachment_snapshot_is_refused() {
+    // 1. Forged snapshot attaching a non-Reconfigure creature Equipment
+    //    (Absorbing Man copying Lightning Greaves) to Elvish Mystic.
+    let (mut state, copy, _) = copied_equipment();
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let host_zcc = state.objects.get(host).zone_change_count;
+    state.objects.get_mut(copy).v4.attached_to = Some(ObjectLinkV4 {
+        object: host,
+        zone_change_count: host_zcc,
+    });
+    state.objects.get_mut(host).attachments.push(copy);
+
+    // Defense in depth: even before advancing, illegal creature Equipment
+    // must not grant Equipment buffs.
+    assert!(
+        !keyword(&state, host, Keywords::SHROUD),
+        "illegal creature Equipment must not grant Shroud"
+    );
+    assert!(
+        !keyword(&state, host, Keywords::HASTE),
+        "illegal creature Equipment must not grant Haste"
+    );
+
+    let forged = state.snapshot();
+    state.restore(&forged);
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::Halted {
+            mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        } if source == copy
+    ));
+
+    // 2. Forged snapshot attaching a plain creature (non-Equipment) to another creature.
+    let mut state = plains();
+    let a = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let b = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let b_zcc = state.objects.get(b).zone_change_count;
+    state.objects.get_mut(a).v4.attached_to = Some(ObjectLinkV4 {
+        object: b,
+        zone_change_count: b_zcc,
+    });
+    state.objects.get_mut(b).attachments.push(a);
+    let forged = state.snapshot();
+    state.restore(&forged);
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::Halted {
+            mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        } if source == a
+    ));
+
+    // 3. Forged two-object attachment cycle is rejected by validate_attachment_relations.
+    let mut state = plains();
+    let eq_a = put(&mut state, P0, "Lightning Greaves", Zone::Battlefield);
+    let eq_b = put(&mut state, P0, "Umezawa's Jitte", Zone::Battlefield);
+    let a_zcc = state.objects.get(eq_a).zone_change_count;
+    let b_zcc = state.objects.get(eq_b).zone_change_count;
+    state.objects.get_mut(eq_a).v4.attached_to = Some(ObjectLinkV4 {
+        object: eq_b,
+        zone_change_count: b_zcc,
+    });
+    state.objects.get_mut(eq_b).attachments.push(eq_a);
+    state.objects.get_mut(eq_b).v4.attached_to = Some(ObjectLinkV4 {
+        object: eq_a,
+        zone_change_count: a_zcc,
+    });
+    state.objects.get_mut(eq_a).attachments.push(eq_b);
+    assert!(state.validate_attachment_relations().is_err());
+}
+
+#[test]
+fn impossible_equip_preserves_existing_attachment_cr_701_3b() {
+    let mut state = plains();
+    let jitte = put(&mut state, P0, "Umezawa's Jitte", Zone::Battlefield);
+    let host_a = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let host_b = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let giver = put(&mut state, P0, "Giver of Runes", Zone::Battlefield);
+
+    // Attach Jitte to host_a (Equip {2} is ability index 3).
+    pool(&mut state, P0, &[], 6);
+    activate(&mut state, jitte, 3, &[Target::Object(host_a)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(jitte)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host_a)
+    );
+
+    // Activate Equip targeting host_b; in response Giver of Runes gives host_b
+    // protection from colorless so attaching to host_b becomes impossible.
+    // Under CR 701.3b, Jitte stays attached to host_a.
+    activate(&mut state, jitte, 3, &[Target::Object(host_b)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    activate(&mut state, giver, 0, &[Target::Object(host_b)]);
+    settle_option(&mut state, 5); // colorless
+    assert_eq!(
+        state
+            .objects
+            .get(jitte)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host_a),
+        "CR 701.3b: impossible equip must preserve existing attachment"
+    );
+    assert_eq!(state.objects.get(host_a).attachments, [jitte]);
+    assert!(state.objects.get(host_b).attachments.is_empty());
+
+    // Untargeted attach with an existing attachment (CR 701.3b): P1's Umezawa's
+    // Jitte is attached to P1's Elvish Mystic. P0 casts kicked Thieving Skydiver
+    // targeting Jitte, then gives Skydiver protection from colorless while
+    // SkydiverEtbV1 is on the stack. SkydiverEtbV1's target (Jitte) stays legal,
+    // P0 gains control of Jitte, can_attach_equipment_to_host rejects Skydiver,
+    // and Jitte remains attached to P1's Elvish Mystic.
+    let mut state = plains();
+    let opp_jitte = put(&mut state, P1, "Umezawa's Jitte", Zone::Battlefield);
+    let opp_host = put(&mut state, P1, "Elvish Mystic", Zone::Battlefield);
+    state.active_player = P1;
+    state.priority_player = P1;
+    pool(&mut state, P1, &[], 2);
+    activate(&mut state, opp_jitte, 3, &[Target::Object(opp_host)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(opp_jitte)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(opp_host)
+    );
+    state.active_player = P0;
+    state.priority_player = P0;
+    let giver = put(&mut state, P0, "Giver of Runes", Zone::Battlefield);
+    let skydiver = put(&mut state, P0, "Thieving Skydiver", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, skydiver, &[]);
+    run_until(
+        &mut state,
+        |s| zone(s, skydiver) == Zone::Battlefield && !s.stack.is_empty(),
+        |_, decision| match decision {
+            Decision::ChooseKicker { .. } => Some(Action::ChooseKicker(true)),
+            Decision::ChooseEffectOption { .. } => Some(Action::ChooseEffectOption(1)),
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(opp_jitte))),
+            _ => None,
+        },
+    );
+    activate(&mut state, giver, 0, &[Target::Object(skydiver)]);
+    settle_option(&mut state, 5); // protection from colorless
+    assert_eq!(state.objects.get(opp_jitte).controller, P0);
+    assert_eq!(
+        state
+            .objects
+            .get(opp_jitte)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(opp_host),
+        "CR 701.3b: impossible untargeted Skydiver attach must preserve Jitte's existing attachment"
+    );
+    assert_eq!(state.objects.get(opp_host).attachments, [opp_jitte]);
+    assert!(state.objects.get(skydiver).attachments.is_empty());
+}
+
+#[test]
+fn karn_animated_attached_lion_sash_and_copy_detach_and_lose_buff() {
+    // 1. Plain Lion Sash with a +1/+1 counter attached via Reconfigure to Elvish
+    //    Mystic, then animated by Karn +1: CR 613.4/613.7 + 704.5n must make it
+    //    a creature, unattach it, and remove the +1/+1 host buff.
+    let mut state = plains();
+    let sash = put(&mut state, P0, "Lion Sash", Zone::Battlefield);
+    state.objects.get_mut(sash).counters.plus1_plus1 = 1;
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    pool(&mut state, P0, &[], 6);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, sash, 1, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(sash)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host)
+    );
+    assert_eq!(
+        (
+            engine::effective_power(&state, host),
+            engine::effective_toughness(&state, host),
+        ),
+        (2, 2)
+    );
+    activate(&mut state, karn, 0, &[Target::Object(sash)]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(sash).v4.attached_to,
+        None,
+        "CR 704.5n: Karn-animated attached Lion Sash must detach"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert_eq!(
+        (
+            engine::effective_power(&state, host),
+            engine::effective_toughness(&state, host),
+        ),
+        (1, 1),
+        "host must lose Lion Sash's +1/+1 buff after Karn detaches it"
+    );
+
+    // 2. Absorbing Man copying Lion Sash (with a +1/+1 counter) attached via
+    //    Reconfigure, then animated by Karn +1: must likewise detach and drop buff.
+    let mut state = plains();
+    let ab_man = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+    state.objects.get_mut(ab_man).counters.plus1_plus1 = 1;
+    let bf_sash = put(&mut state, P0, "Lion Sash", Zone::Battlefield);
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let turn_start = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > turn_start
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(bf_sash))),
+            _ => None,
+        },
+    );
+    assert_eq!(state.objects.get(ab_man).card_def, id("Lion Sash"));
+    pool(&mut state, P0, &[], 6);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, ab_man, 1, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(ab_man)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host)
+    );
+    assert_eq!(power_toughness(&state, host), (2, 2));
+    activate(&mut state, karn, 0, &[Target::Object(ab_man)]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(ab_man).v4.attached_to,
+        None,
+        "CR 704.5n: Karn-animated Absorbing Man copying attached Lion Sash must detach"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+    assert_eq!(power_toughness(&state, host), (1, 1));
+
+    // 3. Liquimetal Coating + Karn +1 animating Lurking Skirge, followed by an
+    //    opponent's creature dying: Skirge's later type-setting effect makes it
+    //    a creature and nothing else (no longer an Artifact or Enchantment).
+    let mut state = plains();
+    let skirge = put(&mut state, P0, "Lurking Skirge", Zone::Battlefield);
+    let coating = put(&mut state, P0, "Liquimetal Coating", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let victim = put(&mut state, P1, "Elvish Mystic", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::R], 4);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, coating, 0, &[Target::Object(skirge)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, skirge, CardType::Artifact));
+    activate(&mut state, karn, 0, &[Target::Object(skirge)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, skirge, CardType::Creature));
+    assert!(engine::object_has_type(&state, skirge, CardType::Artifact));
+    cast(&mut state, bolt, &[Target::Object(victim)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, skirge, CardType::Creature));
+    assert!(
+        !engine::object_has_type(&state, skirge, CardType::Artifact),
+        "Lurking Skirge's later type-setting override must clear Artifact"
+    );
+    assert!(
+        !engine::object_has_type(&state, skirge, CardType::Enchantment),
+        "Lurking Skirge's later type-setting override must clear Enchantment"
+    );
+}
+
+#[test]
+fn create_token_and_attach_source_respects_equipment_legality() {
+    // 1. Karn-animated Cori-Steel Cutter triggers Flurry (CreateTokenAndAttachSource):
+    //    creates the 1/1 Monk token without attaching the creature Equipment.
+    let mut state = plains();
+    let cutter = put(&mut state, P0, "Cori-Steel Cutter", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 4);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, karn, 0, &[Target::Object(cutter)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, cutter, CardType::Creature));
+
+    // Second spell this turn triggers Cori-Steel Cutter's Flurry; choose
+    // option 0 ("create a 1/1 Monk and attach").
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    settle_option(&mut state, 0);
+    let monks = named(&state, P0, "Monk Token");
+    assert_eq!(monks.len(), 1, "Flurry still creates the 1/1 Monk token");
+    assert_eq!(
+        state.objects.get(cutter).v4.attached_to,
+        None,
+        "creature Cori-Steel Cutter must not attach to the Monk token"
+    );
+    assert!(state.objects.get(monks[0]).attachments.is_empty());
+
+    // 2. Karn-animated Cori-Steel Cutter triggers Flurry, and in response P1
+    //    flashes Swift Reconfiguration onto it (turning it into a noncreature
+    //    Vehicle without Subtype::Equipment): creates the 1/1 Monk token
+    //    without attaching the non-Equipment Vehicle.
+    let mut state = plains();
+    let cutter = put(&mut state, P0, "Cori-Steel Cutter", Zone::Battlefield);
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let reconfig = put(&mut state, P1, "Swift Reconfiguration", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 4);
+    pool(&mut state, P1, &[ManaColor::W], 0);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, karn, 0, &[Target::Object(cutter)]);
+    settled(&mut state);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    if state.priority_player == P0 {
+        act(&mut state, Action::Pass);
+    }
+    assert_eq!(state.priority_player, P1);
+    cast(&mut state, reconfig, &[Target::Object(cutter)]);
+    settle_option(&mut state, 0);
+    let monks = named(&state, P0, "Monk Token");
+    assert_eq!(monks.len(), 1, "Flurry still creates the 1/1 Monk token");
+    assert!(!engine::object_has_type(&state, cutter, CardType::Creature));
+    assert!(!engine::has_effective_subtype(
+        &state,
+        cutter,
+        Subtype::Equipment
+    ));
+    assert_eq!(
+        state.objects.get(cutter).v4.attached_to,
+        None,
+        "Vehicle Cori-Steel Cutter must not attach to the Monk token"
+    );
+    assert!(state.objects.get(monks[0]).attachments.is_empty());
+}
+
+#[test]
+fn formalwear_iron_man_skydiver_and_sword_return_enforce_equipment_legality() {
+    // 1. Pre-War Formalwear (FormalwearV1) returning Tourach, Dread Cantor
+    //    (MV 2, protection from white): returns Tourach without attaching
+    //    white Pre-War Formalwear and without halting (CR 702.16d / 701.3b).
+    let mut state = plains();
+    let tourach = put(&mut state, P0, "Tourach, Dread Cantor", Zone::Graveyard);
+    let formalwear = put(&mut state, P0, "Pre-War Formalwear", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 2);
+    cast(&mut state, formalwear, &[]);
+    settle_choosing(&mut state, tourach);
+    assert_eq!(zone(&state, tourach), Zone::Battlefield);
+    assert_eq!(
+        state.objects.get(formalwear).v4.attached_to,
+        None,
+        "white Pre-War Formalwear must not attach to protection-from-white Tourach"
+    );
+    assert!(state.objects.get(tourach).attachments.is_empty());
+
+    // 2. Iron Man Armor (IronManEquipV1) animates, activates Equip {2}, and in
+    //    response P1 flashes Swift Reconfiguration onto it: becomes a noncreature
+    //    Vehicle without Subtype::Equipment and must not attach.
+    let mut state = plains();
+    let armor = put(&mut state, P0, "Iron Man Armor", Zone::Battlefield);
+    let host = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let reconfig = put(&mut state, P1, "Swift Reconfiguration", Zone::Hand);
+    pool(&mut state, P0, &[], 4);
+    pool(&mut state, P1, &[ManaColor::W], 0);
+    activate(&mut state, armor, 0, &[]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, armor, CardType::Creature));
+    activate(&mut state, armor, 1, &[Target::Object(host)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    if state.priority_player == P0 {
+        act(&mut state, Action::Pass);
+    }
+    assert_eq!(state.priority_player, P1);
+    cast(&mut state, reconfig, &[Target::Object(armor)]);
+    settled(&mut state);
+    assert!(!engine::object_has_type(&state, armor, CardType::Creature));
+    assert!(!engine::has_effective_subtype(
+        &state,
+        armor,
+        Subtype::Equipment
+    ));
+    assert_eq!(
+        state.objects.get(armor).v4.attached_to,
+        None,
+        "Vehicle Iron Man Armor must not attach via IronManEquipV1"
+    );
+    assert!(state.objects.get(host).attachments.is_empty());
+
+    // 3a. Thieving Skydiver (SkydiverEtbV1) stealing Lion Sash attaches it per
+    //     CR 702.151b, causing Lion Sash to stop being a creature while attached.
+    let mut state = plains();
+    let opp_sash = put(&mut state, P1, "Lion Sash", Zone::Battlefield);
+    let skydiver = put(&mut state, P0, "Thieving Skydiver", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, skydiver, &[]);
+    assert!(matches!(next(&mut state), Decision::ChooseKicker { .. }));
+    act(&mut state, Action::ChooseKicker(true));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { .. }
+    ));
+    act(&mut state, Action::ChooseEffectOption(1)); // X = 2 (MV of Lion Sash)
+    settle_choosing(&mut state, opp_sash);
+    assert_eq!(state.objects.get(opp_sash).controller, P0);
+    assert_eq!(
+        state
+            .objects
+            .get(opp_sash)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(skydiver),
+        "CR 702.151b: Thieving Skydiver stealing Lion Sash must attach it"
+    );
+    assert_eq!(state.objects.get(skydiver).attachments, [opp_sash]);
+    assert!(!engine::object_has_type(
+        &state,
+        opp_sash,
+        CardType::Creature
+    ));
+
+    // 3b. Thieving Skydiver stealing Lion Sash that lost Equipment via Swift
+    //     Reconfiguration in response gains control without attaching it.
+    let mut state = plains();
+    let opp_sash = put(&mut state, P1, "Lion Sash", Zone::Battlefield);
+    let skydiver = put(&mut state, P0, "Thieving Skydiver", Zone::Hand);
+    let reconfig = put(&mut state, P1, "Swift Reconfiguration", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    pool(&mut state, P1, &[ManaColor::W], 0);
+    cast(&mut state, skydiver, &[]);
+    run_until(
+        &mut state,
+        |s| zone(s, skydiver) == Zone::Battlefield && !s.stack.is_empty(),
+        |_, decision| match decision {
+            Decision::ChooseKicker { .. } => Some(Action::ChooseKicker(true)),
+            Decision::ChooseEffectOption { .. } => Some(Action::ChooseEffectOption(1)),
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(opp_sash))),
+            _ => None,
+        },
+    );
+    if state.priority_player == P0 {
+        act(&mut state, Action::Pass);
+    }
+    assert_eq!(state.priority_player, P1);
+    cast(&mut state, reconfig, &[Target::Object(opp_sash)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(opp_sash).controller, P0);
+    assert!(!engine::has_effective_subtype(
+        &state,
+        opp_sash,
+        Subtype::Equipment
+    ));
+    assert_eq!(
+        state.objects.get(opp_sash).v4.attached_to,
+        None,
+        "non-Equipment Vehicle Lion Sash must not attach to Thieving Skydiver"
+    );
+    assert!(state.objects.get(skydiver).attachments.is_empty());
+
+    // 4. Sword of the Meek (SwordReturnV1) returning for a 1/1 creature that
+    //    gained protection from colorless in response stays on battlefield unattached.
+    let mut state = plains();
+    let sword = put(&mut state, P0, "Sword of the Meek", Zone::Graveyard);
+    let giver = put(&mut state, P0, "Giver of Runes", Zone::Battlefield);
+    let mystic = put(&mut state, P0, "Elvish Mystic", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast(&mut state, mystic, &[]);
+    // Resolve Elvish Mystic so Sword of the Meek's trigger is on the stack.
+    run_until(
+        &mut state,
+        |s| zone(s, mystic) == Zone::Battlefield && !s.stack.is_empty(),
+        |_, _| None,
+    );
+    activate(&mut state, giver, 0, &[Target::Object(mystic)]);
+    // Answer Giver of Runes with colorless (5), then Sword of the Meek with return (1).
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption {
+            option_count: 6, ..
+        } => Action::ChooseEffectOption(5),
+        Decision::ChooseEffectOption {
+            option_count: 2, ..
+        } => Action::ChooseEffectOption(1),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, sword), Zone::Battlefield);
+    assert_eq!(
+        state.objects.get(sword).v4.attached_to,
+        None,
+        "Sword of the Meek must not attach to a protection-from-colorless creature"
+    );
+    assert!(state.objects.get(mystic).attachments.is_empty());
+}
 
 #[test]
 fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts() {

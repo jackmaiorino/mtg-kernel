@@ -795,6 +795,7 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
 
     match kind {
         EntryCopyKind::PhantasmalImage => {
+            let chosen_link = live_link(state, chosen);
             let Some(values) = capture_battlefield_copiable_values(state, chosen) else {
                 return Ok(true);
             };
@@ -812,6 +813,14 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
                 host_link.zone_change_count,
                 &[own_def, values.card_def],
             );
+            if let Some(applied) = capture_battlefield_copiable_values(state, entering) {
+                crate::copy_entry_v1::record_entry_copy_applied(
+                    state,
+                    host_link,
+                    chosen_link,
+                    applied,
+                );
+            }
             apply_copied_entry_effects(state, entering, values.card_def, values.face_index);
         }
         EntryCopyKind::SuperiorSpiderMan => {
@@ -831,6 +840,14 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
                 host_link.zone_change_count,
                 &[own_def, copied_def],
             );
+            if let Some(applied) = capture_battlefield_copiable_values(state, entering) {
+                crate::copy_entry_v1::record_entry_copy_applied(
+                    state,
+                    host_link,
+                    chosen_link,
+                    applied,
+                );
+            }
             apply_copied_entry_effects(state, entering, copied_def, 0);
             // Reflexive trigger: "When you do, exile that card."
             let controller = state.objects.get(entering).controller;
@@ -1363,8 +1380,12 @@ fn create_token_copy(
     state: &mut GameState,
     source: ObjectId,
     controller: PlayerId,
+    producer: AbilitySourceContractV4,
+    donor: ObjectLinkV4,
     values: CopiableValuesV1,
+    stack_item: Option<crate::ids::StackItemId>,
 ) -> bool {
+    let fallback_values = values.clone();
     let CopiableValuesV1 {
         card_def,
         face_index,
@@ -1411,9 +1432,37 @@ fn create_token_copy(
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal.c8b.pending_token_mods = None;
     }
-    state.engine.event_history[history_before..].iter().any(
-        |ev| matches!(ev, CommittedEvent::CreateToken { controller: c, .. } if *c == controller),
-    )
+    let created: Vec<(usize, ObjectId)> = state.engine.event_history[history_before..]
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, ev)| match ev {
+            CommittedEvent::CreateToken {
+                object,
+                controller: c,
+                ..
+            } if *c == controller => Some((history_before + offset, *object)),
+            _ => None,
+        })
+        .collect();
+    if let Some(stack_item) = stack_item {
+        for &(create_at, object) in &created {
+            let applied = capture_battlefield_copiable_values(state, object)
+                .unwrap_or_else(|| fallback_values.clone());
+            crate::copy_entry_v1::record_token_copy_created(
+                state,
+                ObjectLinkV4 {
+                    object,
+                    zone_change_count: 0,
+                },
+                create_at,
+                producer,
+                donor,
+                applied,
+                stack_item,
+            );
+        }
+    }
+    !created.is_empty()
 }
 
 // ---- Resolution helpers -------------------------------------------------------------
@@ -1459,6 +1508,7 @@ fn resolve_saheeli_copy(ctx: &ExecCtx, state: &mut GameState) {
         return;
     };
     let host_link = live_link(state, target_artifact);
+    let model_link = live_link(state, copied_perm);
     let already_saved = read_state(state)
         .is_some_and(|c8b| c8b.saheeli_copies.iter().any(|copy| copy.host == host_link));
     let own_def = state.objects.get(target_artifact).card_def;
@@ -1498,6 +1548,19 @@ fn resolve_saheeli_copy(ctx: &ExecCtx, state: &mut GameState) {
         host_link.zone_change_count,
         &[own_def, values.card_def],
     );
+    if let (Some(stack_item), Some(applied)) = (
+        ctx.stack_item_id,
+        capture_battlefield_copiable_values(state, target_artifact),
+    ) {
+        crate::copy_entry_v1::record_saheeli_applied(
+            state,
+            source_contract,
+            stack_item,
+            host_link,
+            model_link,
+            applied,
+        );
+    }
 }
 
 fn resolve_vaultborn_death_copy(ctx: &ExecCtx, state: &mut GameState) {
@@ -1537,6 +1600,8 @@ fn resolve_vaultborn_death_copy(ctx: &ExecCtx, state: &mut GameState) {
         state,
         ctx.source,
         ctx.controller,
+        contract,
+        link,
         CopiableValuesV1 {
             card_def,
             face_index,
@@ -1545,6 +1610,7 @@ fn resolve_vaultborn_death_copy(ctx: &ExecCtx, state: &mut GameState) {
             copied_nightmare_v1: copied_nightmare,
             prototyped: false,
         },
+        ctx.stack_item_id,
     );
 }
 
@@ -1574,7 +1640,18 @@ pub(crate) fn execute(op: &C8bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let paid = crate::engine::pay_effect_mana(ctx.controller, &[ManaColor::G], 1, state);
             let created = if paid && link_live_in(state, *host, Zone::Battlefield) {
                 if let Some(values) = capture_battlefield_copiable_values(state, host.object) {
-                    create_token_copy(state, ctx.source, ctx.controller, values)
+                    let producer = ctx
+                        .ability_source_contract
+                        .unwrap_or_else(|| AbilitySourceContractV4::capture(state, ctx.source));
+                    create_token_copy(
+                        state,
+                        ctx.source,
+                        ctx.controller,
+                        producer,
+                        *host,
+                        values,
+                        ctx.stack_item_id,
+                    )
                 } else {
                     false
                 }

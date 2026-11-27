@@ -464,7 +464,7 @@ fn resume_cli_accepts_lead_entry_and_refuses_merge_introduction() {
 
 impl PilotProvider for DyingWorker {
     fn uniform_pilot(&self) -> Arc<dyn GamePilot + Sync> {
-        let mut pilot = worker::SupervisedUniformPilot::new(Duration::from_secs(600));
+        let mut pilot = worker::SupervisedUniformPilot::new(Duration::from_secs(600), false);
         pilot.worker_command = Some(|| {
             let mut cmd = Command::new(if cfg!(windows) { "python" } else { "python3" });
             cmd.args(["-c", "import sys; sys.stdin.readline(); sys.exit(37)"]);
@@ -754,4 +754,157 @@ fn killed_launcher_refuses_reopen_without_resume() {
         serde_json::from_slice(&fs::read(root.0.join("b1/stops/stop-0000.json")).unwrap()).unwrap();
     assert_eq!(stop["kind"], "process_death");
     assert!(!root.0.join("b1/updates/update-0000").exists());
+}
+
+#[test]
+fn restart_run_ids_parse_and_prepare_after_stopped_b1() {
+    assert_eq!(parse_training_run("b1"), Some((Segment::BuilderOnly, 1)));
+    assert_eq!(parse_training_run("b2"), Some((Segment::BuilderOnly, 2)));
+    assert_eq!(parse_training_run("k1"), Some((Segment::PickPhase, 1)));
+    assert_eq!(parse_training_run("k2"), Some((Segment::PickPhase, 2)));
+    for bad in ["", "b", "k", "b0", "k0", "b01", "k02", "i1", "b-1", "x2"] {
+        assert_eq!(parse_training_run(bad), None, "{bad}");
+    }
+
+    // Prepare b1 first to produce the archived pinned initial checkpoint (state sha256 90cff6d7...).
+    let root = Scratch::new();
+    let (mut args, mut spec, _) = fixture(&root.0);
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+    assert!(launch(&args).unwrap());
+    let b1_init_path = root.0.join("b1/initial/checkpoint.json");
+    let b1_init_pin = pinned(&b1_init_path);
+    let b1_ckpt: Value = serde_json::from_slice(&fs::read(&b1_init_path).unwrap()).unwrap();
+    assert_eq!(
+        b1_ckpt["state_sha256"],
+        "90cff6d7f7c58ad606c71d14274457a2cbe2836e2113e192d8012eec9fd2016f"
+    );
+
+    let b1_run_pin = pinned(&root.0.join("b1/run.json"))["sha256"].clone();
+    let mut manifest = fs::read_to_string(root.0.join("manifest")).unwrap();
+    append_entry(
+        &mut manifest,
+        5,
+        "training_run",
+        json!({"run_id":"shakedown-pods/b1","tripwire":{"mode":"q9"},"files":{"b1/run.json":b1_run_pin}}),
+    );
+    append_entry(
+        &mut manifest,
+        6,
+        "stop",
+        json!({"run_id":"shakedown-pods/b1","stop_kind":"tripwire"}),
+    );
+    spec["manifest"] = write_pin(&root.0, "manifest", manifest.as_bytes());
+    spec["manifest_prefix_sha256"] = spec["manifest"]["sha256"].clone();
+
+    // Restart b2 refuses without pinned initial_checkpoint (D0.12 / D0.18).
+    args.run = "b2".into();
+    args.prepare = true;
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+    assert!(launch(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("initial_checkpoint"));
+    assert!(!root.0.join("b2").exists());
+
+    // Restart b2 refuses if initial_state_sha256 does not match the archived file's signed state digest.
+    let mut wrong_pin = spec.clone();
+    wrong_pin["initial_checkpoint"] = b1_init_pin.clone();
+    wrong_pin["initial_state_sha256"] = json!("0".repeat(64));
+    fs::write(&args.inputs, wrong_pin.to_string()).unwrap();
+    assert!(launch(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("state sha256 mismatch"));
+    assert!(!root.0.join("b2").exists());
+
+    // Restart b2 loads the archived b1 initial checkpoint under its signed digest 90cff6d7... with no seed draw.
+    spec["initial_checkpoint"] = b1_init_pin.clone();
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+    assert!(launch(&args).unwrap());
+    assert!(root.0.join("b2/run.json").is_file());
+    assert!(!root.0.join("b2/updates/update-0000").exists());
+    let b2_ckpt: Value =
+        serde_json::from_slice(&fs::read(root.0.join("b2/initial/checkpoint.json")).unwrap())
+            .unwrap();
+    assert_eq!(b2_ckpt["run"], "b2");
+    assert_eq!(b2_ckpt["model"], b1_ckpt["model"]);
+    let b2_run_doc: Value =
+        serde_json::from_slice(&fs::read(root.0.join("b2/run.json")).unwrap()).unwrap();
+    assert_eq!(
+        b2_run_doc["launch_pins"]["initial_state"],
+        "90cff6d7f7c58ad606c71d14274457a2cbe2836e2113e192d8012eec9fd2016f"
+    );
+    assert_eq!(
+        b2_run_doc["launch_pins"]["initial_checkpoint"],
+        b1_init_pin["sha256"]
+    );
+
+    // Authorizing b2 at seq 7 passes verify_run; tampering with b2/initial/checkpoint.json
+    // (e.g. empty league with a valid recomputed canonical state_sha256) must be refused by
+    // both b2 run (keeping b2's pre-entry-7 prefix) and k2 prepare, as well as direct driver open.
+    let b2_prefix = spec["manifest_prefix_sha256"].clone();
+    let b2_pin = pinned(&root.0.join("b2/run.json"))["sha256"].clone();
+    append_entry(
+        &mut manifest,
+        7,
+        "training_run",
+        json!({"run_id":"shakedown-pods/b2","tripwire":{"mode":"q9"},"files":{"b2/run.json":b2_pin}}),
+    );
+    spec["manifest"] = write_pin(&root.0, "manifest", manifest.as_bytes());
+
+    let b2_init_path = root.0.join("b2/initial/checkpoint.json");
+    let b2_init_raw = fs::read(&b2_init_path).unwrap();
+    let mut tampered: mtg_kernel::cube_training_driver_v1::Checkpoint =
+        serde_json::from_slice(&b2_init_raw).unwrap();
+    tampered.league.clear();
+    tampered.state_sha256.clear();
+    let mut pin_bytes = b"mtg-kernel-cube-checkpoint-state/v1\0".to_vec();
+    serde_json::to_writer(&mut pin_bytes, &tampered).unwrap();
+    tampered.state_sha256 = sha256_hex(&pin_bytes);
+    fs::write(&b2_init_path, serde_json::to_vec(&tampered).unwrap()).unwrap();
+
+    spec["manifest_prefix_sha256"] = b2_prefix;
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+    args.run = "b2".into();
+    args.prepare = false;
+    let err = launch(&args).unwrap_err().to_string();
+    assert!(err.contains("state sha256 mismatch"), "{err}");
+    assert!(!root.0.join("b2/updates/update-0000").exists());
+
+    // Direct driver open under lock also rejects the tampered staged checkpoint 0.
+    let inputs: Inputs = serde_json::from_slice(&fs::read(&args.inputs).unwrap()).unwrap();
+    let data = inputs.load().unwrap();
+    let cfg = inputs.config(&args, &data).unwrap();
+    let (src_ckpt, _, _) = load_checkpoint_read_only_bytes_v1(
+        &inputs.initial_checkpoint.as_ref().unwrap().read().unwrap(),
+        &data.table,
+    )
+    .unwrap();
+    let drv_err = TrainingDriver::open_from_initial_checkpoint(
+        cfg,
+        data.rows,
+        &src_ckpt,
+        &inputs.initial_state_sha256,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        drv_err.contains("expected canonical checkpoint 0"),
+        "{drv_err}"
+    );
+
+    spec["manifest_prefix_sha256"] = spec["manifest"]["sha256"].clone();
+    fs::write(&args.inputs, spec.to_string()).unwrap();
+    args.run = "k2".into();
+    args.prepare = true;
+    let err = launch(&args).unwrap_err().to_string();
+    assert!(err.contains("state sha256 mismatch"), "{err}");
+    assert!(!root.0.join("k2/run.json").exists());
+
+    // Restore valid staged b2 checkpoint 0; k2 prepare now rejects only because b2 is incomplete.
+    fs::write(&b2_init_path, &b2_init_raw).unwrap();
+    let err = launch(&args).unwrap_err().to_string();
+    assert!(err.contains("completed builder segment"), "{err}");
+    assert!(!root.0.join("k2/run.json").exists());
 }

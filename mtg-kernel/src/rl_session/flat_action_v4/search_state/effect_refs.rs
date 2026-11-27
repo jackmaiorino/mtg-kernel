@@ -1935,6 +1935,8 @@ fn conflicts_in_scope(
             | FiendArtisanSearchStartedV1 { .. }
             | FiendArtisanSearchFinishedV1 { .. }
             | FiendArtisanConsumerReceiptV1 { .. }
+            | CastLifeXPaidV1 { .. }
+            | CopyEntryProvenanceV1 { .. }
             | SpellCopyCostPaidV1 { .. } => true,
             DrakeJournalV1 { .. }
             | DrakeHistoryRefV1 { .. }

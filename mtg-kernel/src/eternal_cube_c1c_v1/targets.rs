@@ -199,11 +199,8 @@ pub(crate) fn legal_targets(
             // being cast, no more picks than the caster has life (the life
             // is paid as the cast completes, so a spell on the stack is
             // checked against no limit), and a creature may be picked again.
-            let life = if super::covenant_cast_in_progress(state, controller) {
-                usize::try_from(state.players[controller.index()].life.max(0)).unwrap_or(usize::MAX)
-            } else {
-                usize::MAX
-            };
+            let life =
+                super::pending_division_life(state, controller).map_or(usize::MAX, usize::from);
             return Some(
                 if prefix.len() >= life.min(usize::from(MAX_COVENANT_PICKS)) {
                     Vec::new()

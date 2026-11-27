@@ -1,7 +1,7 @@
 use mtg_kernel::cube_draft_v1::{game_decision_counter, GameCaps, GameEnd};
 use mtg_kernel::cube_pod_runner_v1::watchdog_game_end;
 use mtg_kernel::cube_seat_v1::{
-    canonical_deck, AttemptOutcome, AttemptSpec, GamePilot, UniformPilot,
+    canonical_deck, AttemptOutcome, AttemptSpec, GamePilot, TypedUniformPilot, UniformPilot,
 };
 use mtg_kernel::cube_worker_liveness_v1::{
     check_watchdog, with_heartbeat, WorkerProgress, HEARTBEAT_INTERVAL,
@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use super::Fallible;
 
 pub(super) const FLAG: &str = "--attempt-worker";
+pub(super) const TYPED_FLAG: &str = "--typed-attempt-worker";
 const POLL: Duration = Duration::from_millis(250);
 const STACK_BYTES: usize = 64 << 20;
 static NEXT_WORKER: AtomicU64 = AtomicU64::new(0);
@@ -55,7 +56,12 @@ impl Reply {
     }
 }
 
-fn worker_loop(progress_path: &Path, interval: Duration) -> Fallible<()> {
+fn worker_loop(progress_path: &Path, interval: Duration, typed: bool) -> Fallible<()> {
+    let pilot: &dyn GamePilot = if typed {
+        &TypedUniformPilot
+    } else {
+        &UniformPilot
+    };
     let (input, requests) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
         for line in io::stdin().lock().lines() {
@@ -76,7 +82,7 @@ fn worker_loop(progress_path: &Path, interval: Duration) -> Fallible<()> {
                 serde_json::from_str(&line).map_err(|error| error.to_string())?;
             progress.begin(request.id);
             let decks = request.cards.each_ref().map(|cards| canonical_deck(cards));
-            let outcome = UniformPilot.play(
+            let outcome = pilot.play(
                 &AttemptSpec {
                     decks: [&decks[0], &decks[1]],
                     seats: request.seats,
@@ -102,10 +108,10 @@ fn worker_loop(progress_path: &Path, interval: Duration) -> Fallible<()> {
     })
 }
 
-pub(super) fn run_worker(path: PathBuf, interval: Duration) -> Fallible<()> {
+pub(super) fn run_worker(path: PathBuf, interval: Duration, typed: bool) -> Fallible<()> {
     std::thread::Builder::new()
         .stack_size(STACK_BYTES)
-        .spawn(move || worker_loop(&path, interval))
+        .spawn(move || worker_loop(&path, interval, typed))
         .map_err(|error| error.to_string())?
         .join()
         .map_err(|_| "attempt worker panicked".to_owned())?
@@ -117,10 +123,11 @@ struct AttemptWorker {
     replies: Receiver<Fallible<Reply>>,
     directory: PathBuf,
     next_id: u64,
+    typed: bool,
 }
 
 impl AttemptWorker {
-    fn launch(limit: Duration, mut command: Command) -> io::Result<Self> {
+    fn launch(limit: Duration, mut command: Command, typed: bool) -> io::Result<Self> {
         let directory = loop {
             let index = NEXT_WORKER.fetch_add(1, Ordering::Relaxed);
             let candidate =
@@ -133,7 +140,7 @@ impl AttemptWorker {
         };
         let interval = (limit / 4).clamp(Duration::from_millis(1), HEARTBEAT_INTERVAL);
         command
-            .arg(FLAG)
+            .arg(if typed { TYPED_FLAG } else { FLAG })
             .arg(directory.join("progress"))
             .arg(interval.as_millis().to_string())
             .stdin(Stdio::piped())
@@ -170,6 +177,7 @@ impl AttemptWorker {
             replies,
             directory,
             next_id: 0,
+            typed,
         })
     }
 
@@ -257,14 +265,16 @@ thread_local! {
 
 pub(super) struct SupervisedUniformPilot {
     limit: Duration,
+    typed: bool,
     #[cfg(test)]
     pub(super) worker_command: Option<fn() -> Command>,
 }
 
 impl SupervisedUniformPilot {
-    pub(super) fn new(limit: Duration) -> Self {
+    pub(super) fn new(limit: Duration, typed: bool) -> Self {
         Self {
             limit,
+            typed,
             #[cfg(test)]
             worker_command: None,
         }
@@ -273,15 +283,25 @@ impl SupervisedUniformPilot {
     fn launch(&self) -> io::Result<AttemptWorker> {
         #[cfg(test)]
         if let Some(command) = self.worker_command {
-            return AttemptWorker::launch(self.limit, command());
+            return AttemptWorker::launch(self.limit, command(), self.typed);
         }
-        AttemptWorker::launch(self.limit, Command::new(std::env::current_exe()?))
+        AttemptWorker::launch(
+            self.limit,
+            Command::new(std::env::current_exe()?),
+            self.typed,
+        )
     }
 }
 
 impl GamePilot for SupervisedUniformPilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
         WORKER.with_borrow_mut(|slot| {
+            if slot
+                .as_ref()
+                .is_some_and(|worker| worker.typed != self.typed)
+            {
+                *slot = None;
+            }
             if slot.is_none() {
                 match self.launch() {
                     Ok(worker) => *slot = Some(worker),
@@ -441,6 +461,7 @@ for line in sys.stdin:
         let record = run_read_plan(
             &plan,
             &SupervisedUniformPilot {
+                typed: false,
                 limit: Duration::from_secs(1),
                 worker_command: Some(scripted_worker),
             },

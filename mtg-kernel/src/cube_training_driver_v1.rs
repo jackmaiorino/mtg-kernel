@@ -20,9 +20,10 @@ use crate::cube_learned_seat_v1::{
     LearnedSeatBuilder, LearnedSeatPicker, ModelSeatForward, SeatForward,
 };
 use crate::cube_pod_runner_v1::{
-    is_watchdog_end, pod_league_seed, training_roles_with_older, PilotInfo, PilotKind, PodPins,
-    PodRecord, PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef, StopAttemptReport,
-    TrainingChair, TrainingPodConfig, CLIENT_NAMESPACE,
+    is_watchdog_end, pod_league_seed, run_training_pod_with_slots, training_roles_with_older,
+    PilotInfo, PilotKind, PodPins, PodRecord, PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef,
+    StopAttemptReport, TrainingChair, TrainingPairSlots, TrainingPodConfig, TrainingPodSlot,
+    CLIENT_NAMESPACE,
 };
 use crate::cube_read_plan_v1::sha256_hex;
 use crate::cube_seat_v1::{
@@ -377,6 +378,9 @@ pub struct RunConfig {
     pub metadata: CheckpointMetadata,
     pub caps: crate::cube_pod_runner_v1::PodCaps,
     pub workers: usize,
+    /// Runtime-only scheduling preference for the uniform pilot's games.
+    #[serde(skip)]
+    pub fill_pod_tails: bool,
     pub liveness: String,
     pub marks: CheckpointMarks,
     pub boundary: Option<PickBoundary>,
@@ -455,6 +459,7 @@ impl RunConfig {
             metadata: CheckpointMetadata::default(),
             caps: crate::cube_pod_runner_v1::PodCaps::training_a2(),
             workers: 1,
+            fill_pod_tails: false,
             liveness: LIVENESS.to_owned(),
             // A6.17's four b1 dose marks and D0.21's six owner views.
             marks: match segment {
@@ -1610,6 +1615,20 @@ enum CollectFailure {
     Error(TrainingDriverError),
 }
 
+fn pod_thread_spawn_error(error: std::io::Error) -> CollectFailure {
+    CollectFailure::Error(PodRunnerError::Thread(error.to_string()).into())
+}
+
+fn join_collected_pod(
+    handle: std::thread::ScopedJoinHandle<'_, Result<PodRecord, PodRunnerError>>,
+) -> Result<PodRecord, PodRunnerError> {
+    handle.join().unwrap_or_else(|_| {
+        Err(PodRunnerError::Thread(
+            "training pod thread panicked".to_owned(),
+        ))
+    })
+}
+
 fn stop_from_failure(run: &str, update: u64, failure: BatchFailure) -> StopRecord {
     let pod = *failure.pod;
     let stop = pod.stop.clone();
@@ -1757,9 +1776,180 @@ impl TrainingDriver {
     ) -> Result<Self, TrainingDriverError> {
         let model = Self::initial_model(&rows, init_seed)?;
         let optimizer = Optimizer::new(&model);
-        Self::open_from_state(config, rows, model, optimizer, lineage, Vec::new(), None)
+        Self::open_from_state(
+            config,
+            rows,
+            model,
+            optimizer,
+            lineage,
+            Vec::new(),
+            None,
+            false,
+        )
     }
 
+    fn restore_archived_initial_checkpoint(
+        config: &RunConfig,
+        rows: &ModelCardRowsV1,
+        source_checkpoint: &Checkpoint,
+        expected_source_state_sha256: &str,
+    ) -> Result<(ModelV1, Optimizer), TrainingDriverError> {
+        if config.segment != Segment::BuilderOnly {
+            return Err(invalid(
+                "initial checkpoint restart requires a builder configuration",
+            ));
+        }
+        source_checkpoint.validate()?;
+        if source_checkpoint.state_sha256 != expected_source_state_sha256 {
+            return Err(invalid(
+                "archived initial checkpoint state sha256 differs from pin",
+            ));
+        }
+        if source_checkpoint.segment != Segment::BuilderOnly
+            || source_checkpoint.update != 0
+            || source_checkpoint.head_updates != HeadUpdates::default()
+            || source_checkpoint.boundary.is_some()
+            || !source_checkpoint.lineage.is_empty()
+        {
+            return Err(invalid(
+                "archived initial checkpoint is not an untrained builder checkpoint 0",
+            ));
+        }
+        if source_checkpoint.card_index_sha256 != config.pins.card_index
+            || source_checkpoint.cube_table_sha256 != config.pins.cube_table
+            || source_checkpoint.card_database_sha256 != config.metadata.card_database_sha256
+            || source_checkpoint.column_scales != config.metadata.column_scales
+            || source_checkpoint.dense_fields != config.metadata.dense_fields
+            || source_checkpoint.training_math != config.metadata.training_math
+            || source_checkpoint.sampler != config.metadata.sampler
+            || source_checkpoint.constants != config.metadata.constants
+            || source_checkpoint.model_identity != config.metadata.model_identity
+        {
+            return Err(invalid(
+                "archived initial checkpoint metadata differs from run configuration",
+            ));
+        }
+        let template =
+            ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 0)
+                .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
+        if source_checkpoint.parameter_layout_sha256 != model_layout_pin(&template) {
+            return Err(invalid(
+                "archived initial checkpoint parameter layout differs from model",
+            ));
+        }
+        source_checkpoint
+            .model
+            .restore(template, source_checkpoint.head_updates)
+            .map_err(TrainingDriverError::Update)
+    }
+
+    /// Derive the restarted builder's full canonical checkpoint-0 state digest
+    /// (including its initial league entry) from an archived pinned initial
+    /// checkpoint, without drawing any initialiser seed or performing IO.
+    pub fn initial_state_sha256_from_checkpoint(
+        config: &RunConfig,
+        rows: &ModelCardRowsV1,
+        source_checkpoint: &Checkpoint,
+        expected_source_state_sha256: &str,
+    ) -> Result<String, TrainingDriverError> {
+        let mut config = config.clone();
+        let (model, optimizer) = Self::restore_archived_initial_checkpoint(
+            &config,
+            rows,
+            source_checkpoint,
+            expected_source_state_sha256,
+        )?;
+        let layout = model_layout_pin(&model);
+        if !config.metadata.parameter_layout_sha256.is_empty()
+            && config.metadata.parameter_layout_sha256 != layout
+        {
+            return Err(invalid(
+                "configured parameter layout differs from the model",
+            ));
+        }
+        config.metadata.parameter_layout_sha256 = layout;
+        let mut checkpoint = Checkpoint::new(
+            &config,
+            CubeModelState::from_model(&model, &optimizer),
+            Vec::new(),
+            0,
+            Vec::new(),
+            pin_reasons(&config, 0),
+            optimizer.head_updates,
+        )?;
+        checkpoint
+            .league
+            .push(league_entry(&config.root, &checkpoint)?);
+        checkpoint.refresh_pin()?;
+        Ok(checkpoint.state_sha256)
+    }
+
+    /// Open a restarted builder-only run by loading an archived pinned initial
+    /// checkpoint (D0.12 / D0.18) without drawing the initialiser seed again.
+    pub fn open_from_initial_checkpoint(
+        config: RunConfig,
+        rows: Arc<ModelCardRowsV1>,
+        source_checkpoint: &Checkpoint,
+        expected_source_state_sha256: &str,
+    ) -> Result<Self, TrainingDriverError> {
+        let (model, optimizer) = Self::restore_archived_initial_checkpoint(
+            &config,
+            &rows,
+            source_checkpoint,
+            expected_source_state_sha256,
+        )?;
+        Self::open_from_state(
+            config,
+            rows,
+            model,
+            optimizer,
+            Vec::new(),
+            Vec::new(),
+            None,
+            true,
+        )
+    }
+
+    /// Open an already-prepared pick-phase run from its staged boundary journal
+    /// without drawing any initialiser seed.
+    pub fn open_existing_pick_phase(
+        config: RunConfig,
+        rows: Arc<ModelCardRowsV1>,
+    ) -> Result<Self, TrainingDriverError> {
+        if config.segment != Segment::PickPhase || config.open_intent != OpenIntent::Run {
+            return Err(invalid(
+                "open_existing_pick_phase requires a prepared pick-phase run",
+            ));
+        }
+        let journal = config.root.join("pick-boundary.json");
+        let record: BoundaryRecord = read_json(&journal)?;
+        record.checkpoint.validate()?;
+        let template =
+            ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 0)
+                .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
+        if record.checkpoint.parameter_layout_sha256 != model_layout_pin(&template) {
+            return Err(invalid(
+                "pick-phase initial checkpoint parameter layout differs from model",
+            ));
+        }
+        let (model, optimizer) = record
+            .checkpoint
+            .model
+            .restore(template, record.checkpoint.head_updates)
+            .map_err(TrainingDriverError::Update)?;
+        Self::open_from_state(
+            config,
+            rows,
+            model,
+            optimizer,
+            Vec::new(),
+            Vec::new(),
+            None,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn open_from_state(
         mut config: RunConfig,
         rows: Arc<ModelCardRowsV1>,
@@ -1768,6 +1958,7 @@ impl TrainingDriver {
         initial_lineage: Vec<LineageSegment>,
         initial_league: Vec<LeagueEntry>,
         builder_boundary: Option<(PickBoundary, &Path)>,
+        verify_initial_checkpoint: bool,
     ) -> Result<Self, TrainingDriverError> {
         let layout = model_layout_pin(&initial_model);
         if config.metadata.parameter_layout_sha256.is_empty() {
@@ -1813,6 +2004,72 @@ impl TrainingDriver {
         config.check_open_intent(false)?;
         let run_lock = RunLock::acquire(&config)?;
         config.check_open_intent(true)?;
+        let initial_path = config.root.join("initial/checkpoint.json");
+        if verify_initial_checkpoint {
+            if config.segment == Segment::BuilderOnly && initial_path.exists() {
+                let mut expected_initial = Checkpoint::new(
+                    &config,
+                    CubeModelState::from_model(&initial_model, &initial_optimizer),
+                    initial_league.clone(),
+                    0,
+                    initial_lineage.clone(),
+                    pin_reasons(&config, 0),
+                    initial_optimizer.head_updates,
+                )?;
+                if expected_initial.league.is_empty() {
+                    expected_initial
+                        .league
+                        .push(league_entry(&config.root, &expected_initial)?);
+                    expected_initial.refresh_pin()?;
+                }
+                let stored_initial: Checkpoint = read_json(&initial_path)?;
+                stored_initial.validate()?;
+                if stored_initial.state_sha256 != expected_initial.state_sha256 {
+                    return Err(invalid(
+                        "stored initial checkpoint differs from expected canonical checkpoint 0",
+                    ));
+                }
+            } else if config.segment == Segment::PickPhase {
+                let journal = config.root.join("pick-boundary.json");
+                let record: BoundaryRecord = read_json(&journal)?;
+                record.checkpoint.validate()?;
+                if record.config.boundary.is_none()
+                    || record.checkpoint.boundary != record.config.boundary
+                    || record.checkpoint.segment != Segment::PickPhase
+                    || record.checkpoint.run != config.run
+                    || record.checkpoint.update != 0
+                    || config
+                        .boundary
+                        .as_ref()
+                        .is_some_and(|requested| Some(requested) != record.config.boundary.as_ref())
+                {
+                    return Err(invalid(
+                        "pick phase boundary differs from its staged checkpoint",
+                    ));
+                }
+                let mut expected_cfg = config.clone();
+                expected_cfg.boundary = record.config.boundary.clone();
+                check_run_plan(&record.config, &expected_cfg)?;
+                let run_path = config.root.join("run.json");
+                if run_path.exists() {
+                    let saved: RunConfig = read_json(&run_path)?;
+                    if saved.boundary != record.config.boundary {
+                        return Err(invalid(
+                            "pick phase boundary differs from its staged checkpoint",
+                        ));
+                    }
+                    check_run_plan(&saved, &expected_cfg)?;
+                }
+                if initial_path.exists()
+                    && fs::read(&initial_path)? != json_bytes(&record.checkpoint)?
+                {
+                    return Err(invalid(format!(
+                        "immutable file differs: {}",
+                        initial_path.display()
+                    )));
+                }
+            }
+        }
         let resume_receipt = check_resume(&config, &run_lock)?;
         let run_path = config.root.join("run.json");
         let mut runner = None;
@@ -1827,7 +2084,6 @@ impl TrainingDriver {
         recover(&config.root)?;
         check_stop_ledger(&config.root)?;
         let indices = published_update_indices(&config.root)?;
-        let initial_path = config.root.join("initial/checkpoint.json");
         if config.segment == Segment::PickPhase {
             let boundary_source = if let Some((boundary, builder_root)) = builder_boundary {
                 for entry in &initial_league {
@@ -2121,6 +2377,7 @@ impl TrainingDriver {
                 },
                 &previous.config.root,
             )),
+            false,
         )
     }
 
@@ -2206,94 +2463,164 @@ impl TrainingDriver {
         pilot: &(dyn GamePilot + Sync),
         snapshots: &BTreeMap<String, Snapshot>,
     ) -> Result<Vec<PodRecord>, CollectFailure> {
-        let current: Arc<dyn SeatForward> = self.model.seat.clone();
         let mut completed = Vec::new();
-        for offset in 0..PODS_PER_UPDATE {
-            let pod_index = update * PODS_PER_UPDATE + offset;
-            let league_seed = pod_league_seed(&self.config.namespace, &self.config.run, pod_index)
-                .map_err(TrainingDriverError::from)
-                .map_err(CollectFailure::Error)?;
-            let mut stream = SplitMix64::seed(league_seed);
-            let first = uniform_index(&mut stream, SEATS);
-            let draw = uniform_index(&mut stream, SEATS - 1);
-            let second = if draw < first { draw } else { draw + 1 };
-            let older = [first.min(second), first.max(second)];
-            let roles = training_roles_with_older(older)
-                .map_err(TrainingDriverError::from)
-                .map_err(CollectFailure::Error)?;
-            let mut assignments = BTreeMap::new();
-            for chair in older {
-                let index = uniform_index(&mut stream, self.league.len());
-                assignments.insert(chair, self.league[index].pin.clone());
-            }
-            let pilot_info = match selection {
-                PilotSelection::Uniform => PilotInfo::uniform(),
-                PilotSelection::Checkpoint { pin } => PilotInfo {
-                    kind: PilotKind::Checkpoint,
-                    pin: Some(pin.checkpoint_sha256.clone()),
-                    decoding: pin.decoding.clone(),
-                },
-            };
-            let config = self.pod_config(pod_index, pilot_info);
-            let mut chairs: [TrainingChair; SEATS] = std::array::from_fn(|chair| {
-                let older_pin = assignments.get(&chair);
-                let forward = older_pin.map_or_else(
-                    || current.clone(),
-                    |pin| snapshots[pin].seat.clone() as Arc<dyn SeatForward>,
-                );
-                let picker: Box<dyn crate::cube_seat_v1::SeatPicker> =
-                    if self.config.segment == Segment::BuilderOnly {
-                        Box::new(UniformSeatPicker)
-                    } else {
-                        Box::new(LearnedSeatPicker::new(forward.clone()))
-                    };
-                let picker_ref = if self.config.segment == Segment::BuilderOnly {
-                    SeatRef::uniform()
-                } else {
-                    SeatRef {
-                        kind: SeatKind::Learned,
-                        pin: Some(older_pin.unwrap_or(&self.current_pin).clone()),
-                    }
+        let first_index = update * PODS_PER_UPDATE;
+        let indices = first_index..first_index + PODS_PER_UPDATE;
+        if self.config.fill_pod_tails
+            && self.config.workers > 1
+            && matches!(selection, PilotSelection::Uniform)
+        {
+            let mut indices = indices;
+            while let Some(first_index) = indices.next() {
+                let Some(second_index) = indices.next() else {
+                    let result =
+                        self.collect_pod(pool, first_index, selection, pilot, snapshots, None);
+                    self.persist_pod(update, result, &mut completed)?;
+                    break;
                 };
-                TrainingChair {
-                    role: roles[chair],
-                    picker_ref,
-                    picker,
-                    builder_ref: SeatRef {
-                        kind: SeatKind::Learned,
-                        pin: Some(older_pin.unwrap_or(&self.current_pin).clone()),
-                    },
-                    builder: Box::new(LearnedSeatBuilder::new(forward)),
-                }
-            });
-            match crate::cube_pod_runner_v1::run_training_pod(pool, &config, &mut chairs, pilot) {
-                Ok(record) => {
-                    let pending = self
-                        .config
-                        .root
-                        .join("pending")
-                        .join(update_name(update))
-                        .join("partial");
-                    fs::create_dir_all(&pending)
-                        .map_err(TrainingDriverError::from)
-                        .map_err(CollectFailure::Error)?;
-                    let bytes = json_bytes(&record).map_err(CollectFailure::Error)?;
-                    write_synced(&pending.join(format!("pod-{pod_index:06}.json")), &bytes)
-                        .map_err(CollectFailure::Error)?;
-                    completed.push(record);
-                }
-                Err(PodRunnerError::Stopped(record)) => {
-                    return Err(CollectFailure::Stop(BatchFailure {
-                        pod: record,
-                        completed,
-                    }));
-                }
-                Err(error) => {
-                    return Err(CollectFailure::Error(TrainingDriverError::from(error)));
-                }
+                let slots = TrainingPairSlots::new(self.config.workers);
+                std::thread::scope(|scope| {
+                    let first = std::thread::Builder::new()
+                        .spawn_scoped(scope, || {
+                            self.collect_pod(
+                                pool,
+                                first_index,
+                                selection,
+                                pilot,
+                                snapshots,
+                                Some((&slots, TrainingPodSlot::First)),
+                            )
+                        })
+                        .map_err(pod_thread_spawn_error)?;
+                    let second = std::thread::Builder::new()
+                        .spawn_scoped(scope, || {
+                            self.collect_pod(
+                                pool,
+                                second_index,
+                                selection,
+                                pilot,
+                                snapshots,
+                                Some((&slots, TrainingPodSlot::Second)),
+                            )
+                        })
+                        .map_err(pod_thread_spawn_error)?;
+                    // Durable partial records must keep the same prefix even
+                    // if a later pod finishes or sees a stop first.
+                    let first = self.persist_pod(update, join_collected_pod(first), &mut completed);
+                    if first.is_err() {
+                        slots.cancel_second();
+                    }
+                    let second = join_collected_pod(second);
+                    first?;
+                    self.persist_pod(update, second, &mut completed)
+                })?;
+            }
+        } else {
+            for pod_index in indices {
+                let result = self.collect_pod(pool, pod_index, selection, pilot, snapshots, None);
+                self.persist_pod(update, result, &mut completed)?;
             }
         }
         Ok(completed)
+    }
+
+    fn collect_pod(
+        &self,
+        pool: &CubePool,
+        pod_index: u64,
+        selection: &PilotSelection,
+        pilot: &(dyn GamePilot + Sync),
+        snapshots: &BTreeMap<String, Snapshot>,
+        pair: Option<(&TrainingPairSlots, TrainingPodSlot)>,
+    ) -> Result<PodRecord, PodRunnerError> {
+        let current: Arc<dyn SeatForward> = self.model.seat.clone();
+        let league_seed = pod_league_seed(&self.config.namespace, &self.config.run, pod_index)?;
+        let mut stream = SplitMix64::seed(league_seed);
+        let first = uniform_index(&mut stream, SEATS);
+        let draw = uniform_index(&mut stream, SEATS - 1);
+        let second = if draw < first { draw } else { draw + 1 };
+        let older = [first.min(second), first.max(second)];
+        let roles = training_roles_with_older(older)?;
+        let mut assignments = BTreeMap::new();
+        for chair in older {
+            let index = uniform_index(&mut stream, self.league.len());
+            assignments.insert(chair, self.league[index].pin.clone());
+        }
+        let pilot_info = match selection {
+            PilotSelection::Uniform => PilotInfo::uniform(),
+            PilotSelection::Checkpoint { pin } => PilotInfo {
+                kind: PilotKind::Checkpoint,
+                pin: Some(pin.checkpoint_sha256.clone()),
+                decoding: pin.decoding.clone(),
+            },
+        };
+        let config = self.pod_config(pod_index, pilot_info);
+        let mut chairs: [TrainingChair; SEATS] = std::array::from_fn(|chair| {
+            let older_pin = assignments.get(&chair);
+            let forward = older_pin.map_or_else(
+                || current.clone(),
+                |pin| snapshots[pin].seat.clone() as Arc<dyn SeatForward>,
+            );
+            let picker: Box<dyn crate::cube_seat_v1::SeatPicker> =
+                if self.config.segment == Segment::BuilderOnly {
+                    Box::new(UniformSeatPicker)
+                } else {
+                    Box::new(LearnedSeatPicker::new(forward.clone()))
+                };
+            let picker_ref = if self.config.segment == Segment::BuilderOnly {
+                SeatRef::uniform()
+            } else {
+                SeatRef {
+                    kind: SeatKind::Learned,
+                    pin: Some(older_pin.unwrap_or(&self.current_pin).clone()),
+                }
+            };
+            TrainingChair {
+                role: roles[chair],
+                picker_ref,
+                picker,
+                builder_ref: SeatRef {
+                    kind: SeatKind::Learned,
+                    pin: Some(older_pin.unwrap_or(&self.current_pin).clone()),
+                },
+                builder: Box::new(LearnedSeatBuilder::new(forward)),
+            }
+        });
+        run_training_pod_with_slots(pool, &config, &mut chairs, pilot, pair)
+    }
+
+    fn persist_pod(
+        &self,
+        update: u64,
+        result: Result<PodRecord, PodRunnerError>,
+        completed: &mut Vec<PodRecord>,
+    ) -> Result<(), CollectFailure> {
+        match result {
+            Ok(record) => {
+                let pending = self
+                    .config
+                    .root
+                    .join("pending")
+                    .join(update_name(update))
+                    .join("partial");
+                fs::create_dir_all(&pending)
+                    .map_err(TrainingDriverError::from)
+                    .map_err(CollectFailure::Error)?;
+                let bytes = json_bytes(&record).map_err(CollectFailure::Error)?;
+                write_synced(
+                    &pending.join(format!("pod-{:06}.json", record.pod_index)),
+                    &bytes,
+                )
+                .map_err(CollectFailure::Error)?;
+                completed.push(record);
+                Ok(())
+            }
+            Err(PodRunnerError::Stopped(pod)) => Err(CollectFailure::Stop(BatchFailure {
+                pod,
+                completed: std::mem::take(completed),
+            })),
+            Err(error) => Err(CollectFailure::Error(TrainingDriverError::from(error))),
+        }
     }
 
     fn abandon_error(

@@ -63,6 +63,26 @@ pub struct S1bStateV1 {
     /// Permanents Liquimetal Coating made artifacts, with the turn.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifact_until: Vec<(ObjectLinkV4, (u32, PlayerId))>,
+    /// Activated-ability hand-discard uses paid by permanents that left the
+    /// battlefield during the current turn, cleared at Untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub departed_discard_uses: Vec<(ObjectLinkV4, PlayerId, u16)>,
+    /// Activated animate-ability uses (`AnimateSource` /
+    /// `AnimateSourcePermanentlyV1`) recorded on permanents that left the
+    /// battlefield during the current turn, cleared at Untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub departed_animate_uses: Vec<(ObjectLinkV4, u32)>,
+    /// Same-turn hand discards committed by spell/ability resolution effects
+    /// (and other non-activation-cost, non-copy-entry hand moves), recording
+    /// `(player, event_history_index, object)`, cleared at Untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolution_effect_discards: Vec<(PlayerId, usize, ObjectId)>,
+    /// Activated-ability mandatory effect-discard uses recorded on permanents
+    /// that left the battlefield during the current turn, storing
+    /// `(source_link, affected_player, ability_index, raw_uses)`, cleared at
+    /// Untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub departed_effect_discard_uses: Vec<(ObjectLinkV4, PlayerId, usize, u32)>,
 }
 
 impl Hash for S1bStateV1 {
@@ -76,6 +96,22 @@ impl Hash for S1bStateV1 {
             self.discards.hash(state);
             self.explosives.hash(state);
             self.artifact_until.hash(state);
+            if !self.departed_discard_uses.is_empty() {
+                b"departed-discard-uses/v1".hash(state);
+                self.departed_discard_uses.hash(state);
+            }
+            if !self.departed_animate_uses.is_empty() {
+                b"departed-animate-uses/v1".hash(state);
+                self.departed_animate_uses.hash(state);
+            }
+            if !self.resolution_effect_discards.is_empty() {
+                b"resolution-effect-discards/v1".hash(state);
+                self.resolution_effect_discards.hash(state);
+            }
+            if !self.departed_effect_discard_uses.is_empty() {
+                b"departed-effect-discard-uses/v1".hash(state);
+                self.departed_effect_discard_uses.hash(state);
+            }
         }
     }
 }
@@ -96,6 +132,26 @@ fn s1b_state(state: &mut GameState) -> &mut S1bStateV1 {
 
 fn read_state(state: &GameState) -> Option<&S1bStateV1> {
     state.eternal_v1.as_ref().map(|eternal| &eternal.s1b)
+}
+
+pub(crate) fn departed_animate_uses_for(state: &GameState, host: ObjectLinkV4) -> u32 {
+    read_state(state)
+        .and_then(|s1b| {
+            s1b.departed_animate_uses
+                .iter()
+                .find(|(link, _)| *link == host)
+                .map(|(_, uses)| *uses)
+        })
+        .unwrap_or(0)
+}
+
+pub(crate) fn begin_turn(state: &mut GameState, _player: PlayerId) {
+    if let Some(eternal) = state.eternal_v1.as_mut() {
+        eternal.s1b.departed_discard_uses.clear();
+        eternal.s1b.departed_animate_uses.clear();
+        eternal.s1b.resolution_effect_discards.clear();
+        eternal.s1b.departed_effect_discard_uses.clear();
+    }
 }
 
 /// Effect leaves owned by this module, carried as
@@ -805,10 +861,29 @@ pub(crate) fn pays_life_for_x(def: &CardDef) -> bool {
         && (def.name == TOXIC_DELUGE || crate::eternal_cube_c1c_v1::pays_life_for_x(def.name))
 }
 
-/// The most X Toxic Deluge may announce: its caster's life total.
-pub(crate) fn life_x_cap(def: &CardDef, player: PlayerId, state: &GameState) -> Option<u8> {
-    pays_life_for_x(def)
-        .then(|| u8::try_from(state.players[player.index()].life.max(0)).unwrap_or(u8::MAX))
+/// Life still available for the additional cost after the cast route's own
+/// life cost (CR 118.9d, 119.4, 601.2f). Returns `None` when the route's own
+/// positive life payment exceeds the player's life total.
+pub(crate) fn life_x_cap(
+    def: &CardDef,
+    source: ObjectId,
+    player: PlayerId,
+    state: &GameState,
+) -> Option<u8> {
+    if !pays_life_for_x(def) {
+        return None;
+    }
+    let route_cost = if crate::eternal_e5a_v1::permissions::citadel_cast(state, source, player) {
+        i32::from(def.mana_value)
+    } else {
+        0
+    };
+    let life = state.players[player.index()].life;
+    if route_cost > 0 && life < route_cost {
+        return None;
+    }
+    let available = life.saturating_sub(route_cost).max(0);
+    Some(u8::try_from(available).unwrap_or(u8::MAX))
 }
 
 // ---- Stage 3: Pyrokinesis, Stern Dismissal, Extirpate, Tourach, Leyline ------------------
