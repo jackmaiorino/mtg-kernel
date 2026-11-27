@@ -2227,6 +2227,40 @@ fn occult_epiphany_with_x_zero_or_a_hand_of_exactly_x_needs_no_choice() {
 }
 
 #[test]
+fn occult_epiphany_pauses_for_miracle_before_its_second_draw() {
+    let mut state = game(&["Metamorphosis Fanatic", "Sol Ring", "Island"]);
+    let miracle = state.players[0].library[0];
+    let second = state.players[0].library[1];
+    let keep = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let epiphany = put(&mut state, P0, "Occult Epiphany", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    cast_with_x(&mut state, epiphany, 2, &[]);
+
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        }) if source == miracle
+    ));
+    assert_eq!(zone(&state, miracle), Zone::Hand);
+    assert_eq!(zone(&state, second), Zone::Library);
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert!(spirits(&state, P0).is_empty());
+
+    let snapshot = serde_json::to_vec(&state).unwrap();
+    let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+    act(&mut restored, Action::ChooseEffectOption(0));
+    settle_with(&mut restored, choose_cards(vec![miracle, second]));
+    assert_eq!(restored.players[0].draws_this_turn, 2);
+    assert_eq!(zone(&restored, miracle), Zone::Graveyard);
+    assert_eq!(zone(&restored, second), Zone::Graveyard);
+    assert_eq!(zone(&restored, keep), Zone::Hand);
+    assert_eq!(spirits(&restored, P0).len(), 2);
+}
+
+#[test]
 fn occult_epiphany_draws_offer_competing_draw_replacements() {
     // The X draws are staged by the Epiphany's own leaf as it resolves. Its
     // controller draws from an empty library with Jace, Wielder of Mysteries
