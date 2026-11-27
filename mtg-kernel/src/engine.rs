@@ -27834,6 +27834,14 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
         return card_type == CardType::Creature;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
+    if state
+        .objects
+        .try_get(id)
+        .is_some_and(|object| object.v4.enduring_enchantment_v1)
+    {
+        return card_type == CardType::Enchantment;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
     if card_type == CardType::Creature && crate::standard_keywords_v1::not_a_creature(state, id) {
         return false;
     }
@@ -34005,10 +34013,11 @@ fn apply_order_triggers(state: &mut GameState, perm: Vec<usize>) -> Result<(), S
     // Preserve the historical immediate placement for groups whose triggers
     // are all untargeted. A targeted member remains queued at its ordinary
     // ChooseTargets decision before the remaining group continues.
+    // Like `finish_optional_trigger_targets`, an engine halt encountered
+    // while draining the reordered group stays in `state.engine.halted`
+    // so the caller observes `Decision::Halted` instead of a step error
+    // after state mutation.
     let _ = drain_pending_triggers_or_decide(state);
-    if state.engine.halted.is_some() {
-        return Err("ordered trigger group failed placement validation".to_string());
-    }
     Ok(())
 }
 
@@ -39479,6 +39488,53 @@ mod tests {
         });
         let err = step(&mut state, Action::OrderTriggers(vec![0, 0])).unwrap_err();
         assert!(err.contains("permutation"));
+    }
+
+    #[test]
+    fn order_triggers_records_engine_halt_instead_of_step_error_on_placement_failure() {
+        let mut state = empty_game();
+        let valid_source = put_in_hand(&mut state, PlayerId::P0, "Voldaren Epicure");
+        let forged_source = put_on_battlefield(&mut state, PlayerId::P0, "Voldaren Epicure");
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(valid_source, Zone::Battlefield),
+        );
+        collect_and_queue_triggers(&mut state);
+        assert_eq!(state.engine.pending_triggers.len(), 1);
+        state.engine.pending_triggers.push(PendingTrigger {
+            controller: PlayerId::P0,
+            source: forged_source,
+            granted_by: None,
+            effect: EffectOp::Sequence(vec![]),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+
+        step(&mut state, Action::OrderTriggers(vec![0, 1]))
+            .expect("valid permutation must record engine halt rather than step Err");
+        assert_eq!(
+            state.engine.halted,
+            Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                forged_source
+            ))
+        );
+
+        let decision = advance_until_decision(&mut state);
+        assert!(matches!(
+            decision,
+            Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            } if source == forged_source
+        ));
     }
 
     #[test]
