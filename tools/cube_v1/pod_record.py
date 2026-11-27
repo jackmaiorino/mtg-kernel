@@ -341,6 +341,7 @@ def _validate_attempt(
     *,
     is_v3: bool = False,
     seats: list[int] | None = None,
+    expected_arms: list[str] | None = None,
 ) -> dict[str, Any]:
     attempt = _object(value, path, ATTEMPT_KEYS_V3 if is_v3 else ATTEMPT_KEYS)
     if _uint(attempt["attempt"], f"{path}.attempt", U8) != index:
@@ -358,21 +359,39 @@ def _validate_attempt(
     if attempt["stop_kind"] != expected_stop_kind(end):
         _fail(f"{path}.stop_kind", f"must be {expected_stop_kind(end)!r}, got {attempt['stop_kind']!r}")
     _uint_or_null(attempt["last_action_source"], f"{path}.last_action_source", U16)
+    is_watchdog = attempt["stop_kind"] == "terminal:watchdog"
+    if is_watchdog and attempt["last_action_source"] is not None:
+        _fail(f"{path}.last_action_source", "terminal:watchdog must not charge a card")
     if is_v3:
         first_seat = _uint_or_null(attempt["first_player_seat"], f"{path}.first_player_seat", U8)
         last_seat = _uint_or_null(attempt["last_acting_seat"], f"{path}.last_acting_seat", U8)
         last_arm = attempt["last_acting_arm"]
         if last_arm is not None:
             _enum(last_arm, f"{path}.last_acting_arm", VALID_LAST_ACTING_ARMS)
-        if attempt["decisions"] == 0 and (last_seat is not None or last_arm is not None):
-            _fail(path, "last_acting_seat and last_acting_arm must be null when decisions == 0")
+        if is_watchdog:
+            if last_seat is not None or last_arm is not None:
+                _fail(path, "terminal:watchdog must leave last_acting_seat and last_acting_arm null")
+        elif attempt["decisions"] == 0:
+            if last_seat is not None or last_arm is not None:
+                _fail(path, "last_acting_seat and last_acting_arm must be null when decisions == 0")
+        else:
+            if first_seat is None or last_seat is None or last_arm is None:
+                _fail(path, "first_player_seat, last_acting_seat and last_acting_arm must be non-null when decisions > 0")
         if (last_seat is None) != (last_arm is None):
             _fail(path, "last_acting_seat and last_acting_arm must be null together")
         if seats is not None:
             if first_seat is not None and first_seat not in seats:
                 _fail(f"{path}.first_player_seat", f"{first_seat} is not in game seats {seats}")
-            if last_seat is not None and last_seat not in seats:
-                _fail(f"{path}.last_acting_seat", f"{last_seat} is not in game seats {seats}")
+            if last_seat is not None:
+                if last_seat not in seats:
+                    _fail(f"{path}.last_acting_seat", f"{last_seat} is not in game seats {seats}")
+                if expected_arms is not None:
+                    pos = seats.index(last_seat)
+                    if last_arm != expected_arms[pos]:
+                        _fail(
+                            f"{path}.last_acting_arm",
+                            f"expected {expected_arms[pos]!r} for seat {last_seat}, got {last_arm!r}",
+                        )
     return attempt
 
 
@@ -392,6 +411,8 @@ def _validate_game(
     max_replays: int,
     *,
     is_v3: bool = False,
+    chair_roles: dict[int, str] | None = None,
+    check_non_read_arms: bool = False,
 ) -> dict[str, Any]:
     game = _object(value, path, GAME_KEYS)
     _uint(game["game"], f"{path}.game", U32)
@@ -424,8 +445,24 @@ def _validate_game(
     if seat_rule == "schedule" and len(attempts) != 1:
         _fail(f"{path}.attempts", "a read game (seat_rule schedule) has exactly one attempt")
     seats = game_seats(chairs)
+    expected_arms: list[str] | None = None
+    if is_v3 and check_non_read_arms and chair_roles is not None:
+        expected_arms = []
+        for pos in range(2):
+            deck = deck_by_id[decks[pos]]
+            if deck["source"] == "dealt":
+                expected_arms.append("dealt")
+            else:
+                expected_arms.append(chair_roles[deck["chair"]])
     for k, attempt in enumerate(attempts):
-        _validate_attempt(attempt, f"{path}.attempts[{k}]", k, is_v3=is_v3, seats=seats)
+        _validate_attempt(
+            attempt,
+            f"{path}.attempts[{k}]",
+            k,
+            is_v3=is_v3,
+            seats=seats,
+            expected_arms=expected_arms,
+        )
     for k, attempt in enumerate(attempts[:-1]):
         if not attempt["halted"]:
             _fail(f"{path}.attempts[{k}]", "a completed attempt must be the game's last")
@@ -636,10 +673,20 @@ def validate_record(record: Any, path: str = "record") -> dict[str, Any]:
         _validate_deck(deck, f"{path}.decks[{i}]", i, seeds["draft_seed"])
         deck_by_id[i] = deck
 
+    chair_roles = {chair["chair"]: chair["role"] for chair in chairs}
+    check_non_read_arms = not read_pod
     games = _list(rec["games"], f"{path}.games")
     game_by_id: dict[int, dict[str, Any]] = {}
     for i, game in enumerate(games):
-        _validate_game(game, f"{path}.games[{i}]", deck_by_id, max_replays, is_v3=is_v3)
+        _validate_game(
+            game,
+            f"{path}.games[{i}]",
+            deck_by_id,
+            max_replays,
+            is_v3=is_v3,
+            chair_roles=chair_roles,
+            check_non_read_arms=check_non_read_arms,
+        )
         if game["game"] != i:
             _fail(f"{path}.games[{i}].game", f"must be {i} (games in logical order)")
         game_by_id[i] = game

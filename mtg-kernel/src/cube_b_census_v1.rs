@@ -167,7 +167,17 @@ fn mask_source_numbers(text: &str) -> String {
 pub fn stop_kind(end: &GameEnd) -> Option<String> {
     match end {
         GameEnd::Natural { .. } => None,
-        GameEnd::Terminal { reason, .. } => Some(mask_source_numbers(reason)),
+        GameEnd::Terminal {
+            code,
+            classification,
+            reason,
+        } => {
+            if classification == "encoder_refusal" {
+                Some(code.clone())
+            } else {
+                Some(mask_source_numbers(reason))
+            }
+        }
         GameEnd::SessionError { code, message } => Some(format!(
             "session error {code}: {}",
             first_chars(message, MESSAGE_CHARS)

@@ -449,12 +449,20 @@ pub struct AttemptSpec<'a> {
     pub action_seed: u64,
 }
 
-/// Per-source-card offered and chosen counts gathered on a preselected
-/// logical-ID sample of games (`m4-interfaces/v3` section 4).
+/// Per-source-card and null-source offered and chosen counts gathered on a
+/// preselected logical-ID sample of games (`m4-interfaces/v3` r2 section 4).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PilotSampleCounts {
     pub decisions: u64,
+    #[serde(default)]
+    pub refused_decisions: u64,
+    #[serde(default)]
+    pub offered_decisions_null: u64,
+    #[serde(default)]
+    pub offered_actions_null: u64,
+    #[serde(default)]
+    pub chosen_null: u64,
     pub offered_decisions_by_card: BTreeMap<u16, u64>,
     pub offered_actions_by_card: BTreeMap<u16, u64>,
     pub chosen_by_card: BTreeMap<u16, u64>,
@@ -464,6 +472,16 @@ impl PilotSampleCounts {
     /// Adds `other`'s counts into `self`.
     pub fn merge_from(&mut self, other: &Self) {
         self.decisions = self.decisions.saturating_add(other.decisions);
+        self.refused_decisions = self
+            .refused_decisions
+            .saturating_add(other.refused_decisions);
+        self.offered_decisions_null = self
+            .offered_decisions_null
+            .saturating_add(other.offered_decisions_null);
+        self.offered_actions_null = self
+            .offered_actions_null
+            .saturating_add(other.offered_actions_null);
+        self.chosen_null = self.chosen_null.saturating_add(other.chosen_null);
         for (&card_id, &count) in &other.offered_decisions_by_card {
             *self.offered_decisions_by_card.entry(card_id).or_insert(0) += count;
         }

@@ -10,7 +10,7 @@
 //! and summary, manifest and authorization paths for full mode.
 //! Preparing k1 can also supply builder_baseline for b1's earlier full-mode evidence.
 //! Append `--typed-uniform-pilot` to `run` to use the prototype in-process game transport.
-//! Append `--fill-pod-tails` to let uniform games from a second pod use vacant game-worker slots.
+//! Append `--fill-pod-tails` to let games from a second pod use vacant game-worker slots.
 //!
 //! Prepare pins the manifest up to the new training_run heading. Use its exit
 //! receipt to append that entry with run_id, tripwire (the run.json object)

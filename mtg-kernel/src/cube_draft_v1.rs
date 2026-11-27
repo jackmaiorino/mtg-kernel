@@ -1223,16 +1223,25 @@ impl GameTally {
         };
         sample.decisions += 1;
         let mut seen_in_decision = std::collections::BTreeSet::new();
+        let mut saw_null = false;
         for raw_source in offered_sources {
             if let Some(card_id) = raw_source.filter(|&id| usize::from(id) < CARD_DEFS.len()) {
                 *sample.offered_actions_by_card.entry(card_id).or_insert(0) += 1;
                 if seen_in_decision.insert(card_id) {
                     *sample.offered_decisions_by_card.entry(card_id).or_insert(0) += 1;
                 }
+            } else {
+                sample.offered_actions_null += 1;
+                if !saw_null {
+                    saw_null = true;
+                    sample.offered_decisions_null += 1;
+                }
             }
         }
         if let Some(card_id) = chosen_source.filter(|&id| usize::from(id) < CARD_DEFS.len()) {
             *sample.chosen_by_card.entry(card_id).or_insert(0) += 1;
+        } else {
+            sample.chosen_null += 1;
         }
     }
 
@@ -1588,18 +1597,30 @@ fn drive_game(
                 tally.policy_steps = terminal["policy_step_count"].as_u64();
                 tally.physical_decisions = terminal["physical_decision_count"].as_u64();
                 if tally.first_player_seat.is_none() {
+                    // LimitedJsonlServerV1 reset always starts session player 0.
                     tally.first_player_seat = Some(setup.seats[0]);
                 }
                 return terminal_end(terminal, setup.seats);
             }
             _ => {}
         }
+        // Reset succeeded; LimitedJsonlServerV1 starts session player 0 authoritatively.
+        if tally.first_player_seat.is_none() {
+            tally.first_player_seat = Some(setup.seats[0]);
+        }
         let decision = &reply["decision"];
         tally.record_stack(decision);
-        let acting_seat = winner_index(&decision["acting_player"]).map(|idx| setup.seats[idx]);
-        if tally.first_player_seat.is_none() {
-            tally.first_player_seat = acting_seat.or(Some(setup.seats[0]));
-        }
+        let Some(acting_seat) =
+            winner_index(&decision["acting_player"]).map(|idx| setup.seats[idx])
+        else {
+            return GameEnd::SessionError {
+                code: "invalid_acting_player".to_owned(),
+                message: format!(
+                    "unparseable decision.acting_player: {}",
+                    decision["acting_player"]
+                ),
+            };
+        };
         if let Some(step) = decision["step"].as_u64() {
             tally.last_step = Some(step);
         }
@@ -1621,7 +1642,7 @@ fn drive_game(
         let action = &actions[uniform_index(&mut rng, actions.len())];
         *decisions += 1;
         observed.store(*decisions, Ordering::Relaxed);
-        tally.last_acting_seat = acting_seat;
+        tally.last_acting_seat = Some(acting_seat);
         let chosen_source = action["semantic"]["source"]["card_db_id"]
             .as_u64()
             .and_then(|id| u16::try_from(id).ok());
@@ -1781,13 +1802,14 @@ fn drive_game_typed(
             }
         };
         tally.record_stack_len(decision.observation.projection.surface.stack.len());
+        // Reset succeeded; LimitedJsonlServerV1 starts session player 0 authoritatively.
+        if tally.first_player_seat.is_none() {
+            tally.first_player_seat = Some(setup.seats[0]);
+        }
         let acting_seat = match decision.acting_player {
             crate::rl::PlayerSeatV1::P0 => setup.seats[0],
             crate::rl::PlayerSeatV1::P1 => setup.seats[1],
         };
-        if tally.first_player_seat.is_none() {
-            tally.first_player_seat = Some(acting_seat);
-        }
         tally.last_step = Some(decision.step);
         tally.last_physical_decision_id = Some(decision.physical_decision_id);
         let actions = &decision.legal_actions;

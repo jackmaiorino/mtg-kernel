@@ -3585,6 +3585,9 @@ fn read_plan_v3_records_first_player_last_acting_arm_null_and_pilot_sample() {
             let card = spec.decks[0].card_ids()[0];
             let mut counts = PilotSampleCounts {
                 decisions: 3,
+                offered_decisions_null: 2,
+                offered_actions_null: 2,
+                chosen_null: 2,
                 ..PilotSampleCounts::default()
             };
             counts.offered_decisions_by_card.insert(card, 2);
@@ -3652,4 +3655,61 @@ fn read_plan_v3_records_first_player_last_acting_arm_null_and_pilot_sample() {
     assert_eq!(sample.total_games, out.record.games.len() as u64);
     assert_eq!(sample.sampled_games, out.record.games.len() as u64);
     assert!(sample.counts.decisions > 0);
+    let chosen_cards: u64 = sample.counts.chosen_by_card.values().sum();
+    assert_eq!(
+        chosen_cards + sample.counts.chosen_null,
+        sample.counts.decisions
+    );
+
+    // R2 check: a v3 read whose worker process dies BEFORE game 0 completes
+    // (empty prefix in journal) must still finalize as a valid v3 stopped record.
+    let tmp = std::env::temp_dir().join(format!("cube-v3-empty-journal-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let empty_journal = tmp.join("pod-0.journal.jsonl");
+    let _ = std::fs::remove_file(&empty_journal);
+    let fallback_header = mtg_kernel::cube_read_plan_v1::PodJournalHeader {
+        draft: out.record.draft.clone().unwrap(),
+        chairs: out.record.chairs.clone(),
+        decks: out.record.decks.clone(),
+    };
+    let (stopped_v3, timings) =
+        mtg_kernel::cube_read_plan_v1::finalize_stopped_record_from_journal_with_version(
+            &plan,
+            &empty_journal,
+            Some(fallback_header),
+            PodRecordVersion::V3,
+        )
+        .unwrap();
+    assert!(timings.is_empty());
+    assert!(stopped_v3.games.is_empty());
+    assert_eq!(stopped_v3.schema, POD_RECORD_SCHEMA_V3);
+    assert_eq!(stopped_v3.interfaces, M4_INTERFACES_VERSION_V3);
+    let stopped_json = to_canonical_pretty_json(&stopped_v3).unwrap();
+    validate_pod_record_json(&stopped_json).expect("empty-prefix v3 stopped record validates");
+
+    // Verify dedicated encoder_refusal:<kind> normalization in cube_b_census_v1::stop_kind.
+    let refusal_end = GameEnd::Terminal {
+        code: "encoder_refusal:ObservationContract".to_owned(),
+        classification: "encoder_refusal".to_owned(),
+        reason: "encoder_refusal:ObservationContract: source:42 detail".to_owned(),
+    };
+    assert_eq!(
+        mtg_kernel::cube_b_census_v1::stop_kind(&refusal_end).as_deref(),
+        Some("encoder_refusal:ObservationContract")
+    );
+
+    // Verify read pilot-path sidecar emission.
+    let sidecar_path = tmp.join("pilot_path/pod-000000.json");
+    let _ = std::fs::remove_file(&sidecar_path);
+    mtg_kernel::cube_read_plan_v1::write_read_pilot_path_sidecar(&sidecar_path, &plan, 1, &sample)
+        .unwrap();
+    let sidecar_val: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sidecar_path).unwrap()).unwrap();
+    assert_eq!(sidecar_val["schema"], "mtg-kernel-cube-pilot-path/v1");
+    assert_eq!(sidecar_val["sampled_refused_decisions"], 0);
+    assert_eq!(
+        sidecar_val["chosen_null"].as_u64().unwrap() + chosen_cards,
+        sidecar_val["sampled_decisions"].as_u64().unwrap()
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
 }

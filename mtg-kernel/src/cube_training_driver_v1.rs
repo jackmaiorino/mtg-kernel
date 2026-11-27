@@ -395,6 +395,10 @@ pub struct PilotPathUpdateSidecar {
     pub sampled_games: u64,
     pub sampled_attempts: u64,
     pub sampled_decisions: u64,
+    pub sampled_refused_decisions: u64,
+    pub offered_decisions_null: u64,
+    pub offered_actions_null: u64,
+    pub chosen_null: u64,
     pub offered_decisions_by_card: BTreeMap<String, u64>,
     pub offered_actions_by_card: BTreeMap<String, u64>,
     pub chosen_by_card: BTreeMap<String, u64>,
@@ -1355,7 +1359,12 @@ fn read_commit(
         return Ok(None);
     };
     let required = ["pods.json", "checkpoint.json", "update.json"];
-    let optional = ["stop.json", "league.json", "execution-0.json"];
+    let optional = [
+        "stop.json",
+        "league.json",
+        "execution-0.json",
+        "pilot_path.json",
+    ];
     if commit.batch_index != update
         || required
             .iter()
@@ -1482,6 +1491,31 @@ fn record_process_death(
     Ok(())
 }
 
+fn restore_update_pilot_path(
+    root: &Path,
+    update_dir: &Path,
+    update: u64,
+) -> Result<(), TrainingDriverError> {
+    let source = update_dir.join("pilot_path.json");
+    if !source.exists() {
+        return Ok(());
+    }
+    let bytes = fs::read(&source)?;
+    let commit: CommitManifest = read_json(&update_dir.join("commit.json"))?;
+    if commit.files.get("pilot_path.json") != Some(&sha256_hex(&bytes)) {
+        return Err(invalid(
+            "published pilot_path.json differs from commit.json",
+        ));
+    }
+    let dir = root.join("pilot_path");
+    fs::create_dir_all(&dir)?;
+    let dest = dir.join(format!("{}.json", update_name(update)));
+    if dest.exists() && fs::read(&dest)? == bytes {
+        return Ok(());
+    }
+    replace_bytes(&dest, &bytes)
+}
+
 fn recover(root: &Path, replay_uncommitted_batch: Option<u64>) -> Result<(), TrainingDriverError> {
     let pending = root.join("pending");
     let updates = root.join("updates");
@@ -1511,6 +1545,7 @@ fn recover(root: &Path, replay_uncommitted_batch: Option<u64>) -> Result<(), Tra
             sync_directory(&pending)?;
             sync_directory(&updates)?;
             restore_update_league_snapshot(root, &destination)?;
+            restore_update_pilot_path(root, &destination, update)?;
             published_stop(root, &destination, update)?;
             continue;
         }
@@ -1527,9 +1562,10 @@ fn recover(root: &Path, replay_uncommitted_batch: Option<u64>) -> Result<(), Tra
         if !directory.is_dir() {
             continue;
         }
+        let update = index_from_update_path(&directory)?;
         restore_update_league_snapshot(root, &directory)?;
+        restore_update_pilot_path(root, &directory, update)?;
         if directory.join("stop.json").exists() {
-            let update = index_from_update_path(&directory)?;
             published_stop(root, &directory, update)?;
         }
     }
@@ -2740,14 +2776,12 @@ impl TrainingDriver {
         replace_bytes(&path, buf.as_bytes())
     }
 
-    fn write_pilot_path_sidecar(
+    fn pilot_path_sidecar_bytes(
         &self,
         update: u64,
         pilot: &PilotInfo,
         sample: &PodPilotSample,
-    ) -> Result<(), TrainingDriverError> {
-        let dir = self.config.root.join("pilot_path");
-        fs::create_dir_all(&dir)?;
+    ) -> Result<Vec<u8>, TrainingDriverError> {
         let sidecar = PilotPathUpdateSidecar {
             schema: PILOT_PATH_SCHEMA_V1.to_owned(),
             namespace: self.config.namespace.clone(),
@@ -2760,6 +2794,10 @@ impl TrainingDriver {
             sampled_games: sample.sampled_games,
             sampled_attempts: sample.sampled_attempts,
             sampled_decisions: sample.counts.decisions,
+            sampled_refused_decisions: sample.counts.refused_decisions,
+            offered_decisions_null: sample.counts.offered_decisions_null,
+            offered_actions_null: sample.counts.offered_actions_null,
+            chosen_null: sample.counts.chosen_null,
             offered_decisions_by_card: sample
                 .counts
                 .offered_decisions_by_card
@@ -2779,8 +2817,7 @@ impl TrainingDriver {
                 .map(|(k, &v)| (k.to_string(), v))
                 .collect(),
         };
-        let path = dir.join(format!("{}.json", update_name(update)));
-        replace_bytes(&path, &json_bytes(&sidecar)?)
+        json_bytes(&sidecar)
     }
 
     fn persist_pod(
@@ -2808,6 +2845,8 @@ impl TrainingDriver {
                     &bytes,
                 )
                 .map_err(CollectFailure::Error)?;
+                // Fail closed on timing-sidecar I/O failure so incomplete
+                // timing records are never silently dropped on a live host.
                 self.write_timing_sidecar(update, execution, out.record.pod_index, &out.timings)
                     .map_err(CollectFailure::Error)?;
                 if let (Some(agg), Some(pod_sample)) = (pilot_sample.as_mut(), &out.pilot_sample) {
@@ -3099,9 +3138,10 @@ impl TrainingDriver {
                 decoding: pin.decoding.clone(),
             },
         };
-        if let Some(sample) = &pilot_sample {
-            self.write_pilot_path_sidecar(update, &pilot_info, sample)?;
-        }
+        let pilot_path_bytes = pilot_sample
+            .as_ref()
+            .map(|sample| self.pilot_path_sidecar_bytes(update, &pilot_info, sample))
+            .transpose()?;
         let receipt = UpdateReceipt {
             before_state_sha256: before_state,
             after_state_sha256: state_pin.clone(),
@@ -3131,6 +3171,9 @@ impl TrainingDriver {
         write_synced(&pending.join("pods.json"), &pod_bytes)?;
         write_synced(&pending.join("checkpoint.json"), &json_bytes(&checkpoint)?)?;
         write_synced(&pending.join("update.json"), &json_bytes(&receipt)?)?;
+        if let Some(bytes) = &pilot_path_bytes {
+            write_synced(&pending.join("pilot_path.json"), bytes)?;
+        }
         if let Some(bytes) = &void_execution {
             write_synced(&pending.join("execution-0.json"), bytes)?;
         }
@@ -3168,6 +3211,7 @@ impl TrainingDriver {
         }
         let names = ["pods.json", "checkpoint.json", "update.json"]
             .into_iter()
+            .chain(pilot_path_bytes.is_some().then_some("pilot_path.json"))
             .chain(firing.is_some().then_some("stop.json"))
             .chain(league_snapshot_bytes.is_some().then_some("league.json"))
             .chain(void_execution.is_some().then_some("execution-0.json"));
@@ -3191,6 +3235,7 @@ impl TrainingDriver {
         sync_directory(&self.config.root.join("pending"))?;
         sync_directory(&self.config.root.join("updates"))?;
         restore_update_league_snapshot(&self.config.root, &published)?;
+        restore_update_pilot_path(&self.config.root, &published, update)?;
         published_stop(&self.config.root, &published, update)?;
         self.next_update += 1;
         self.model = model;

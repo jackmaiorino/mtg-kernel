@@ -173,21 +173,30 @@ pub(super) fn check_resume(
         // Recover a completed batch whose publication already logged an I/O stop.
         return Ok(None);
     }
+    let saved: RunConfig = read_json(&root.join("run.json"))?;
+    if saved.run != config.run || saved.namespace != config.namespace {
+        return Err(invalid("run id differs from the interrupted run"));
+    }
     let Some(proof) = &config.resume else {
-        let saved: RunConfig = read_json(&root.join("run.json"))?;
-        if saved.run != config.run || saved.namespace != config.namespace {
-            return Err(invalid("run id differs from the interrupted run"));
-        }
         published_update_indices(root)?;
+        if saved.host_loss_policy == HostLossPolicy::ReplayInterruptedBatch {
+            // M4-INTERFACES-v3 section 6 item 5: an unproven relaunch under
+            // L3 host-loss recovery fails closed without writing a terminal
+            // process_death stop record, leaving proof-backed recovery possible.
+            return Err(TrainingDriverError::ResumeAuthorizationRequired);
+        }
         record_process_death(config, completed.last().copied(), abandoned)?;
         return check_stop_ledger(root).map(|()| None);
     };
+    if saved.host_loss_policy != config.host_loss_policy {
+        return Err(invalid("resume changed host_loss_policy"));
+    }
     let next = completed.len() as u64;
     if completed.into_iter().ne(0..next) || next > config.update_range[1] {
         return Err(invalid("resume has no contiguous committed batch prefix"));
     }
     if let Some((abandoned_batch, _)) = &abandoned {
-        match config.host_loss_policy {
+        match saved.host_loss_policy {
             HostLossPolicy::AbandonTouchedBatch => {
                 return Err(invalid(
                     "host-loss resume cannot replay a batch that was touched",

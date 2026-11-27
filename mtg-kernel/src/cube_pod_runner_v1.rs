@@ -1277,15 +1277,21 @@ fn play_game_task(
             elapsed_ms,
             host: ctx.host.to_owned(),
         });
+        let pilot_watchdog = is_watchdog_end(&outcome.end);
+        let timed_out = pilot_watchdog || stalled;
         if sampled {
+            if !timed_out && outcome.decisions > 0 && outcome.pilot_sample.is_none() {
+                return Err(PodRunnerError::InvalidPlan(format!(
+                    "sampled pilot did not report pilot_sample counts on pod {} game {} attempt {} after {} decisions",
+                    ctx.pod_index, task.game, attempt, outcome.decisions
+                )));
+            }
             sample_attempts += 1;
             if let Some(counts) = &outcome.pilot_sample {
                 sample_counts.merge_from(counts);
             }
         }
 
-        let pilot_watchdog = is_watchdog_end(&outcome.end);
-        let timed_out = pilot_watchdog || stalled;
         let (
             end,
             halted,
@@ -1311,14 +1317,7 @@ fn play_game_task(
                 } else {
                     None
                 },
-                if outcome.decisions > 0 {
-                    outcome
-                        .first_player_seat
-                        .or(Some(task.seats[0]))
-                        .and_then(|s| u8::try_from(s).ok())
-                } else {
-                    None
-                },
+                outcome.first_player_seat.and_then(|s| u8::try_from(s).ok()),
                 None,
             )
         } else {
@@ -3289,14 +3288,16 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
         let _ = expect_array(&draft[4].1, "draft.pools")?;
     }
 
+    let mut chair_roles: BTreeMap<u64, &str> = BTreeMap::new();
     for (idx, chair) in expect_array(&top[11].1, "chairs")?.iter().enumerate() {
         let path = format!("chairs[{idx}]");
         let c = expect_object_keys(chair, &path, &["chair", "role", "picker", "pick_rows"])?;
-        let _ = expect_u64(&c[0].1, &format!("{path}.chair"))?;
+        let chair_id = expect_u64(&c[0].1, &format!("{path}.chair"))?;
         let role = expect_str(&c[1].1, &format!("{path}.role"))?;
         if !matches!(role, "learning" | "older" | "fixture") {
             return Err(format!("{path}.role: invalid value {role:?}"));
         }
+        chair_roles.insert(chair_id, role);
         validate_seat_ref(&c[2].1, &format!("{path}.picker"))?;
         for (r_idx, row) in expect_array(&c[3].1, &format!("{path}.pick_rows"))?
             .iter()
@@ -3306,6 +3307,7 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
         }
     }
 
+    let mut deck_meta: BTreeMap<u64, (&str, Option<u64>)> = BTreeMap::new();
     for (idx, deck) in expect_array(&top[12].1, "decks")?.iter().enumerate() {
         let path = format!("decks[{idx}]");
         let d = expect_object_keys(
@@ -3323,12 +3325,13 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
                 "dealt",
             ],
         )?;
-        let _ = expect_u64(&d[0].1, &format!("{path}.deck"))?;
+        let deck_id = expect_u64(&d[0].1, &format!("{path}.deck"))?;
         let source = expect_str(&d[1].1, &format!("{path}.source"))?;
         if !matches!(source, "build" | "dealt") {
             return Err(format!("{path}.source: invalid value {source:?}"));
         }
         let chair = expect_opt_u64(&d[2].1, &format!("{path}.chair"))?;
+        deck_meta.insert(deck_id, (source, chair));
         let build = expect_opt_u64(&d[3].1, &format!("{path}.build"))?;
         if !matches!(d[8].1, OrderedJson::Null) {
             let dealt =
@@ -3401,8 +3404,10 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
         if decks.len() != 2 {
             return Err(format!("{path}.decks: expected 2 deck ids"));
         }
-        let _ = expect_u64(&decks[0], &format!("{path}.decks[0]"))?;
-        let _ = expect_u64(&decks[1], &format!("{path}.decks[1]"))?;
+        let deck_ids = [
+            expect_u64(&decks[0], &format!("{path}.decks[0]"))?,
+            expect_u64(&decks[1], &format!("{path}.decks[1]"))?,
+        ];
         let chairs = expect_array(&g[5].1, &format!("{path}.chairs"))?;
         if chairs.len() != 2 {
             return Err(format!("{path}.chairs: expected 2 chair slots"));
@@ -3507,9 +3512,21 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
                         ));
                     }
                 }
-                if decisions == 0 && (last_seat.is_some() || last_arm.is_some()) {
+                if sk == Some(WATCHDOG_STOP_KIND) {
+                    if last_seat.is_some() || last_arm.is_some() {
+                        return Err(format!(
+                            "{ap}: terminal:watchdog must leave last_acting_seat and last_acting_arm null"
+                        ));
+                    }
+                } else if decisions == 0 {
+                    if last_seat.is_some() || last_arm.is_some() {
+                        return Err(format!(
+                            "{ap}: last_acting_seat and last_acting_arm must be null when decisions == 0"
+                        ));
+                    }
+                } else if first_seat.is_none() || last_seat.is_none() || last_arm.is_none() {
                     return Err(format!(
-                        "{ap}: last_acting_seat and last_acting_arm must be null when decisions == 0"
+                        "{ap}: first_player_seat, last_acting_seat, and last_acting_arm must be non-null when decisions > 0"
                     ));
                 }
                 if last_seat.is_some() != last_arm.is_some() {
@@ -3517,14 +3534,12 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
                         "{ap}: last_acting_seat and last_acting_arm must be null together"
                     ));
                 }
-                if let Some(s) = last_seat {
-                    if !seat_pair.contains(&s) {
+                if let (Some(s), Some(arm)) = (last_seat, last_arm) {
+                    let Some(pos) = seat_pair.iter().position(|&seat| seat == s) else {
                         return Err(format!(
                             "{ap}.last_acting_seat: {s} not in game seats {seat_pair:?}"
                         ));
-                    }
-                }
-                if let Some(arm) = last_arm {
+                    };
                     if !matches!(
                         arm,
                         "learning"
@@ -3544,6 +3559,22 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
                             | "fixture:stated"
                     ) {
                         return Err(format!("{ap}.last_acting_arm: invalid value {arm:?}"));
+                    }
+                    if !is_read_record {
+                        if let Some(&(source, chair_opt)) = deck_meta.get(&deck_ids[pos]) {
+                            let expected = if source == "dealt" {
+                                Some("dealt")
+                            } else {
+                                chair_opt.and_then(|c| chair_roles.get(&c).copied())
+                            };
+                            if let Some(expected_arm) = expected {
+                                if arm != expected_arm {
+                                    return Err(format!(
+                                        "{ap}.last_acting_arm: expected {expected_arm:?} for seat {s}, got {arm:?}"
+                                    ));
+                                }
+                            }
+                        }
                     }
                 }
             }

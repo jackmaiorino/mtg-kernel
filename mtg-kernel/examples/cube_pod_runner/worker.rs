@@ -261,7 +261,7 @@ impl AttemptWorker {
                     policy_steps: None,
                     end: watchdog_game_end(),
                     last_action_source: None,
-                    first_player_seat: (last_count > 0).then_some(spec.seats[0]),
+                    first_player_seat: None,
                     last_acting_seat: None,
                     pilot_sample: None,
                 });

@@ -90,6 +90,50 @@ class PodRecordV3Tests(unittest.TestCase):
         with self.assertRaises(pod_record.RecordError):
             pod_record.validate_record(mixed)
 
+        # Reject non-watchdog attempt with decisions > 0 and null last_acting_seat.
+        missing_actor = copy.deepcopy(rec_v3)
+        missing_actor["games"][1]["attempts"][0]["last_acting_seat"] = None
+        missing_actor["games"][1]["attempts"][0]["last_acting_arm"] = None
+        with self.assertRaises(pod_record.RecordError):
+            pod_record.validate_record(missing_actor)
+
+        # Allow watchdog attempt with decisions > 0 and null attribution, and reject non-null arm on watchdog.
+        wd_ok = copy.deepcopy(rec_v3)
+        g1 = wd_ok["games"][1]
+        a0 = g1["attempts"][0]
+        a0["end"] = {
+            "kind": "terminal",
+            "code": "watchdog",
+            "classification": "watchdog",
+            "reason": "watchdog_seconds",
+        }
+        a0["halted"] = True
+        a0["stop_kind"] = "terminal:watchdog"
+        a0["last_action_source"] = None
+        a0["first_player_seat"] = None
+        a0["last_acting_seat"] = None
+        a0["last_acting_arm"] = None
+        g1["scores"] = None
+        wd_ok["halts"] = [
+            {
+                "game": g["game"],
+                "attempt": a["attempt"],
+                "stop_kind": a["stop_kind"],
+                "last_action_source": a["last_action_source"],
+                "deal_seed": a["deal_seed"],
+            }
+            for g in wd_ok["games"]
+            for a in g["attempts"]
+            if a["halted"]
+        ]
+        pod_record.validate_record(wd_ok)
+
+        wd_bad = copy.deepcopy(wd_ok)
+        wd_bad["games"][1]["attempts"][0]["last_acting_seat"] = wd_bad["games"][1]["chairs"][0]
+        wd_bad["games"][1]["attempts"][0]["last_acting_arm"] = "learning:candidate"
+        with self.assertRaises(pod_record.RecordError):
+            pod_record.validate_record(wd_bad)
+
     def test_readers_halts_and_lengths_emits_v3_breakdowns_and_preserves_v2(self):
         plan = synth.plan("aa", 0, mirror=0)
         rec_v2 = synth.record(plan, lambda _p, _g, _f: "draw")
