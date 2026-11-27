@@ -2548,9 +2548,10 @@ fn validate_cast_life_x(
                 .iter()
                 .any(|&id| {
                     state.objects.try_get(id).is_none_or(|live| {
-                        world.objects.try_get(id).is_none_or(|prior| {
-                            prior.owner != live.owner || prior.card_def != live.card_def
-                        })
+                        world
+                            .objects
+                            .try_get(id)
+                            .is_none_or(|prior| prior.owner != live.owner)
                     })
                 })
         {
@@ -23324,6 +23325,21 @@ fn validated_stack_item_target_metadata(
                             ) || matches!(
                                 event,
                                 CommittedEvent::Transformed { object, .. } if *object == target
+                            ) || matches!(
+                                event,
+                                CommittedEvent::ZoneChange {
+                                    from: Zone::Battlefield,
+                                    ..
+                                }
+                            ) || matches!(
+                                event,
+                                CommittedEvent::Targeted {
+                                    targeting_stack_item,
+                                    ..
+                                } if *targeting_stack_item != item.v4.stack_item_id
+                            ) || matches!(
+                                event,
+                                CommittedEvent::SpellCast { spell, .. } if *spell != item.source
                             )
                         })
                 });

@@ -4056,6 +4056,55 @@ mod cast_x_routes {
         settled(&mut restored_faceup);
         assert!(restored_faceup.engine.halted.is_none());
 
+        // 3b. A Phyrexian Metamorph copying Bloodletter of Aclazotz is exiled
+        //     in response (reverting its card_def to Phyrexian Metamorph) while
+        //     Fire Covenant waits on the stack: genuine restore settles cleanly.
+        let mut state = plains();
+        let orig_bl = put(&mut state, P1, "Bloodletter of Aclazotz", Zone::Battlefield);
+        let metamorph = put(&mut state, P1, "Phyrexian Metamorph", Zone::Hand);
+        let target_creature = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        pass_until(&mut state, |s| {
+            s.active_player == P1 && s.step == Step::Main1
+        });
+        pool(&mut state, P1, &[ManaColor::U], 3);
+        act(&mut state, Action::CastSpell(metamorph));
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets { .. } => {
+                Action::ChooseEffectTarget(Target::Object(orig_bl))
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+        let swords = put(&mut state, P0, "Swords to Plowshares", Zone::Hand);
+        let covenant = free_exile(&mut state, "Fire Covenant");
+        let _ = next(&mut state);
+        act(&mut state, Action::Pass);
+        let _ = next(&mut state);
+        act(&mut state, Action::CastSpell(covenant));
+        for _ in 0..3 {
+            let _ = next(&mut state);
+            act(
+                &mut state,
+                Action::ChooseTarget(Target::Object(target_creature)),
+            );
+        }
+        let _ = next(&mut state);
+        act(&mut state, Action::FinishEffectSelection);
+        cast_finished(&mut state);
+        assert_eq!(life(&state, P0), 8, "original + Metamorph Bloodletter = 12");
+        pool(&mut state, P0, &[ManaColor::W], 0);
+        cast(&mut state, swords, &[Target::Object(metamorph)]);
+        cast_finished(&mut state);
+        while state.stack.len() > 1 {
+            let _ = next(&mut state);
+            act(&mut state, Action::Pass);
+        }
+        let _ = next(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Exile);
+        let mut restored_copy_exiled = restore(&state);
+        settled(&mut restored_copy_exiled);
+        assert!(restored_copy_exiled.engine.halted.is_none());
+
         // 4. Zero Bloodletters on P1's turn: genuine X = 3 loses 3; forging
         //    LifeLoss { amount: 6 } + receipt loss = 6 must be refused.
         let mut state = plains();
