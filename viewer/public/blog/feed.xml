@@ -5,9 +5,17 @@
   <link rel="self" href="https://mtg-kernel.github.io/mtg-kernel/blog/feed.xml"/>
   <link rel="alternate" href="https://mtg-kernel.github.io/mtg-kernel/blog/"/>
   <id>https://mtg-kernel.github.io/mtg-kernel/blog/</id>
-  <updated>2026-11-21T12:01:00Z</updated>
+  <updated>2026-11-27T13:00:00Z</updated>
   <author><name>MTG Kernel</name></author>
   <!-- Newest first. The weekly task adds one <entry> per post and updates <updated> above. -->
+  <entry>
+    <title>#2: A new top bot, a search miss, and Vintage Cube's first run</title>
+    <link rel="alternate" href="https://mtg-kernel.github.io/mtg-kernel/blog/2026-11-27-basilisk-3/"/>
+    <id>https://mtg-kernel.github.io/mtg-kernel/blog/2026-11-27-basilisk-3/</id>
+    <published>2026-11-27T08:00:00-05:00</published>
+    <updated>2026-11-27T13:00:00Z</updated>
+    <summary>Basilisk 3 took first place on the Spellbench Pauper leaderboard at 1,619.5 Elo, lookahead search missed in a 900-decision screen, and Vintage Cube finished its first shakedown under random play.</summary>
+  </entry>
   <entry>
     <title>#1: A bot that taught itself Magic is still getting better</title>
     <link rel="alternate" href="https://mtg-kernel.github.io/mtg-kernel/blog/2026-11-20-still-climbing/"/>
