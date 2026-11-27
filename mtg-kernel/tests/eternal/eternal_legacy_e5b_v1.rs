@@ -1291,50 +1291,92 @@ fn miracle_pauses_paradoxical_outcome_draws_without_a_dredger() {
 fn a_restored_draw_step_wait_needs_its_reveal_and_the_riddler_draws_it_names() {
     use mtg_kernel::eternal_vintage_e7b_v1::OptionalRemainingV1;
 
-    // With two cards in hand before the draw, Quantum Riddler adds no draw
-    // (121.2b): the draw step draws Terminus alone and nothing waits.
-    let mut state = game(&["Island"; 4]);
+    for riddlers in 1..=2 {
+        // With two cards in hand before the draw, neither Riddler adds a draw
+        // (121.2b): the draw step draws Terminus alone and nothing waits.
+        let mut state = game(&["Island"; 4]);
+        state.active_player = P1;
+        state.priority_player = P1;
+        let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+        for _ in 0..riddlers {
+            put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+        }
+        put(&mut state, P0, "Island", Zone::Hand);
+        put(&mut state, P0, "Island", Zone::Hand);
+        pass_until(&mut state, |state| {
+            state.active_player == P0 && state.step == Step::Draw
+        });
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                player: P0,
+                source,
+                option_count: 2,
+            } if source == terminus
+        ));
+        assert_eq!(state.players[0].draws_this_turn, 1);
+        let waiting = |state: &GameState| {
+            let mut forged = state.clone();
+            forged.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining =
+                OptionalRemainingV1(Some(1));
+            forged
+        };
+        // A restored wait for a draw the hand before the draw never earned.
+        let mut extra = waiting(&state);
+        assert!(engine::step(&mut extra.clone(), Action::ChooseEffectOption(0)).is_err());
+        assert!(matches!(
+            engine::advance_until_decision(&mut extra),
+            Decision::Halted { .. }
+        ));
+        act(&mut state, Action::ChooseEffectOption(0));
+        settled(&mut state);
+        assert_eq!(state.players[0].hand.len(), 3);
+        // A restored wait with no reveal pending: `step` refuses it as
+        // `advance` does.
+        let mut unrevealed = waiting(&state);
+        assert!(engine::step(&mut unrevealed.clone(), Action::Pass).is_err());
+        assert!(matches!(
+            engine::advance_until_decision(&mut unrevealed),
+            Decision::Halted { .. }
+        ));
+    }
+}
+
+#[test]
+fn a_restored_miracle_wait_keeps_the_two_riddler_attempts_left_after_dredge() {
+    let mut state = game(&["Island", "Island", "Island", "Terminus", "Island", "Island"]);
     state.active_player = P1;
     state.priority_player = P1;
-    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
-    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    let miracle = state.players[0].library[3];
+    let later = state.players[0].library[4];
+    let dredger = put(&mut state, P0, "Shambling Shell", Zone::Graveyard);
     put(&mut state, P0, "Island", Zone::Hand);
-    put(&mut state, P0, "Island", Zone::Hand);
+    for _ in 0..2 {
+        put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    }
     pass_until(&mut state, |state| {
         state.active_player == P0 && state.step == Step::Draw
     });
     assert!(matches!(
         next(&mut state),
-        Decision::ChooseEffectOption {
-            player: P0,
-            source,
-            option_count: 2,
-        } if source == terminus
+        Decision::ChooseEffectOption { player: P0, source, option_count: 2 } if source == dredger
     ));
-    assert_eq!(state.players[0].draws_this_turn, 1);
-    let waiting = |state: &GameState| {
-        let mut forged = state.clone();
-        forged.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining = OptionalRemainingV1(Some(1));
-        forged
-    };
-    // A restored wait for a draw the hand before the draw never earned.
-    let mut extra = waiting(&state);
-    assert!(engine::step(&mut extra.clone(), Action::ChooseEffectOption(0)).is_err());
+    act(&mut state, Action::ChooseEffectOption(1));
     assert!(matches!(
-        engine::advance_until_decision(&mut extra),
-        Decision::Halted { .. }
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, option_count: 2 } if source == miracle
     ));
-    act(&mut state, Action::ChooseEffectOption(0));
-    settled(&mut state);
     assert_eq!(state.players[0].hand.len(), 3);
-    // A restored wait with no reveal pending: `step` refuses it as
-    // `advance` does.
-    let mut unrevealed = waiting(&state);
-    assert!(engine::step(&mut unrevealed.clone(), Action::Pass).is_err());
-    assert!(matches!(
-        engine::advance_until_decision(&mut unrevealed),
-        Decision::Halted { .. }
-    ));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(zone(&state, later), Zone::Library);
+
+    let snapshot = serde_json::to_vec(&state).unwrap();
+    let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+    act(&mut restored, Action::ChooseEffectOption(0));
+    settled(&mut restored);
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(restored.players[0].draws_this_turn, 2);
+    assert_eq!(zone(&restored, later), Zone::Hand);
 }
 
 // ---- Leyline Binding and Static Prison ---------------------------------------------
