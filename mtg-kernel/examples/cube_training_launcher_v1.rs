@@ -1,5 +1,5 @@
 //! D8 learned training. Invoke once per segment and stage:
-//! `cube_training_launcher_v1 prepare|run ROOT b1|k1 INPUTS.json --threads N`.
+//! `cube_training_launcher_v1 prepare|run ROOT b<n>|k<n> INPUTS.json --threads N`.
 //! For a host-loss resume, append `--resume-entry SEQ --records-repository PATH`.
 //! Paths in INPUTS are relative to the working directory. Each of cube_table,
 //! cube_list, ordered_pool, card_database (cube_card_ids/v1 export), fence,
@@ -27,9 +27,9 @@ use mtg_kernel::cube_pod_runner_v1::{seed, PodPins, SeedPart};
 use mtg_kernel::cube_read_plan_v1::{sha256_hex, shakedown_entry_values};
 use mtg_kernel::cube_seat_v1::GamePilot;
 use mtg_kernel::cube_training_driver_v1::{
-    CensusBaselineFiles, CensusBaselinePin, OpenIntent, PilotPin, PilotProvider,
-    ResumeAuthorization, RunConfig, RunOutcome, Segment, TrainingDriver, TrainingDriverError,
-    TripwireMode, UniformOnlyPilotProvider,
+    load_checkpoint_read_only_bytes_v1, CensusBaselineFiles, CensusBaselinePin, OpenIntent,
+    PilotPin, PilotProvider, ResumeAuthorization, RunConfig, RunOutcome, Segment, TrainingDriver,
+    TrainingDriverError, TripwireMode, UniformOnlyPilotProvider,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -116,6 +116,7 @@ struct Inputs {
     card_index_sha256: String,
     binary_sha256: String,
     initial_state_sha256: String,
+    initial_checkpoint: Option<Pinned>,
     baseline: Option<Baseline>,
     builder_baseline: Option<Baseline>,
 }
@@ -243,11 +244,8 @@ impl Inputs {
     }
 
     fn config(&self, args: &Args, data: &Data) -> ResultBox<RunConfig> {
-        let segment = if args.run == "b1" {
-            Segment::BuilderOnly
-        } else {
-            Segment::PickPhase
-        };
+        let (segment, _) =
+            parse_training_run(&args.run).ok_or("invalid stage, segment or thread count")?;
         let mut cfg = RunConfig::shakedown(args.root.join(&args.run), &args.run, segment);
         cfg.workers = args.threads;
         if self.host.trim().is_empty() || self.build_profile.trim().is_empty() {
@@ -278,6 +276,10 @@ impl Inputs {
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.clone()))
         .collect();
+        if let Some(ic) = &self.initial_checkpoint {
+            cfg.launch_pins
+                .insert("initial_checkpoint".to_owned(), ic.sha256.clone());
+        }
         cfg.metadata.card_database_sha256 = format!("{KERNEL_CARDDB_HASH:016x}");
         cfg.metadata.column_scales = data.table.divisors().iter().map(|&v| v as u32).collect();
         cfg.metadata.dense_fields = data
@@ -302,6 +304,21 @@ impl Inputs {
     }
 }
 
+fn parse_training_run(run: &str) -> Option<(Segment, u64)> {
+    let (segment, digits) = if let Some(rest) = run.strip_prefix('b') {
+        (Segment::BuilderOnly, rest)
+    } else if let Some(rest) = run.strip_prefix('k') {
+        (Segment::PickPhase, rest)
+    } else {
+        return None;
+    };
+    if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let generation: u64 = digits.parse().ok()?;
+    (generation >= 1).then_some((segment, generation))
+}
+
 #[derive(Clone)]
 struct Args {
     prepare: bool,
@@ -314,11 +331,11 @@ struct Args {
 impl Args {
     fn parse(args: &[String]) -> ResultBox<Self> {
         let [stage, root, run, inputs, threads_flag, threads, rest @ ..] = args else {
-            return Err("usage: prepare|run ROOT b1|k1 INPUTS.json --threads N [--resume-entry SEQ --records-repository PATH]".into());
+            return Err("usage: prepare|run ROOT b<n>|k<n> INPUTS.json --threads N [--resume-entry SEQ --records-repository PATH]".into());
         };
         let threads = threads.parse()?;
         if !matches!(stage.as_str(), "prepare" | "run")
-            || !matches!(run.as_str(), "b1" | "k1")
+            || parse_training_run(run).is_none()
             || threads_flag != "--threads"
             || threads == 0
         {
@@ -467,20 +484,18 @@ fn execute(
     } else {
         verify_run(&config, entry.ok_or("missing training_run entry")?)?;
     }
-    let init = seed(&[
-        SeedPart::Str("shakedown-pods"),
-        SeedPart::Str("pod"),
-        SeedPart::Str("i1"),
-        SeedPart::Int(0),
-    ])?;
     let run_path = config.root.join("run.json");
     config.preflight_open()?;
-    let mut builder_config = if config.segment == Segment::BuilderOnly {
+    let (_, generation) =
+        parse_training_run(&args.run).ok_or("invalid stage, segment or thread count")?;
+    let builder_run = format!("b{generation}");
+    let is_builder = config.segment == Segment::BuilderOnly;
+    let mut builder_config = if is_builder {
         config.clone()
     } else {
         inputs.config(
             &Args {
-                run: "b1".into(),
+                run: builder_run.clone(),
                 resume: None,
                 ..args.clone()
             },
@@ -488,46 +503,131 @@ fn execute(
         )?
     };
     builder_config.update_range = config.update_range;
-    if TrainingDriver::initial_state_sha256(&builder_config, &data.rows, init)?
-        != inputs.initial_state_sha256
-    {
-        return Err("initial checkpoint state sha256 mismatch".into());
-    }
-    if (!args.prepare && args.run == "b1") || (args.prepare && args.run == "k1") {
-        let path = builder_config.root.join("initial/checkpoint.json");
-        if stored_state_sha256(&path)? != inputs.initial_state_sha256 {
-            return Err("stored builder initial checkpoint state sha256 mismatch".into());
-        }
-    }
     let tripwire = serde_json::to_value(&config.tripwire)?;
-    let mut driver = if args.run == "k1" && args.prepare {
-        let builder_entry = training_entry(&data.entries, "b1")?.ok_or("missing b1 entry")?;
-        let mut previous = builder_config;
-        previous.open_intent = OpenIntent::ReadCompletedBuilder;
-        previous.manifest_prefix_sha256 = Some(
-            builder_entry["prefix_sha256"]
-                .as_str()
-                .ok_or("missing b1 prefix")?
-                .to_owned(),
-        );
-        previous.tripwire = serde_json::from_value(builder_entry["tripwire"].clone())?;
-        if let TripwireMode::Full { baseline } = &previous.tripwire {
-            let evidence = inputs
-                .builder_baseline
-                .as_ref()
-                .or(inputs.baseline.as_ref())
-                .filter(|b| &b.pin == baseline)
-                .ok_or("missing evidence for b1's full-mode baseline")?;
-            previous.tripwire_files = Some(evidence.files());
+    let mut driver = if generation == 1 {
+        if inputs.initial_checkpoint.is_some() {
+            return Err(
+                "first-run segment derives checkpoint 0 from i1; omit initial_checkpoint".into(),
+            );
         }
-        let saved = verify_run(&previous, builder_entry)?;
-        previous.workers = saved.workers;
-        previous.host = saved.host;
-        previous.preflight_open()?;
-        let builder = TrainingDriver::open(previous, data.rows.clone(), init)?;
-        TrainingDriver::start_pick_phase(&builder, config)?
+        let init = seed(&[
+            SeedPart::Str("shakedown-pods"),
+            SeedPart::Str("pod"),
+            SeedPart::Str("i1"),
+            SeedPart::Int(0),
+        ])?;
+        if TrainingDriver::initial_state_sha256(&builder_config, &data.rows, init)?
+            != inputs.initial_state_sha256
+        {
+            return Err("initial checkpoint state sha256 mismatch".into());
+        }
+        if (!args.prepare && is_builder) || (args.prepare && !is_builder) {
+            let path = builder_config.root.join("initial/checkpoint.json");
+            if stored_state_sha256(&path)? != inputs.initial_state_sha256 {
+                return Err("stored builder initial checkpoint state sha256 mismatch".into());
+            }
+        }
+        if !is_builder && args.prepare {
+            let builder_entry = training_entry(&data.entries, &builder_run)?
+                .ok_or_else(|| format!("missing {builder_run} entry"))?;
+            let mut previous = builder_config;
+            previous.open_intent = OpenIntent::ReadCompletedBuilder;
+            previous.manifest_prefix_sha256 = Some(
+                builder_entry["prefix_sha256"]
+                    .as_str()
+                    .ok_or_else(|| format!("missing {builder_run} prefix"))?
+                    .to_owned(),
+            );
+            previous.tripwire = serde_json::from_value(builder_entry["tripwire"].clone())?;
+            if let TripwireMode::Full { baseline } = &previous.tripwire {
+                let evidence = inputs
+                    .builder_baseline
+                    .as_ref()
+                    .or(inputs.baseline.as_ref())
+                    .filter(|b| &b.pin == baseline)
+                    .ok_or_else(|| {
+                        format!("missing evidence for {builder_run}'s full-mode baseline")
+                    })?;
+                previous.tripwire_files = Some(evidence.files());
+            }
+            let saved = verify_run(&previous, builder_entry)?;
+            previous.workers = saved.workers;
+            previous.host = saved.host;
+            previous.preflight_open()?;
+            let builder = TrainingDriver::open(previous, data.rows.clone(), init)?;
+            TrainingDriver::start_pick_phase(&builder, config)?
+        } else {
+            TrainingDriver::open(config, data.rows, init)?
+        }
     } else {
-        TrainingDriver::open(config, data.rows, init)?
+        // D0.12 / D0.18: a restart loads the archived pinned initial checkpoint and draws no seed again.
+        let archived = inputs
+            .initial_checkpoint
+            .as_ref()
+            .ok_or("restart run requires pinned initial_checkpoint file (D0.12 / D0.18)")?;
+        let archived_bytes = archived.read()?;
+        let (source_ckpt, _, _) = load_checkpoint_read_only_bytes_v1(&archived_bytes, &data.table)?;
+        if source_ckpt.state_sha256 != inputs.initial_state_sha256 {
+            return Err("archived initial checkpoint state sha256 mismatch".into());
+        }
+        if (!args.prepare && is_builder) || (args.prepare && !is_builder) {
+            let expected_initial_sha = TrainingDriver::initial_state_sha256_from_checkpoint(
+                &builder_config,
+                &data.rows,
+                &source_ckpt,
+                &inputs.initial_state_sha256,
+            )?;
+            let path = builder_config.root.join("initial/checkpoint.json");
+            let stored_bytes = fs::read(&path)?;
+            let (stored, _, _) = load_checkpoint_read_only_bytes_v1(&stored_bytes, &data.table)?;
+            if stored.state_sha256 != expected_initial_sha {
+                return Err("stored builder initial checkpoint state sha256 mismatch".into());
+            }
+        }
+        if is_builder {
+            TrainingDriver::open_from_initial_checkpoint(
+                config,
+                data.rows,
+                &source_ckpt,
+                &inputs.initial_state_sha256,
+            )?
+        } else if args.prepare {
+            let builder_entry = training_entry(&data.entries, &builder_run)?
+                .ok_or_else(|| format!("missing {builder_run} entry"))?;
+            let mut previous = builder_config;
+            previous.open_intent = OpenIntent::ReadCompletedBuilder;
+            previous.manifest_prefix_sha256 = Some(
+                builder_entry["prefix_sha256"]
+                    .as_str()
+                    .ok_or_else(|| format!("missing {builder_run} prefix"))?
+                    .to_owned(),
+            );
+            previous.tripwire = serde_json::from_value(builder_entry["tripwire"].clone())?;
+            if let TripwireMode::Full { baseline } = &previous.tripwire {
+                let evidence = inputs
+                    .builder_baseline
+                    .as_ref()
+                    .or(inputs.baseline.as_ref())
+                    .filter(|b| &b.pin == baseline)
+                    .ok_or_else(|| {
+                        format!("missing evidence for {builder_run}'s full-mode baseline")
+                    })?;
+                previous.tripwire_files = Some(evidence.files());
+            }
+            let saved = verify_run(&previous, builder_entry)?;
+            previous.workers = saved.workers;
+            previous.host = saved.host;
+            previous.preflight_open()?;
+            let builder = TrainingDriver::open_from_initial_checkpoint(
+                previous,
+                data.rows.clone(),
+                &source_ckpt,
+                &inputs.initial_state_sha256,
+            )?;
+            TrainingDriver::start_pick_phase(&builder, config)?
+        } else {
+            TrainingDriver::open_existing_pick_phase(config, data.rows)?
+        }
     };
     if args.prepare {
         if driver.next_update() != 0 {
