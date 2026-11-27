@@ -1252,7 +1252,7 @@ fn draw_tail_matches(
     tail: &[EffectFrame],
 ) -> bool {
     if matches!(instruction, InstructionV1::StagedRootV1 { .. }) {
-        crate::effect::exact_staged_draw_root(state, pending)
+        crate::effect::occult_draw_root(state, pending)
             .is_some_and(|(_, _, expected)| tail == expected)
     } else {
         tail.is_empty()
@@ -1340,6 +1340,9 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
     portent::validate_parent(state, pending)?;
     if state.eternal_owned_draw_progress_v1.is_none() {
+        if staged::validate_idle(state, pending)? {
+            return Ok(());
+        }
         if denial::validate_idle(state, pending)? {
             return Ok(());
         }

@@ -13572,31 +13572,39 @@ fn plain_draw_instruction(
     Some((player, count))
 }
 
-fn exact_leaf_staged_draw(
+fn occult_staged_draw(
     leaf: &EffectOp,
     path: &[u16],
-    ctx: &ExecCtx,
+    pending: &EffectContinuation,
     state: &GameState,
 ) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
-    let draw = leaf_staged_draw(leaf, path, ctx, state)?;
-    // These leaves expose only a maximum to the continuation validator.
-    // Their native count must be bound before replacement can suspend them.
-    (draw.1 != u32::MAX
-        && !matches!(
+    use crate::eternal_cards_v1::EternalOpV1;
+    use crate::eternal_cube_c1a_v1::C1aOpV1;
+    use crate::standard_cards_v1::StandardOpV1;
+
+    let item = &pending.resolving_item;
+    if !path.is_empty()
+        || item.kind != StackItemKind::Spell
+        || item.is_copy
+        || item.inline_effect.is_some()
+        || !matches!(
             leaf,
-            EffectOp::StandardV1(
-                crate::standard_cards_v1::StandardOpV1::MayDiscardUpToThenDraw { .. }
-            )
-        ))
-    .then_some(draw)
+            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C1aV1(
+                C1aOpV1::OccultEpiphanyV1
+            )))
+        )
+    {
+        return None;
+    }
+    leaf_staged_draw(leaf, path, &pending.ctx, state)
 }
 
-pub(crate) fn exact_staged_draw_root(
+pub(crate) fn occult_draw_root(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
     let root = validated_definition_owned_root_effect(state, pending).ok()?;
-    exact_leaf_staged_draw(&root, &[], &pending.ctx, state)
+    occult_staged_draw(&root, &[], pending, state)
 }
 
 #[cfg(feature = "eternal-fixtures")]
@@ -13607,10 +13615,8 @@ struct MiracleDrawSite {
     staged: bool,
 }
 
-/// A printed draw or a native leaf with a known draw count and known
-/// frames underneath it. The latter includes the discard staged by Occult
-/// Epiphany. A leaf whose validator knows only an upper bound needs its own
-/// receipt to distinguish the original draw from a post-replacement remainder.
+/// A printed draw or Occult Epiphany's native draw and following discard.
+/// Occult's printed count and discard frames are bound to the same resolution.
 #[cfg(feature = "eternal-fixtures")]
 fn miracle_draw_site(
     state: &GameState,
@@ -13623,7 +13629,7 @@ fn miracle_draw_site(
     let (player, count, staged_below) = match plain {
         Some((player, count)) => (player, count, Vec::new()),
         None => {
-            let Some(draw) = exact_leaf_staged_draw(printed, path, &pending.ctx, state) else {
+            let Some(draw) = occult_staged_draw(printed, path, pending, state) else {
                 return Ok(None);
             };
             draw

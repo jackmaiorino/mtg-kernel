@@ -7,6 +7,7 @@ use crate::eternal_catalog_v1::{in_parallel, play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
+use mtg_kernel::effect::{EffectFrame, EffectOp, PlayerRef};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -2312,9 +2313,53 @@ fn occult_epiphany_fixes_riddler_attempts_before_dredge_and_miracle() {
     assert_eq!(state.players[0].draws_this_turn, 1);
     assert_eq!(zone(&state, later), Zone::Library);
 
+    let discard = state.engine.pending_effect.as_ref().unwrap().frames[0].clone();
+    let mut early = state.clone();
+    early.engine.pending_effect.as_mut().unwrap().frames = vec![discard.clone()];
+    let mut early = serde_json::to_value(early).unwrap();
+    assert!(early
+        .as_object_mut()
+        .unwrap()
+        .remove("eternal_owned_draw_progress_v1")
+        .is_some());
+    let mut early: GameState = serde_json::from_value(early).unwrap();
+    assert!(engine::step(&mut early, Action::ChooseEffectOption(0)).is_err());
+
     let mut restored: GameState =
         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
     act(&mut restored, Action::ChooseEffectOption(0));
+    assert!(matches!(
+        settle(&mut restored),
+        Some(Decision::ChooseEffectTargets { legal_targets, can_finish: true, .. })
+            if legal_targets == [Target::Object(shenanigans)]
+    ));
+    act(&mut restored, Action::FinishEffectSelection);
+    assert!(matches!(
+        settle(&mut restored),
+        Some(Decision::ChooseEffectTargets {
+            min_targets: 2,
+            max_targets: 2,
+            ..
+        })
+    ));
+
+    let mut replay = restored.clone();
+    let pending = replay.engine.pending_effect.as_mut().unwrap();
+    pending.choice = None;
+    pending.frames = vec![
+        discard,
+        EffectFrame::Program {
+            op: EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+            path: Vec::new(),
+        },
+    ];
+    assert!(matches!(
+        engine::advance_until_decision(&mut replay),
+        Decision::Halted { .. }
+    ));
     settle_with(&mut restored, choose_cards(vec![imp, miracle]));
     assert_eq!(restored.players[0].draws_this_turn, 2);
     assert_eq!(restored.players[0].hand, [later]);
