@@ -130,7 +130,7 @@ fn e3(state: &GameState) -> Option<&E3StateV1> {
     state.eternal_v1.as_ref()?.e3.as_deref()
 }
 
-fn e3_mut(state: &mut GameState) -> &mut E3StateV1 {
+pub(crate) fn e3_mut(state: &mut GameState) -> &mut E3StateV1 {
     state
         .eternal_v1
         .get_or_insert_with(Default::default)

@@ -1092,6 +1092,7 @@ fn become_absorbing_copy(
     host: ObjectId,
     target: ObjectId,
     until_turn_of: PlayerId,
+    stack_item: Option<crate::ids::StackItemId>,
 ) {
     let target_live = state.objects.get(target);
     if target_live.v4.face_down_v1.is_some() {
@@ -1125,6 +1126,7 @@ fn become_absorbing_copy(
     copied_subtypes.dedup();
     let copied_ward = ObjectStateV4::from_card_def(copied_def).ward_generic;
 
+    let target_link = live_link(state, target);
     let link = live_link(state, host);
     let own_def = state.objects.get(host).card_def;
     let existing = absorbing_copy_index(state, host);
@@ -1160,6 +1162,18 @@ fn become_absorbing_copy(
         link.zone_change_count,
         &[own_def, copied_def],
     );
+    if let Some(stack_item) = stack_item {
+        crate::copy_entry_v1::record_absorbing_copy_applied(
+            state,
+            link,
+            target_link,
+            until_turn_of,
+            copied_def,
+            copied_face,
+            copied_adds_artifact,
+            stack_item,
+        );
+    }
 }
 
 fn restore_absorbing_copy(state: &mut GameState, record: AbsorbingCopyV1) {
@@ -1592,7 +1606,7 @@ pub(crate) fn execute(op: &C8cOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let Some(host) = live_ability_source(ctx, state) else {
                 return;
             };
-            become_absorbing_copy(state, host, target, ctx.controller);
+            become_absorbing_copy(state, host, target, ctx.controller, ctx.stack_item_id);
         }
         C8cOpV1::EliteSpellbinderEtbV1
         | C8cOpV1::LibrarianEtbV1

@@ -2338,6 +2338,11 @@ pub enum CommittedEvent {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         bloodletters: Vec<crate::state::ObjectLinkV4>,
     },
+    /// History-only provenance receipts emitted in Eternal builds to bind
+    /// completed noncast copy validation to exact entry-time effects and lineage.
+    CopyEntryProvenanceV1 {
+        journal: Box<crate::copy_entry_v1::ProvenanceV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3899,7 +3904,12 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
-fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
+fn propose_event(state: &mut GameState, mut event: ProposedEvent, individual_draw: bool) {
+    if !crate::linked_aura_operation_v1::prepare_copy_batch(state, std::slice::from_mut(&mut event))
+        || crate::linked_aura_operation_v1::kept_in_graveyard(state, &event)
+    {
+        return;
+    }
     if refuse_unowned_donated_damage(state, &event) {
         return;
     }
@@ -4824,7 +4834,9 @@ fn commit_with_entry_batch_and_source_color(
                 let live = state.objects.get(change.object);
                 let characteristics = entry_context.0.as_ref().map(|(_, entry)| entry);
                 (
-                    metamorph_mage_copy.map_or(live.card_def, |copy| copy.copied.card_def),
+                    metamorph_mage_copy
+                        .as_ref()
+                        .map_or(live.card_def, |copy| copy.copied.card_def),
                     live.zone == Zone::Stack
                         && state.engine.pending_kicked_source == Some(change.object),
                     characteristics.is_some_and(|entry| entry.face_down.is_some()),
@@ -5309,6 +5321,15 @@ fn commit_with_entry_batch_and_source_color(
             ..
         }
     );
+    // CR 614.6: a zone change redirected by a replacement never made the
+    // proposed battlefield entry. Both copy receipts follow the committed move.
+    let mut metamorph_mage_copy = metamorph_mage_copy.filter(|copy| {
+        matches!(&committed, CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, .. }
+            if *object == copy.physical.source && *from == copy.physical.zone)
+    });
+    if let Some(copy) = metamorph_mage_copy.as_mut() {
+        copy.record_prepared(state);
+    }
     let entry_history_index = state.engine.event_history.len();
     if let CommittedEvent::Damage { source, target, .. } = &committed {
         for (object, owner) in damage_public_owners {
@@ -5359,19 +5380,17 @@ fn commit_with_entry_batch_and_source_color(
         crate::full_text_v1::record_departure(state, entry_history_index, departure);
     }
     if let Some(copy) = metamorph_mage_copy {
-        if matches!(state.engine.event_history.get(entry_history_index),
-            Some(CommittedEvent::ZoneChange { object, from, to: Zone::Battlefield, .. })
-                if *object == copy.physical.source && *from == copy.physical.zone)
-            && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
-                state,
-                copy,
-                entry_history_index,
-            )
-            .is_err()
+        let physical = copy.physical.source;
+        if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::record_metamorph_copy(
+            state,
+            copy,
+            entry_history_index,
+        )
+        .is_err()
         {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                copy.physical.source,
+                physical,
             ));
             return;
         }
@@ -6071,6 +6090,10 @@ impl FinalZonePtPlanV1 {
                 // against its real materialized row. Reuse the existing private
                 // constructor in this discarded scene; do not approximate that
                 // boost by merely writing v4.chosen_color.
+                let mut metamorph_mage_copy = metamorph_mage_copy;
+                if let Some(copy) = metamorph_mage_copy.as_mut() {
+                    copy.record_prepared(&mut scene);
+                }
                 let entry_index = scene.engine.event_history.len();
                 scene
                     .engine
@@ -7314,7 +7337,11 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
     crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
-fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {
+fn propose_and_commit_batch_unaudited(state: &mut GameState, mut events: Vec<ProposedEvent>) {
+    if !crate::linked_aura_operation_v1::prepare_copy_batch(state, &mut events) {
+        return;
+    }
+    events.retain(|event| !crate::linked_aura_operation_v1::kept_in_graveyard(state, event));
     if events
         .iter()
         .any(|event| refuse_unowned_donated_damage(state, event))
@@ -9061,9 +9088,14 @@ fn materialize_zone_change_v1(
         .then(|| crate::linked_aura_operation_v1::metamorph_mage_copy(state, id))
         .flatten();
     let entry_definition = transformed_entry.map_or_else(
-        || metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def),
+        || {
+            metamorph_mage_copy
+                .as_ref()
+                .map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def)
+        },
         |(definition, _)| definition,
     );
+    let physical_face = state.objects.get(id).v4.face_index;
     let source_face = state.objects.get(id).v4.face_down_v1;
     let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
@@ -9176,9 +9208,38 @@ fn materialize_zone_change_v1(
     // once the permanent is on the battlefield (below).
     let printed_entry_tapped = to_zone == Zone::Battlefield
         && entering_face_down.is_none()
-        && permanent_enters_battlefield_tapped(state, id, owner, entry_definition);
+        && !metamorph_mage_copy.as_ref().is_some_and(|copy| {
+            copy.values
+                .as_ref()
+                .is_some_and(|values| values.face_index != 0)
+        })
+        && permanent_enters_battlefield_tapped(
+            state,
+            id,
+            if metamorph_mage_copy
+                .as_ref()
+                .is_some_and(|copy| copy.physical.zone != Zone::Stack)
+            {
+                battlefield_controller.unwrap_or(owner)
+            } else {
+                owner
+            },
+            entry_definition,
+        );
     let enters_battlefield_tapped =
         to_zone == Zone::Battlefield && (force_battlefield_tapped || printed_entry_tapped);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_discard_uses(
+        state, id, from_zone,
+    );
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_effect_discard_uses(
+        state, id, from_zone,
+    );
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_animate_uses(
+        state, id, from_zone,
+    );
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
@@ -9273,8 +9334,8 @@ fn materialize_zone_change_v1(
             obj.summoning_sick = false;
         }
     }
-    if let Some(copy) = metamorph_mage_copy {
-        crate::eternal_vintage_v1::retain_mage_copy_on_entry(state, copy);
+    if let Some(copy) = &metamorph_mage_copy {
+        crate::eternal_vintage_v1::retain_mage_copy_on_entry(state, copy, physical_face);
     }
     #[cfg(feature = "eternal-fixtures")]
     if from_zone == Zone::Battlefield && to_zone != Zone::Battlefield {
@@ -9350,6 +9411,14 @@ fn materialize_zone_change_v1(
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         if entering_face_down.is_none() {
             initialize_entry_counters(state, id, kicked, counter_input);
+            if metamorph_mage_copy.as_ref().is_some_and(|copy| {
+                matches!(
+                    copy.entry_answer,
+                    Some(crate::copy_entry_v1::EntryAnswer::Discard(Some(_)))
+                )
+            }) {
+                crate::eternal_legacy_e7a_v1::clear_paid_mox_entry(state, id);
+            }
         }
         if to_zone == Zone::Battlefield && (nine_lives_cast_entry || requested_revival.is_some()) {
             if nine_lives_cast_entry && requested_revival.is_some() {
@@ -12582,6 +12651,11 @@ fn copied_token_entry_v1(
     state: &GameState,
     source: crate::state::AbilitySourceContractV4,
 ) -> Result<u32, String> {
+    if let Some(values) =
+        crate::copy_entry_v1::inherited_values(state, source, state.engine.event_history.len())
+    {
+        return Ok(values.copied_end_step_sacrifices_v1);
+    }
     let pick = |at: usize, e: &CommittedEvent| match e {
         CommittedEvent::CopiedTokenAbilitiesEnteredV1 {
             source: actual,
@@ -12651,7 +12725,15 @@ pub(crate) fn record_copied_token_end_step_v1(
         }
         let source = crate::state::AbilitySourceContractV4::capture(state, id);
         let count = copied_token_entry_v1(state, source)?;
-        if !o.v4.is_token || count != o.v4.copied_end_step_sacrifices_v1 {
+        if count != o.v4.copied_end_step_sacrifices_v1
+            || (!o.v4.is_token
+                && crate::copy_entry_v1::inherited_values(
+                    state,
+                    source,
+                    state.engine.event_history.len(),
+                )
+                .is_none())
+        {
             return Err("copied ability count differs from original entry".into());
         }
         sources.push((source, count));
@@ -12908,6 +12990,11 @@ pub(crate) fn historical_copiable_token_abilities_v1(
     state: &GameState,
     source: crate::state::AbilitySourceContractV4,
 ) -> Result<u32, String> {
+    if let Some(values) =
+        crate::copy_entry_v1::inherited_values(state, source, state.engine.event_history.len())
+    {
+        return Ok(values.copied_end_step_sacrifices_v1);
+    }
     if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenAbilitiesEnteredV1{source: original,..} if original.source==source.source && original.zone_change_count==source.zone_change_count)) {
         copied_token_entry_v1(state, source)
     } else {
@@ -12921,6 +13008,23 @@ pub(crate) fn copiable_token_abilities_v1(
     let live = state.objects.try_get(object).ok_or("copy source absent")?;
     if live.v4.face_down_v1.is_some() {
         return Ok(0);
+    }
+    if !live.v4.is_token {
+        if let Some(values) = crate::copy_entry_v1::inherited_values(
+            state,
+            crate::state::AbilitySourceContractV4::capture(state, object),
+            state.engine.event_history.len(),
+        ) {
+            let count = if crate::eternal_cube_c8b_v1::has_saheeli_copy(state, object) {
+                0
+            } else {
+                values.copied_end_step_sacrifices_v1
+            };
+            return (live.zone == Zone::Battlefield
+                && live.v4.copied_end_step_sacrifices_v1 == count)
+                .then_some(count)
+                .ok_or_else(|| "copy lost inherited end-step ability count".into());
+        }
     }
     if live.v4.copied_end_step_sacrifices_v1 == 0 {
         if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenAbilitiesEnteredV1{source,..} if source.source==object && source.zone_change_count==live.zone_change_count)) {
@@ -12985,7 +13089,13 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
                 state,
                 crate::state::AbilitySourceContractV4::capture(state, id),
             )? != live.v4.copied_end_step_sacrifices_v1
-                || !live.v4.is_token)
+                || (!live.v4.is_token
+                    && crate::copy_entry_v1::inherited_values(
+                        state,
+                        crate::state::AbilitySourceContractV4::capture(state, id),
+                        state.engine.event_history.len(),
+                    )
+                    .is_none()))
         {
             return Err("native copied token count lacks its actual entry".into());
         }

@@ -24262,8 +24262,24 @@ fn execute_in_departure_scope_v1(
             {
                 return;
             }
+            #[cfg(feature = "eternal-fixtures")]
+            let source_card_def = source.card_def;
             let timestamp = crate::engine::next_timestamp(state);
             state.objects.get_mut(ctx.source).v4.animation_timestamp = Some(timestamp);
+            #[cfg(feature = "eternal-fixtures")]
+            if let Some(stack_item) = ctx.stack_item_id {
+                crate::copy_entry_v1::record_land_animated(
+                    state,
+                    crate::state::ObjectLinkV4 {
+                        object: ctx.source,
+                        zone_change_count: contract.zone_change_count,
+                    },
+                    source_card_def,
+                    animation.until_end_of_turn,
+                    stack_item,
+                    timestamp,
+                );
+            }
             let printed_mask = crate::card_def::mana_colors_mask(animation.colors);
             let mapped_mask =
                 crate::text_color_change_v1::resolving_color_mask(state, ctx, printed_mask);
@@ -26066,6 +26082,7 @@ fn execute_in_departure_scope_v1(
                 || source.owner != source_contract.owner
                 || source.zone_change_count != source_contract.zone_change_count
                 || source.zone != Zone::Battlefield
+                || crate::copy_entry_v1::cannot_transform_in_place(state, ctx.source)
             {
                 return;
             }

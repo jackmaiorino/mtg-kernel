@@ -7,6 +7,7 @@ use crate::engine::{Action, Decision};
 use crate::eternal_pauper_pf1c_v1::{HallowChoiceV1, HallowPreventionV1};
 use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::{self as mage_entry, show_and_tell};
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::ids::PlayerId;
 use crate::linked_aura_return_v1::HostChoiceV1;
 use crate::state::{GameState, Target, Zone};
 use serde::{Deserialize, Serialize};
@@ -110,6 +111,10 @@ pub enum GeneralAnswerV36 {
         choice: Box<HallowChoiceV1>,
         prevention: HallowPreventionV1,
     },
+    CopyEntryOptionV1 {
+        choice: Box<crate::copy_entry_v1::Requirement>,
+        index: u16,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -151,6 +156,10 @@ pub enum GeneralChoiceV36 {
     },
     HallowV1 {
         choice: Box<crate::eternal_pauper_pf1c_v1::HallowChoiceV1>,
+    },
+    CopyEntryOptionV1 {
+        choice: Box<crate::copy_entry_v1::Requirement>,
+        original_sha256: String,
     },
 }
 
@@ -208,6 +217,13 @@ struct MagePlanV1 {
     committed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CopyResolutionV1 {
+    ctx: crate::effect::ExecCtx,
+    item: crate::state::StackItem,
+    from: Zone,
+}
+
 /// GameState never restores runtime ownership, and other modules cannot
 /// construct it. Opaque input borrowing is confined to local family verification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -252,6 +268,8 @@ struct RunnerV1 {
     mage_names_v2: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     metamorph_mage_copies: Vec<mage_entry::MetamorphCopyV1>,
+    #[serde(skip)]
+    copy_resolution: Option<Box<CopyResolutionV1>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     show_and_tell_entries: Vec<(
         crate::state::AbilitySourceContractV4,
@@ -662,6 +680,7 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         mage_plans: Vec::new(),
         mage_names_v2: true,
         metamorph_mage_copies: Vec::new(),
+        copy_resolution: None,
         show_and_tell_entries: Vec::new(),
         original_stack: enclosing.original_stack.clone(),
         original_history_len: enclosing.original_history_len,
@@ -1208,8 +1227,13 @@ fn potential_operation(state: &GameState) -> bool {
     }
     mage_entry::vial::waiting(state)
         || crate::effect::needs_electroduplicate_entry_owner_v1(state)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| mage_entry::resolving_copy_waiting(state, &p.resolving_item))
         || state.stack.last().is_some_and(|item| {
-            show_and_tell::printed(item) || mage_entry::reanimate_metamorph_waiting(state, item)
+            show_and_tell::printed(item) || mage_entry::resolving_copy_waiting(state, item)
         })
         || ((!state.stack.is_empty() || state.engine.pending_effect.is_some())
             && mage_entry::potentially_enters(state))
@@ -1499,6 +1523,7 @@ fn replay_general_input_v1(
         mage_start: None,
         mage_plans: Vec::new(),
         metamorph_mage_copies: Vec::new(),
+        copy_resolution: None,
         show_and_tell_entries: Vec::new(),
         mage_names_v2: mage_names_v2
             .or_else(|| {
@@ -1626,6 +1651,7 @@ fn replay_general_input_v1(
             || matches!(
                 choice,
                 GeneralChoiceV36::ReanimateMetamorphV1 { .. }
+                    | GeneralChoiceV36::CopyEntryOptionV1 { .. }
                     | GeneralChoiceV36::VialMetamorphV1 { .. }
                     | GeneralChoiceV36::ShowAndTellV1 { .. }
             )
@@ -2041,6 +2067,9 @@ fn validate_in_order(state: &GameState) -> Result<(), String> {
         let names_v2 = if let GeneralChoiceV36::ReanimateMetamorphV1 {
             original_sha256, ..
         }
+        | GeneralChoiceV36::CopyEntryOptionV1 {
+            original_sha256, ..
+        }
         | GeneralChoiceV36::VialMetamorphV1 {
             original_sha256, ..
         }
@@ -2278,6 +2307,7 @@ fn decision(state: &GameState) -> Result<Decision, String> {
             | GeneralChoiceV36::ReanimateMetamorphV1 { .. }
             | GeneralChoiceV36::VialMetamorphV1 { .. }
             | GeneralChoiceV36::ShowAndTellV1 { .. }
+            | GeneralChoiceV36::CopyEntryOptionV1 { .. }
             | GeneralChoiceV36::HallowV1 { .. } => {
                 return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
@@ -2922,6 +2952,25 @@ pub(crate) fn stage_metamorph_mage_copy(
     Ok(())
 }
 
+fn update_staged_metamorph_mage_copy(
+    state: &mut GameState,
+    copy: mage_entry::MetamorphCopyV1,
+) -> Result<(), String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .ok_or("Metamorph copy has no native entry replay owner")?;
+    let slot = runner
+        .metamorph_mage_copies
+        .iter_mut()
+        .find(|owned| owned.physical.source == copy.physical.source)
+        .ok_or("Metamorph copy lost its staged entry")?;
+    *slot = copy;
+    Ok(())
+}
+
 pub(crate) fn metamorph_mage_copy(
     state: &GameState,
     object: crate::ids::ObjectId,
@@ -2933,11 +2982,11 @@ pub(crate) fn metamorph_mage_copy(
         .as_ref()?
         .metamorph_mage_copies
         .iter()
-        .copied()
         .find(|copy| {
             copy.physical.source == object
                 && copy.physical == crate::state::AbilitySourceContractV4::capture(state, object)
         })
+        .cloned()
 }
 
 fn mage_checkpoint_world(state: &GameState, runner: &RunnerV1) -> GameState {
@@ -3004,6 +3053,7 @@ pub(crate) fn resolve_show_and_tell(
                 player,
                 physical: None,
                 candidates,
+                values: Default::default(),
             },
         )?
         else {
@@ -3015,38 +3065,49 @@ pub(crate) fn resolve_show_and_tell(
         // spellbench-public-reveal: reveal selected cards only after both hand answers.
         state.reveal_hand_card(entrant.owner.opponent(), entrant.owner, entrant.source)?;
     }
+    // CR 614.12: resolve all simultaneous pre-entry copy and replacement
+    // choices before paying discard costs or committing any Show and Tell
+    // choice receipts.
+    for &physical in &entrants {
+        if !prepare_registered_entry(
+            state,
+            physical.source,
+            CopyProducer::ShowAndTell {
+                producer,
+                cast_at,
+                item,
+            },
+        )? {
+            return Ok(true);
+        }
+    }
     let mut proposals = Vec::new();
     for physical in entrants {
-        let copy = if mage_entry::vial::is_physical_metamorph_in_hand(state, physical.source) {
-            if let Some(choice) = show_and_tell::copy_choice(state, producer, physical)? {
-                let Some(answer) = show_and_tell_answer(state, choice)? else {
-                    return Ok(true);
-                };
-                answer.map(|copied| {
-                    show_and_tell::prospective_copy(
-                        state, producer, cast_at, item, physical, copied,
-                    )
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        if let Some(copy) = copy {
-            stage_metamorph_mage_copy(state, copy)?;
-        }
+        let mut copy = metamorph_mage_copy(state, physical.source);
         let ProposedEvent::ZoneChange(mut proposal) =
             ProposedEvent::zone_change(physical.source, Zone::Battlefield)
         else {
             unreachable!("Show and Tell moves selected hand cards");
         };
+        if copy_declined_discard(state, physical.source) {
+            proposal.to_zone = Zone::Graveyard;
+        }
         crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut proposal);
-        if let Some(copy) = copy.filter(|_| proposal.to_zone == Zone::Battlefield) {
-            mage_entry::record(
-                state,
-                mage_entry::JournalV1::ShowAndTellMetamorphChosen { copy },
-            );
+        if proposal.to_zone == Zone::Battlefield {
+            if let Some(copy) = copy.as_mut() {
+                pay_copy_entry_cost(state, copy)?;
+                copy.refresh_show_origin(state);
+                if crate::state::AbilitySourceContractV4::capture(state, copy.copied.source)
+                    != copy.copied
+                {
+                    return Err("chosen copy source changed before its entry batch".into());
+                }
+                update_staged_metamorph_mage_copy(state, copy.clone())?;
+                mage_entry::record(
+                    state,
+                    mage_entry::JournalV1::ShowAndTellMetamorphChosen { copy: copy.clone() },
+                );
+            }
         }
         proposals.push((physical, proposal));
     }
@@ -3149,22 +3210,209 @@ fn show_and_tell_answer(
     Ok(None)
 }
 
-pub(crate) fn prepare_reanimated_metamorph(
+/// Install the actual native resolving spell for the duration of its program.
+/// A direct event or a synthetic effect context cannot acquire this authority.
+pub(crate) fn with_copy_resolution<T>(
+    state: &mut GameState,
+    item: &crate::state::StackItem,
+    ctx: Option<&crate::effect::ExecCtx>,
+    execute: impl FnOnce(&mut GameState) -> T,
+) -> T {
+    let Some((from, _)) = mage_entry::resolving_copy_route(item) else {
+        return execute(state);
+    };
+    let context = ctx
+        .or_else(|| {
+            state
+                .engine
+                .pending_effect
+                .as_ref()
+                .map(|pending| &pending.ctx)
+        })
+        .filter(|ctx| {
+            ctx.stack_item_id == Some(item.v4.stack_item_id)
+                && ctx.source == item.source
+                && ctx.controller == item.controller
+        })
+        .cloned();
+    let Some(runner) = state.engine.linked_aura_operation_v1.runtime.as_mut() else {
+        return execute(state);
+    };
+    let previous = std::mem::replace(
+        &mut runner.copy_resolution,
+        context.map(|ctx| {
+            Box::new(CopyResolutionV1 {
+                ctx,
+                item: item.clone(),
+                from,
+            })
+        }),
+    );
+    let result = execute(state);
+    if let Some(runner) = state.engine.linked_aura_operation_v1.runtime.as_mut() {
+        runner.copy_resolution = previous;
+    }
+    result
+}
+
+/// Keep the legacy refusal for a synthetic invocation of the paid Reanimate
+/// effect. Only the native resolving stack row authorizes its copy entrant.
+pub(crate) fn paid_return_authorized(
+    state: &GameState,
+    ctx: &crate::effect::ExecCtx,
+    card: crate::ids::ObjectId,
+) -> bool {
+    if ctx.stack_item_id.is_none()
+        || !mage_entry::physical_copy_entrant(state, card, Zone::Graveyard)
+    {
+        return true;
+    }
+    let ProposedEvent::ZoneChange(change) =
+        ProposedEvent::zone_change_to_battlefield_under_controller(card, ctx.controller)
+    else {
+        unreachable!()
+    };
+    crate::eternal_legacy_e7a_v1::prevents_zone_change(state, &change)
+        || state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_ref()
+            .and_then(|r| r.copy_resolution.as_ref())
+            .is_some_and(|scope| &scope.ctx == ctx)
+}
+
+/// Prepare the whole roster before replacement effects inspect any member (CR 614.12).
+/// Returning false suspends the enclosing replay without committing the proposal.
+pub(crate) fn prepare_copy_batch(state: &mut GameState, events: &mut [ProposedEvent]) -> bool {
+    use crate::state::Zone;
+    if !cfg!(feature = "eternal-fixtures") || !events.iter().any(|event|
+        matches!(event, ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Battlefield)) {
+        return true;
+    }
+    let Some(scope) = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .and_then(|runner| runner.copy_resolution.clone())
+    else {
+        return true;
+    };
+    for event in events {
+        let ProposedEvent::ZoneChange(change) = event else {
+            continue;
+        };
+        if change.to_zone != Zone::Battlefield
+            || !mage_entry::physical_copy_entrant(state, change.object, scope.from)
+            || crate::eternal_legacy_e7a_v1::prevents_zone_change(state, change)
+        {
+            continue;
+        }
+        match prepare_registered_entry(
+            state,
+            change.object,
+            CopyProducer::Resolution {
+                ctx: &scope.ctx,
+                item: &scope.item,
+            },
+        ) {
+            Ok(false) => return false,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    scope.ctx.source,
+                ));
+                return false;
+            }
+            Ok(true) if copy_declined_discard(state, change.object) => {
+                change.to_zone = Zone::Graveyard;
+            }
+            Ok(true) => {}
+        }
+    }
+    true
+}
+
+/// A declined Mox replacement leaves an entrant already in its graveyard
+/// in place (CR 614.6). Keep the other members of a simultaneous batch.
+pub(crate) fn kept_in_graveyard(state: &GameState, event: &ProposedEvent) -> bool {
+    matches!(event, ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Graveyard
+        && state.objects.try_get(change.object).is_some_and(|card| card.zone == Zone::Graveyard)
+        && copy_declined_discard(state,change.object))
+}
+
+/// Hand selections pass their native proof at the point where the chosen
+/// physical card becomes known. Generic effects use their resolving scope.
+pub(crate) enum CopyProducer<'a> {
+    Resolution {
+        ctx: &'a crate::effect::ExecCtx,
+        item: &'a crate::state::StackItem,
+    },
+    PaidHand {
+        continuation: &'a crate::effect::EffectContinuation,
+        paid_at: usize,
+    },
+    ShowAndTell {
+        producer: crate::state::AbilitySourceContractV4,
+        cast_at: usize,
+        item: crate::ids::StackItemId,
+    },
+}
+
+pub(crate) fn prepare_registered_entry(
+    state: &mut GameState,
+    object: crate::ids::ObjectId,
+    producer: CopyProducer<'_>,
+) -> Result<bool, String> {
+    if metamorph_mage_copy(state, object).is_some() {
+        return Ok(true);
+    }
+    match producer {
+        CopyProducer::Resolution { ctx, item } => prepare_resolving_copy(state, ctx, object, item),
+        CopyProducer::PaidHand {
+            continuation,
+            paid_at,
+        } => prepare_vial_metamorph(state, continuation, paid_at, object),
+        CopyProducer::ShowAndTell {
+            producer,
+            cast_at,
+            item,
+        } => {
+            if !mage_entry::vial::is_physical_metamorph_in_hand(state, object) {
+                return Ok(true);
+            }
+            let physical = crate::state::AbilitySourceContractV4::capture(state, object);
+            let Some(choice) = show_and_tell::copy_choice(state, producer, physical)? else {
+                return Ok(true);
+            };
+            let original_sha256 = state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_ref()
+                .ok_or("Show and Tell copy lost its resolving operation")?
+                .original_sha256
+                .clone();
+            prepare_copy_entry(
+                state,
+                physical.owner,
+                GeneralChoiceV36::ShowAndTellV1 {
+                    choice: Box::new(choice),
+                    original_sha256,
+                },
+                Some((cast_at, item)),
+            )
+        }
+    }
+}
+
+fn prepare_resolving_copy(
     state: &mut GameState,
     ctx: &crate::effect::ExecCtx,
     object: crate::ids::ObjectId,
+    parent: &crate::state::StackItem,
 ) -> Result<bool, String> {
-    if !mage_entry::physical_graveyard_metamorph(state, object) || ctx.stack_item_id.is_none() {
-        return Ok(true);
-    }
-    let ProposedEvent::ZoneChange(proposal) =
-        ProposedEvent::zone_change_to_battlefield_under_controller(object, ctx.controller)
-    else {
-        unreachable!("Reanimate proposes a zone change");
-    };
-    if crate::eternal_legacy_e7a_v1::prevents_zone_change(state, &proposal) {
-        return Ok(true);
-    }
     let runner = state
         .engine
         .linked_aura_operation_v1
@@ -3181,17 +3429,13 @@ pub(crate) fn prepare_reanimated_metamorph(
     {
         return Err("noncast Metamorph requires the actual resolving Reanimate".into());
     }
-    let parent = runner
-        .original_stack
-        .last()
-        .ok_or("noncast Metamorph lost its original Reanimate stack row")?;
     let Some(choice) = mage_entry::NoncastCopyChoiceV1::capture(state, ctx, object, parent)? else {
         return Ok(true);
     };
-    prepare_noncast_metamorph(state, choice, false)
+    prepare_noncast_metamorph(state, choice)
 }
 
-pub(crate) fn prepare_vial_metamorph(
+fn prepare_vial_metamorph(
     state: &mut GameState,
     pending: &crate::effect::EffectContinuation,
     paid_at: usize,
@@ -3213,59 +3457,108 @@ pub(crate) fn prepare_vial_metamorph(
     if !matches!(&runner.operation, OperationV1::Advance) {
         return Err("Vial Metamorph lost its actual private hand answer".into());
     }
-    prepare_noncast_metamorph(state, choice, true)
+    prepare_noncast_metamorph(state, choice)
 }
 
 fn prepare_noncast_metamorph(
     state: &mut GameState,
     choice: mage_entry::NoncastCopyChoiceV1,
-    vial: bool,
+) -> Result<bool, String> {
+    let original_sha256 = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("noncast copy has no operation owner")?
+        .original_sha256
+        .clone();
+    let player = choice.chooser();
+    let checkpoint = if crate::copy_entry_v1::registered_route(choice.producer.card_def)
+        == Some(crate::copy_entry_v1::Route::PaidHandAbility)
+    {
+        GeneralChoiceV36::VialMetamorphV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        }
+    } else {
+        GeneralChoiceV36::ReanimateMetamorphV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        }
+    };
+    prepare_copy_entry(state, player, checkpoint, None)
+}
+
+/// Open or resume a noncast copy menu before the producer proposes entry.
+/// The wire variants retain their historical shapes and authenticate the actual producer.
+fn prepare_copy_entry(
+    state: &mut GameState,
+    player: PlayerId,
+    checkpoint: GeneralChoiceV36,
+    show_origin: Option<(usize, crate::ids::StackItemId)>,
 ) -> Result<bool, String> {
     let runner = state
         .engine
         .linked_aura_operation_v1
         .runtime
         .as_ref()
-        .ok_or("noncast Metamorph has no entry owner")?;
-    if let Some(answer) = runner.answers.get(runner.cursor) {
-        let (expected, copied) = match (vial, answer) {
-            (false, GeneralAnswerV36::ReanimateMetamorphV1 { choice, copied })
-            | (true, GeneralAnswerV36::VialMetamorphV1 { choice, copied }) => (choice, copied),
-            _ => return Err("Metamorph replay changed its confirmed copy choice kind".into()),
-        };
-        if **expected != choice || copied.is_some_and(|source| !choice.candidates.contains(&source))
-        {
-            return Err("Metamorph replay changed its confirmed copy candidate".into());
-        }
-        let copy = copied.map(|copied| choice.copy(copied));
+        .ok_or("copy entry has no replay owner")?;
+    let Some(answer) = runner.answers.get(runner.cursor) else {
+        let snapshot = mage_checkpoint_world(state, runner);
         state
             .engine
             .linked_aura_operation_v1
             .runtime
             .as_mut()
             .unwrap()
-            .cursor += 1;
-        if let Some(copy) = copy {
-            if vial {
-                mage_entry::vial::record_hand_answer(state, copy)?;
-            }
-            stage_metamorph_mage_copy(state, copy)?;
+            .checkpoint = Some((Box::new(snapshot), checkpoint));
+        return Ok(false);
+    };
+    let copy = match (&checkpoint, answer) {
+        (
+            GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. },
+            GeneralAnswerV36::ReanimateMetamorphV1 {
+                choice: expected,
+                copied,
+            },
+        )
+        | (
+            GeneralChoiceV36::VialMetamorphV1 { choice, .. },
+            GeneralAnswerV36::VialMetamorphV1 {
+                choice: expected,
+                copied,
+            },
+        ) if expected == choice
+            && copied.is_none_or(|source| choice.candidates.contains(&source)) =>
+        {
+            copied.map(|source| choice.copy(source))
         }
-        return Ok(true);
-    }
-    let snapshot = mage_checkpoint_world(state, runner);
-    let original_sha256 = runner.original_sha256.clone();
-    let choice = Box::new(choice);
-    let checkpoint = if vial {
-        GeneralChoiceV36::VialMetamorphV1 {
-            choice,
-            original_sha256,
+        (
+            GeneralChoiceV36::ShowAndTellV1 { choice, .. },
+            GeneralAnswerV36::ShowAndTellV1 {
+                choice: expected,
+                selected,
+            },
+        ) if expected == choice
+            && selected.is_none_or(|source| choice.candidates.contains(&source)) =>
+        {
+            let (cast_at, item) = show_origin.ok_or("missing paid Show and Tell origin")?;
+            let physical = choice
+                .physical
+                .ok_or("missing physical Show and Tell entrant")?;
+            selected.map(|copied| {
+                show_and_tell::prospective_copy(
+                    state,
+                    choice.producer,
+                    cast_at,
+                    item,
+                    physical,
+                    copied,
+                    choice.values.get(&copied.source).cloned(),
+                )
+            })
         }
-    } else {
-        GeneralChoiceV36::ReanimateMetamorphV1 {
-            choice,
-            original_sha256,
-        }
+        _ => return Err("noncast copy answer disagrees with its original menu".into()),
     };
     state
         .engine
@@ -3273,8 +3566,115 @@ fn prepare_noncast_metamorph(
         .runtime
         .as_mut()
         .unwrap()
-        .checkpoint = Some((Box::new(snapshot), checkpoint));
+        .cursor += 1;
+    if let Some(mut copy) = copy {
+        if !prepare_copy_requirement(state, &mut copy, player)? {
+            return Ok(false);
+        }
+        if matches!(checkpoint, GeneralChoiceV36::VialMetamorphV1 { .. }) {
+            mage_entry::vial::record_hand_answer(state, &copy)?;
+        }
+        if show_origin.is_none() {
+            pay_copy_entry_cost(state, &mut copy)?;
+        }
+        // Validate against the unmodified battlefield before any simultaneous move.
+        if crate::state::AbilitySourceContractV4::capture(state, copy.copied.source) != copy.copied
+        {
+            return Err("chosen copy source changed before its entry batch".into());
+        }
+        stage_metamorph_mage_copy(state, copy)?;
+    }
+    Ok(true)
+}
+
+/// Resolve the copied permanent's own replacement before proposing any entry
+/// (CR 614.12, 616.1). All producers share this replay cursor.
+fn prepare_copy_requirement(
+    state: &mut GameState,
+    copy: &mut mage_entry::MetamorphCopyV1,
+    player: PlayerId,
+) -> Result<bool, String> {
+    let Some(choice) = crate::copy_entry_v1::requirement(state, player, copy)? else {
+        return Ok(true);
+    };
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("copy entry has no replay owner")?;
+    if let Some(answer) = runner.answers.get(runner.cursor) {
+        let GeneralAnswerV36::CopyEntryOptionV1 {
+            choice: expected,
+            index,
+        } = answer
+        else {
+            return Err("unexpected chained copy answer".into());
+        };
+        if **expected != choice {
+            return Err("chained copy menu changed".into());
+        }
+        copy.entry_answer = Some(
+            *choice
+                .options
+                .get(usize::from(*index))
+                .ok_or("invalid chained copy answer")?,
+        );
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
+        return Ok(true);
+    }
+    let snapshot = mage_checkpoint_world(state, runner);
+    let original_sha256 = runner.original_sha256.clone();
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((
+        Box::new(snapshot),
+        GeneralChoiceV36::CopyEntryOptionV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        },
+    ));
     Ok(false)
+}
+
+fn pay_copy_entry_cost(
+    state: &mut GameState,
+    copy: &mut mage_entry::MetamorphCopyV1,
+) -> Result<(), String> {
+    if let Some(crate::copy_entry_v1::EntryAnswer::Discard(Some(land))) = copy.entry_answer {
+        let before = state.engine.event_history.len();
+        crate::engine::commit_discarded_card_for_copy_entry(state, land.source);
+        let offset = state.engine.event_history[before..].iter().position(|e| matches!(e, CommittedEvent::ZoneChange {object, from:Zone::Hand, to, ..} if *object == land.source && *to != Zone::Hand)).ok_or("Mox Diamond copy lost its discarded land")?;
+        let discard_at = before + offset;
+        copy.discarded_at = Some(discard_at);
+        crate::copy_entry_v1::record_copy_discard_paid(
+            state,
+            copy.stack_item,
+            copy.physical,
+            land,
+            discard_at,
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn copy_declined_discard(state: &GameState, entrant: crate::ids::ObjectId) -> bool {
+    metamorph_mage_copy(state, entrant).is_some_and(|copy| {
+        matches!(
+            copy.entry_answer,
+            Some(crate::copy_entry_v1::EntryAnswer::Discard(None))
+        )
+    })
 }
 
 fn mage_answer(
@@ -3887,6 +4287,12 @@ pub(crate) fn commit_entry_color(
 
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
+        GeneralChoiceV36::CopyEntryOptionV1 { choice, .. } => Ok(Decision::ChooseEffectOption {
+            player: choice.player,
+            source: choice.physical.source,
+            option_count: u16::try_from(choice.options.len())
+                .map_err(|_| "too many copy entry options")?,
+        }),
         GeneralChoiceV36::HallowV1 { choice } => Ok(hallow_decision(choice)),
         GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
         GeneralChoiceV36::ShowAndTellV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
@@ -3904,7 +4310,7 @@ fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String>
         }),
         GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }
         | GeneralChoiceV36::VialMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
-            player: choice.producer.controller,
+            player: choice.chooser(),
             source: choice.decision_source(),
             selected_count: 0,
             min_targets: 0,
@@ -3972,6 +4378,14 @@ fn answer_equipment_checkpoint_v48(
     action: Action,
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
+        (GeneralChoiceV36::CopyEntryOptionV1 { choice, .. }, Action::ChooseEffectOption(index))
+            if choice.options.get(usize::from(index)).is_some() =>
+        {
+            Ok(GeneralAnswerV36::CopyEntryOptionV1 {
+                choice: choice.clone(),
+                index,
+            })
+        }
         (GeneralChoiceV36::ShowAndTellV1 { choice, .. }, action) => {
             let selected = match action {
                 Action::FinishEffectSelection => None,
@@ -4441,6 +4855,7 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
         original_world_v50: None,
         active_fake_aura_entry_v50: None,
         metamorph_mage_copies: Vec::new(),
+        copy_resolution: None,
         show_and_tell_entries: Vec::new(),
     };
     state.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
@@ -4479,6 +4894,7 @@ mod runner_serde_tests {
             mage_plans: Vec::new(),
             mage_names_v2,
             metamorph_mage_copies: Vec::new(),
+            copy_resolution: None,
             show_and_tell_entries: Vec::new(),
         }
     }

@@ -60,8 +60,10 @@ pub(crate) fn historical_nightmare(
     source: AbilitySourceContractV4,
     before: usize,
 ) -> Result<bool, String> {
-    let mut current = false;
-    let mut entry_seen = false;
+    let inherited = crate::copy_entry_v1::inherited_values(state, source, before)
+        .is_some_and(|values| values.copied_nightmare_v1);
+    let mut current = inherited;
+    let mut entry_seen = inherited;
     for (at, event) in state
         .engine
         .event_history
@@ -122,7 +124,15 @@ pub(crate) fn copiable_nightmare(state: &GameState, object: ObjectId) -> Result<
         state.engine.event_history.len(),
     )?;
     if expected != live.v4.copied_nightmare_v1
-        || expected && (live.zone != Zone::Battlefield || !live.v4.is_token)
+        || expected
+            && (live.zone != Zone::Battlefield
+                || (!live.v4.is_token
+                    && crate::copy_entry_v1::inherited_values(
+                        state,
+                        AbilitySourceContractV4::capture(state, object),
+                        state.engine.event_history.len(),
+                    )
+                    .is_none()))
     {
         return Err("Nightmare copy component changed from its native entry/layers".into());
     }

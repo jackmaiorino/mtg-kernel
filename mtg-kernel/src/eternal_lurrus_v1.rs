@@ -205,7 +205,7 @@ const MANA_DRAIN: &str = "Mana Drain";
 const FORTH_EORLINGAS: &str = "Forth Eorlingas!";
 const PRISMATIC_ENDING: &str = "Prismatic Ending";
 
-fn lurrus_state(state: &mut GameState) -> &mut LurrusStateV1 {
+pub(crate) fn lurrus_state(state: &mut GameState) -> &mut LurrusStateV1 {
     &mut state.eternal_v1.get_or_insert_with(Default::default).lurrus
 }
 

@@ -3,7 +3,7 @@ use super::{
     MetamorphCopyV1, NoncastCopyChoiceV1, ObjectId, StackItemId, Zone,
 };
 use crate::effect::EffectContinuation;
-use crate::eternal_legacy_e8a_v1::{self as e8a, AETHER_VIAL};
+use crate::eternal_legacy_e8a_v1 as e8a;
 use crate::event::CommittedEvent;
 use crate::state::{StackItem, StackItemKind, VialMetamorphPaidV1};
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,8 @@ pub struct CopyOriginV1 {
 fn is_vial(source: AbilitySourceContractV4) -> bool {
     cfg!(feature = "eternal-fixtures")
         && source.zone == Zone::Battlefield
-        && card_id_by_name(AETHER_VIAL) == Some(source.card_def)
+        && crate::copy_entry_v1::registered_route(source.card_def)
+            == Some(crate::copy_entry_v1::Route::PaidHandAbility)
 }
 
 fn printed_source(item: &StackItem) -> Option<AbilitySourceContractV4> {
@@ -213,12 +214,8 @@ pub(crate) fn capture(
     {
         return Err("Aether Vial copy choice changed its selected hand incarnation".into());
     }
-    let candidates = NoncastCopyChoiceV1::candidates(
-        state,
-        object,
-        source.controller,
-        super::NoncastProducer::Vial,
-    )?;
+    let (candidates, values) =
+        crate::copy_entry_v1::capture_menu(state, object, source.controller)?;
     if candidates.is_empty() {
         return Ok(None);
     }
@@ -226,6 +223,7 @@ pub(crate) fn capture(
         physical,
         producer: source,
         candidates,
+        values,
         cast_at: None,
         stack_item: pending.resolving_item.v4.stack_item_id,
         vial: Some(CopyOriginV1 {
@@ -249,7 +247,7 @@ pub(crate) fn is_physical_metamorph_in_hand(state: &GameState, object: ObjectId)
 
 pub(super) fn entry_origin_matches(
     state: &GameState,
-    copy: MetamorphCopyV1,
+    copy: &MetamorphCopyV1,
     origin: CopyOriginV1,
 ) -> bool {
     crate::eternal_opening_v1::enabled(state)
@@ -265,7 +263,7 @@ pub(super) fn entry_origin_matches(
 
 pub(crate) fn record_hand_answer(
     state: &mut GameState,
-    copy: MetamorphCopyV1,
+    copy: &MetamorphCopyV1,
 ) -> Result<(), String> {
     let Some(origin) = copy.vial else {
         return Err("Aether Vial copy has no original hand answer".into());

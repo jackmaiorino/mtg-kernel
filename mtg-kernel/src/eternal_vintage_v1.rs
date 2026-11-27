@@ -109,12 +109,33 @@ impl std::hash::Hash for SagaGrantTimestampsV1 {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PhysicalFaceV1(u8);
+
+impl PhysicalFaceV1 {
+    fn is_front(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl std::hash::Hash for PhysicalFaceV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if !self.is_front() {
+            std::hash::Hash::hash(b"metamorph-physical-face/v1", state);
+            std::hash::Hash::hash(&self.0, state);
+        }
+    }
+}
+
 /// A permanent that is a copy of another definition until it leaves the
 /// battlefield (Phyrexian Metamorph), with the values it had before.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CopyV1 {
     pub host: ObjectLinkV4,
+    #[serde(default, skip_serializing_if = "PhysicalFaceV1::is_front")]
+    pub physical_face: PhysicalFaceV1,
     pub card_def: u16,
     pub name: String,
     pub color_mask: u8,
@@ -1112,6 +1133,7 @@ pub(crate) fn enter_as_copy(
     let live = state.objects.get_mut(host);
     let record = CopyV1 {
         host: link,
+        physical_face: PhysicalFaceV1::default(),
         card_def: live.card_def,
         name: std::mem::take(&mut live.name),
         color_mask: live.v4.effective_color_mask,
@@ -1193,6 +1215,7 @@ pub(crate) fn apply_metamorph_entry_copy(state: &mut GameState, host: ObjectId, 
     let live = state.objects.get_mut(host);
     let record = CopyV1 {
         host: link,
+        physical_face: PhysicalFaceV1::default(),
         card_def: live.card_def,
         name: std::mem::take(&mut live.name),
         color_mask: live.v4.effective_color_mask,
@@ -1220,14 +1243,43 @@ pub(crate) fn apply_metamorph_entry_copy(state: &mut GameState, host: ObjectId, 
 /// copied Mage. The existing copy marker also supplies the artifact type.
 pub(crate) fn retain_mage_copy_on_entry(
     state: &mut GameState,
-    copy: crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1,
+    copy: &crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1,
+    physical_face: u8,
 ) {
     let object = copy.physical.source;
     let host = live_link(state, object);
     let card_def = copy.physical.card_def;
     let physical = crate::state::ObjectStateV4::from_card_def(card_def);
+    // Token status is not copiable (CR 707.2). Zone initialization ordinarily
+    // sets it from the card definition, which may be a token blueprint here.
+    state.objects.get_mut(object).v4.is_token = false;
+    if let Some(answer) = copy.entry_answer {
+        crate::copy_entry_v1::install_answer(state, host, answer);
+    }
+    if let Some(values) = &copy.values {
+        crate::eternal_cube_c8b_v1::apply_copied_characteristics(
+            state,
+            object,
+            values.card_def,
+            values.face_index,
+            values.mods.clone(),
+        );
+        if values.prototyped {
+            crate::eternal_pauper_pf2c_v1::note_prototyped_entry(state, object);
+        }
+        let live = state.objects.get_mut(object);
+        live.v4.copied_end_step_sacrifices_v1 = values.copied_end_step_sacrifices_v1;
+        live.v4.copied_nightmare_v1 = values.copied_nightmare_v1;
+        if values.copied_nightmare_v1 {
+            let types = &mut live.v4.effective_subtype_ids;
+            types.push(crate::card_def::Subtype::Nightmare.stable_id());
+            types.sort_unstable();
+            types.dedup();
+        }
+    }
     vintage_state(state).copies.push(CopyV1 {
         host,
+        physical_face: PhysicalFaceV1(physical_face),
         card_def,
         name: CARD_DEFS[usize::from(card_def)].object_name.into(),
         color_mask: physical.effective_color_mask,
@@ -1270,6 +1322,7 @@ pub(crate) fn end_copy_before_departure(state: &mut GameState, object: ObjectId)
     let record = vintage_state(state).copies.remove(index);
     let live = state.objects.get_mut(object);
     live.card_def = record.card_def;
+    live.v4.face_index = record.physical_face.0;
     live.name = record.name;
     live.v4.effective_color_mask = record.color_mask;
     live.v4.effective_subtype_ids = record.subtype_ids;

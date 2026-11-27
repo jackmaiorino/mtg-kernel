@@ -2216,7 +2216,9 @@ fn transformable_source(ctx: &ExecCtx, state: &GameState) -> bool {
 }
 
 fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
-    if transformable_source(ctx, state) {
+    if transformable_source(ctx, state)
+        && !crate::copy_entry_v1::cannot_transform_in_place(state, ctx.source)
+    {
         let face = 1 - state.objects.get(ctx.source).v4.face_index.min(1);
         event::propose_and_commit(state, ProposedEvent::transform_in_place(ctx.source, face));
     }
@@ -5956,6 +5958,41 @@ pub(crate) fn had_card_def(
         standard
             .copied_card_defs
             .contains(&(object, zone_change_count, card_def))
+    })
+}
+
+/// Whether `object`'s battlefield incarnation `zone_change_count` was ever any
+/// `card_def` matching `predicate` through a copy effect.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn had_card_def_matching(
+    state: &GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+    mut predicate: impl FnMut(u16) -> bool,
+) -> bool {
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard
+            .copied_card_defs
+            .iter()
+            .any(|&(obj, zcc, def)| obj == object && zcc == zone_change_count && predicate(def))
+    })
+}
+
+/// First `card_def` recorded in `copied_card_defs` for `(object, zone_change_count)`
+/// where `f(card_def)` returns `Some(value)`.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn find_had_card_def<T>(
+    state: &GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+    mut f: impl FnMut(u16) -> Option<T>,
+) -> Option<T> {
+    state.standard_v1.as_ref().and_then(|standard| {
+        standard
+            .copied_card_defs
+            .iter()
+            .filter(|&&(obj, zcc, _)| obj == object && zcc == zone_change_count)
+            .find_map(|&(_, _, def)| f(def))
     })
 }
 

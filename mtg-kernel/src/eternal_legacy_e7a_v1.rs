@@ -1430,15 +1430,17 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let life = i32::from(crate::engine::object_mana_value(state, card));
-            match crate::linked_aura_operation_v1::prepare_reanimated_metamorph(state, ctx, card) {
-                Ok(true) => {}
-                Ok(false) => return,
-                Err(_) => {
-                    halt(state, ctx.source);
-                    return;
-                }
+            if !crate::linked_aura_operation_v1::paid_return_authorized(state, ctx, card) {
+                halt(state, ctx.source);
+                return;
             }
+            // The common pre-batch copy hook may suspend this resolution before entry.
             put_onto_battlefield(state, card, ctx.controller);
+            if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                || state.engine.halted.is_some()
+            {
+                return;
+            }
             if life > 0 {
                 crate::effect::execute(
                     &EffectOp::LoseLife {
@@ -3376,6 +3378,11 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     })
 }
 
+pub(crate) fn clear_paid_mox_entry(state: &mut GameState, object: ObjectId) {
+    let host = live_link(state, object);
+    e7a_state(state).mox_entering.retain(|&entry| entry != host);
+}
+
 fn live_mox_entry(state: &GameState) -> Option<ObjectLinkV4> {
     read_state(state)?
         .mox_entering
@@ -3384,7 +3391,7 @@ fn live_mox_entry(state: &GameState) -> Option<ObjectLinkV4> {
         .find(|&link| link_live_in(state, link, Zone::Battlefield))
 }
 
-fn hand_land_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn hand_land_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
     state.players[player.index()]
         .hand
         .iter()

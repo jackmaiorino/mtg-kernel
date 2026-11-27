@@ -2300,15 +2300,24 @@ pub(crate) fn finish_selection(
         E8aChoiceV1::VialHandToBattlefieldV1 { paid_at } => {
             validate_vial_hand_choice(state, continuation, choice, *paid_at)?;
             if let Some(card) = chosen {
-                if !crate::linked_aura_operation_v1::prepare_vial_metamorph(
+                if !crate::linked_aura_operation_v1::prepare_registered_entry(
                     state,
-                    continuation,
-                    *paid_at,
                     card.object,
+                    crate::linked_aura_operation_v1::CopyProducer::PaidHand {
+                        continuation,
+                        paid_at: *paid_at,
+                    },
                 )? {
                     return Ok(false);
                 }
-                put_onto_battlefield(state, card.object, player, false);
+                if crate::linked_aura_operation_v1::copy_declined_discard(state, card.object) {
+                    event::propose_and_commit(
+                        state,
+                        ProposedEvent::zone_change(card.object, Zone::Graveyard),
+                    );
+                } else {
+                    put_onto_battlefield(state, card.object, player, false);
+                }
             }
             Ok(false)
         }

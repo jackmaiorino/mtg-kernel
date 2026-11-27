@@ -189,7 +189,7 @@ pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> boo
 /// ascending order, one per name. As with Pithing Needle
 /// (`eternal_lurrus_v1::needle_name_options`), naming a card nobody can see
 /// would have no effect this game, so the choice is limited to these.
-fn revoker_name_options(state: &GameState, player: PlayerId) -> Vec<u16> {
+pub(crate) fn revoker_name_options(state: &GameState, player: PlayerId) -> Vec<u16> {
     crate::eternal_lurrus_v1::needle_name_options(state, player)
         .into_iter()
         .filter(|&id| {

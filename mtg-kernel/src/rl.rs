@@ -1091,6 +1091,8 @@ pub struct PublicObservationProjectionV5 {
     /// Mage's name applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meddling_mage_names: Option<Vec<PublicMeddlingMageNameV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_entry: Option<crate::copy_entry_v1::PublicMenuV1>,
     /// Live Layer-3 color-word replacements on battlefield permanents and stack
     /// spells under the public shroud contract (Limited schema 5): seat 0's
     /// battlefield then seat 1's in public battlefield order, then the stack
@@ -2762,6 +2764,7 @@ pub fn observe_premodern_ordered_registered_v1(
                 .accepts_public_shroud()
                 .then(|| public_shroud_v1(state))
                 .transpose()?,
+            copy_entry: pending_copy_entry_v1(state, viewer),
             meddling_mage_names: text_mode
                 .accepts_public_shroud()
                 .then(|| public_meddling_mage_names_v1(state))
@@ -3068,9 +3071,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     // Only the schema 5 policy observation and the registered Premodern
     // ordered profile represent Meddling Mage's names (`meddling_mage_names`,
     // wave S1k). They never read a pending entry's saved world or answers, and
-    // still refuse a pending Metamorph copy menu.
+    // expose only the pending public copy menu or the viewer's own options.
     let mage_refused = if text_mode.accepts_public_shroud() {
         crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_copy_successor(state)
+    } else if matches!(text_mode, ObservationTextModeV2::FlatForbiddenElided) {
+        crate::copy_entry_v1::flat_requires_successor(state)
     } else {
         crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state)
     };
@@ -3736,6 +3741,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 .accepts_public_shroud()
                 .then(|| public_shroud_v1(state))
                 .transpose()?,
+            copy_entry: pending_copy_entry_v1(state, acting_player),
             meddling_mage_names: text_mode
                 .accepts_public_shroud()
                 .then(|| public_meddling_mage_names_v1(state))
@@ -6486,6 +6492,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
             meddling_mage_names: None,
+            copy_entry: None,
             text_color_changes: None,
             turn_schedule: None,
             ward_payments: None,
@@ -10648,6 +10655,15 @@ pub(crate) fn positionless_library_candidate_order(
             "library candidate changed semantic family".into(),
         )),
     }
+}
+
+/// Typed projection of a pending noncast copy menu. The native Vial opening
+/// profile can use this projection without relaxing schema 5's opening gate.
+pub fn pending_copy_entry_v1(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Option<crate::copy_entry_v1::PublicMenuV1> {
+    crate::copy_entry_v1::public_menu(state, viewer)
 }
 
 pub(crate) fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
