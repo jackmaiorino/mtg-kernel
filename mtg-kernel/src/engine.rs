@@ -24574,6 +24574,8 @@ pub(crate) fn counter_stack_item_by_id_to_zone(
         state.stack.remove(position);
         #[cfg(feature = "eternal-fixtures")]
         crate::eternal_legacy_e7a_v1::note_countered_stack_item(state, &item);
+        #[cfg(feature = "eternal-fixtures")]
+        crate::copy_entry_v1::record_ability_countered_if_relevant(state, &item);
         crate::fiend_artisan_receipts_v1::record_countered(state, &item);
         crate::etali_primal_storm_receipts_v1::record_countered(state, &item);
     }

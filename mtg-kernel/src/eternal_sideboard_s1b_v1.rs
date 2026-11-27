@@ -63,6 +63,10 @@ pub struct S1bStateV1 {
     /// Permanents Liquimetal Coating made artifacts, with the turn.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifact_until: Vec<(ObjectLinkV4, (u32, PlayerId))>,
+    /// Activated-ability hand-discard uses paid by permanents that left the
+    /// battlefield during the current turn, cleared at Untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub departed_discard_uses: Vec<(ObjectLinkV4, PlayerId, u16)>,
 }
 
 impl Hash for S1bStateV1 {
@@ -76,6 +80,10 @@ impl Hash for S1bStateV1 {
             self.discards.hash(state);
             self.explosives.hash(state);
             self.artifact_until.hash(state);
+            if !self.departed_discard_uses.is_empty() {
+                b"departed-discard-uses/v1".hash(state);
+                self.departed_discard_uses.hash(state);
+            }
         }
     }
 }
@@ -96,6 +104,12 @@ fn s1b_state(state: &mut GameState) -> &mut S1bStateV1 {
 
 fn read_state(state: &GameState) -> Option<&S1bStateV1> {
     state.eternal_v1.as_ref().map(|eternal| &eternal.s1b)
+}
+
+pub(crate) fn begin_turn(state: &mut GameState, _player: PlayerId) {
+    if let Some(eternal) = state.eternal_v1.as_mut() {
+        eternal.s1b.departed_discard_uses.clear();
+    }
 }
 
 /// Effect leaves owned by this module, carried as

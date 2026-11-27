@@ -1456,8 +1456,227 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 
+fn activated_discard_uses_for_object(
+    state: &GameState,
+    id: ObjectId,
+    live: &crate::state::GameObject,
+    controller: PlayerId,
+    turn_slice: &[CommittedEvent],
+) -> usize {
+    use crate::card_def::CostComponent;
+    use crate::state::AbilityKindV4;
+    if live.controller != controller
+        || live.v4.ability_uses_this_turn.is_empty()
+        || crate::eternal_cube_c8b_v1::has_saheeli_copy(state, id)
+        || crate::standard_cards_v1::active_aegis_copy(state, id)
+        || crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+        || crate::eternal_legacy_e7a_v1::active_copy(state, id)
+    {
+        return 0;
+    }
+    let stolen_this_turn = turn_slice.iter().any(|ev| {
+        matches!(
+            ev,
+            CommittedEvent::TemporaryControlInstalledV1 { installation }
+                if matches!(
+                    installation.target,
+                    crate::state::StackTargetContractV4::Object { object, .. }
+                        if object == id
+                )
+        )
+    });
+    if stolen_this_turn {
+        return 0;
+    }
+    let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
+        return 0;
+    };
+    let mut total: usize = 0;
+    for entry in &live.v4.ability_uses_this_turn {
+        if entry.ability_kind != AbilityKindV4::Activated || entry.uses == 0 {
+            continue;
+        }
+        let Some(ability) = def
+            .activated_abilities
+            .get(usize::from(entry.ability_index))
+        else {
+            continue;
+        };
+        if ability.activation_zone != Zone::Battlefield {
+            continue;
+        }
+        let per_use: usize = ability
+            .cost
+            .iter()
+            .map(|component| match component {
+                CostComponent::DiscardCards(n) | CostComponent::DiscardLandCardsV1(n) => {
+                    usize::from(*n)
+                }
+                CostComponent::DiscardIslandAndAnotherCardV1 => 2,
+                _ => 0,
+            })
+            .sum();
+        total = total.saturating_add(per_use.saturating_mul(usize::from(entry.uses)));
+    }
+    total
+}
+
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn note_departing_discard_uses(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+    if from_zone != Zone::Battlefield || state.step == crate::state::Step::Untap {
+        return;
+    }
+    let Some(live) = state.objects.try_get(id) else {
+        return;
+    };
+    if live.v4.ability_uses_this_turn.is_empty() {
+        return;
+    }
+    let controller = live.controller;
+    let link = ObjectLinkV4 {
+        object: id,
+        zone_change_count: live.zone_change_count,
+    };
+    let history = &state.engine.event_history;
+    let turn_start = history
+        .iter()
+        .rposition(|ev| matches!(ev, CommittedEvent::UpkeepBegan { .. }))
+        .map_or(0, |idx| idx + 1);
+    let uses =
+        activated_discard_uses_for_object(state, id, live, controller, &history[turn_start..]);
+    if uses > 0 {
+        let uses_u16 = u16::try_from(uses).unwrap_or(u16::MAX);
+        let list = &mut s1b_state(state).departed_discard_uses;
+        if !list.iter().any(|(existing, _, _)| *existing == link) {
+            list.push((link, controller, uses_u16));
+        }
+    }
+}
+
+fn player_ref_can_match(
+    pref: crate::effect::PlayerRef,
+    caster: PlayerId,
+    target_player: PlayerId,
+) -> bool {
+    match pref {
+        crate::effect::PlayerRef::Controller => caster == target_player,
+        crate::effect::PlayerRef::Opponent => caster != target_player,
+        crate::effect::PlayerRef::Target(_) | crate::effect::PlayerRef::ObjectController(_) => true,
+    }
+}
+
+fn effect_resolution_discard_cap(
+    op: &crate::effect::EffectOp,
+    caster: PlayerId,
+    target_player: PlayerId,
+) -> (usize, bool) {
+    use crate::effect::EffectOp;
+    match op {
+        EffectOp::DiscardCards { player, count } => {
+            if player_ref_can_match(*player, caster, target_player) {
+                (*count as usize, false)
+            } else {
+                (0, false)
+            }
+        }
+        EffectOp::DiscardUpToThenDraw { player, maximum } => {
+            if player_ref_can_match(*player, caster, target_player) {
+                (*maximum as usize, false)
+            } else {
+                (0, false)
+            }
+        }
+        EffectOp::DiscardBasicLandOrCards { player, otherwise } => {
+            if player_ref_can_match(*player, caster, target_player) {
+                ((*otherwise as usize).max(1), false)
+            } else {
+                (0, false)
+            }
+        }
+        EffectOp::Sequence(ops) => {
+            let mut saw_draw = false;
+            let mut total: usize = 0;
+            let mut after_draw = false;
+            for step in ops {
+                if matches!(
+                    step,
+                    EffectOp::DrawCards { .. } | EffectOp::DrawCardsDynamic { .. }
+                ) {
+                    saw_draw = true;
+                }
+                let (cap, inner_after_draw) =
+                    effect_resolution_discard_cap(step, caster, target_player);
+                if cap > 0 {
+                    total = total.saturating_add(cap);
+                    if saw_draw || inner_after_draw {
+                        after_draw = true;
+                    }
+                }
+            }
+            (total, after_draw)
+        }
+        EffectOp::Choice { options, .. } => {
+            let mut best: usize = 0;
+            let mut any_after_draw = false;
+            for opt in options {
+                let (cap, inner_after_draw) =
+                    effect_resolution_discard_cap(opt, caster, target_player);
+                if cap > best {
+                    best = cap;
+                    any_after_draw = inner_after_draw;
+                }
+            }
+            (best, any_after_draw)
+        }
+        _ => (0, false),
+    }
+}
+
+fn spell_resolution_discard_cap(
+    def: &CardDef,
+    caster: PlayerId,
+    target_player: PlayerId,
+) -> (usize, bool) {
+    let mut best: usize = 0;
+    let mut requires_draw = false;
+    let mut consider = |op: &crate::effect::EffectOp| {
+        let (cap, after_draw) = effect_resolution_discard_cap(op, caster, target_player);
+        if cap > best {
+            best = cap;
+            requires_draw = after_draw;
+        }
+    };
+    if let Some(op) = (def.spell_effect)() {
+        consider(&op);
+    }
+    for mode in def
+        .mode2
+        .iter()
+        .chain(def.mode3.iter())
+        .chain(def.additional_modes.iter())
+    {
+        consider(&(mode.effect)());
+    }
+    (best, requires_draw)
+}
+
+fn is_controller_hand_discard(ev: &CommittedEvent, controller: PlayerId) -> bool {
+    matches!(
+        ev,
+        CommittedEvent::ZoneChange {
+            from: Zone::Hand,
+            to,
+            controller_before,
+            ..
+        } if *controller_before == controller
+            && !matches!(to, Zone::Hand | Zone::Battlefield | Zone::Stack)
+    )
+}
+
 /// Same-turn hand-discard conservation law: every activated ability with a
-/// fixed hand-discard cost (such as Putrid Imp) and every Mox Diamond
+/// fixed hand-discard cost (live or departed on the current turn, such as
+/// Putrid Imp), every spell-resolution / spell-cost discard (such as Faithless
+/// Looting or `ResolutionDiscardWaitsV1`), and every Mox Diamond
 /// `CopyDiscardPaid` receipt in the current turn consumes a distinct
 /// `Hand -> Graveyard | Exile | Library` move by that controller.
 ///
@@ -1468,7 +1687,7 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
 /// turn beyond `CopyDiscardPaid` uniqueness and stack-item anchoring.
 fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), String> {
     use crate::card_def::CostComponent;
-    use crate::state::AbilityKindV4;
+    use crate::cast_identity_v1::PublicIdentityV1;
     if state.step == crate::state::Step::Untap {
         return Ok(());
     }
@@ -1512,79 +1731,201 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
         if copy_discards.is_empty() {
             continue;
         }
-        let hand_discards = turn_slice
+        let hand_discard_indices: HashSet<usize> = turn_slice
             .iter()
-            .filter(|ev| {
-                matches!(
-                    ev,
-                    CommittedEvent::ZoneChange {
-                        from: Zone::Hand,
-                        to,
-                        controller_before,
-                        ..
-                    } if *controller_before == controller
-                        && !matches!(to, Zone::Hand | Zone::Battlefield | Zone::Stack)
-                )
+            .enumerate()
+            .filter_map(|(offset, ev)| {
+                is_controller_hand_discard(ev, controller).then_some(turn_start + offset)
             })
-            .count();
-        let mut activated_discards: usize = 0;
-        for (id, live) in state.objects.iter() {
-            if live.zone != Zone::Battlefield
-                || live.controller != controller
-                || live.v4.ability_uses_this_turn.is_empty()
-                || crate::eternal_cube_c8b_v1::has_saheeli_copy(state, id)
-                || crate::standard_cards_v1::active_aegis_copy(state, id)
-                || crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
-                || crate::eternal_legacy_e7a_v1::active_copy(state, id)
-            {
-                continue;
-            }
-            let stolen_this_turn = turn_slice.iter().any(|ev| {
-                matches!(
-                    ev,
-                    CommittedEvent::TemporaryControlInstalledV1 { installation }
-                        if matches!(
-                            installation.target,
-                            crate::state::StackTargetContractV4::Object { object, .. }
-                                if object == id
-                        )
-                )
-            });
-            if stolen_this_turn {
-                continue;
-            }
-            let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
-                continue;
-            };
-            for entry in &live.v4.ability_uses_this_turn {
-                if entry.ability_kind != AbilityKindV4::Activated || entry.uses == 0 {
-                    continue;
-                }
-                let Some(ability) = def
-                    .activated_abilities
-                    .get(usize::from(entry.ability_index))
-                else {
-                    continue;
-                };
-                if ability.activation_zone != Zone::Battlefield {
-                    continue;
-                }
-                let per_use: usize = ability
-                    .cost
-                    .iter()
-                    .map(|component| match component {
-                        CostComponent::DiscardCards(n) | CostComponent::DiscardLandCardsV1(n) => {
-                            usize::from(*n)
+            .collect();
+
+        // Collect all hand-discard indices attributable to spell resolutions,
+        // `ResolutionDiscardWaitsV1` windows, or spell additional discard costs
+        // so unrelated spell-based discards (e.g. Faithless Looting) cannot
+        // bankroll a forged `CopyDiscardPaid` receipt.
+        let mut spell_discard_indices = HashSet::new();
+        for (offset, ev) in turn_slice.iter().enumerate() {
+            let abs_idx = turn_start + offset;
+            match ev {
+                CommittedEvent::ResolutionDiscardWaitsV1 { player, hand, .. }
+                    if *player == controller =>
+                {
+                    let mut cursor = abs_idx + 1;
+                    while let Some(next_ev) = history.get(cursor) {
+                        if let CommittedEvent::ZoneChange {
+                            object,
+                            from: Zone::Hand,
+                            to,
+                            controller_before,
+                        } = next_ev
+                        {
+                            if *controller_before == controller
+                                && !matches!(to, Zone::Hand | Zone::Battlefield | Zone::Stack)
+                                && hand.iter().any(|link| link.object == *object)
+                            {
+                                spell_discard_indices.insert(cursor);
+                                cursor += 1;
+                                continue;
+                            }
                         }
-                        CostComponent::DiscardIslandAndAnotherCardV1 => 2,
-                        _ => 0,
-                    })
-                    .sum();
-                activated_discards = activated_discards
-                    .saturating_add(per_use.saturating_mul(usize::from(entry.uses)));
+                        if matches!(
+                            next_ev,
+                            CommittedEvent::TinybonesV72 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    crate::engine::tinybones_v72::JournalV72::Discarded(_)
+                                )
+                        ) {
+                            cursor += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                CommittedEvent::PublishedCastIdentityV1 { receipt } => {
+                    let PublicIdentityV1::Known { card_def } = receipt.public_identity else {
+                        continue;
+                    };
+                    let Some(def) = CARD_DEFS.get(usize::from(card_def)) else {
+                        continue;
+                    };
+                    // Additional discard costs paid immediately before the cast receipt.
+                    if receipt.controller == controller {
+                        let cast_cost_discards: usize = def
+                            .additional_cost
+                            .unwrap_or(&[])
+                            .iter()
+                            .map(|c| match c {
+                                CostComponent::DiscardCards(n)
+                                | CostComponent::DiscardLandCardsV1(n) => usize::from(*n),
+                                CostComponent::DiscardIslandAndAnotherCardV1 => 2,
+                                _ => 0,
+                            })
+                            .sum();
+                        if cast_cost_discards > 0 {
+                            let mut cursor = abs_idx;
+                            let mut found = 0usize;
+                            while cursor > turn_start && found < cast_cost_discards {
+                                cursor -= 1;
+                                let prev = &history[cursor];
+                                if is_controller_hand_discard(prev, controller) {
+                                    spell_discard_indices.insert(cursor);
+                                    found += 1;
+                                } else if matches!(
+                                    prev,
+                                    CommittedEvent::TinybonesV72 { journal }
+                                        if matches!(
+                                            journal.as_ref(),
+                                            crate::engine::tinybones_v72::JournalV72::Discarded(_)
+                                        )
+                                ) {
+                                    continue;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Resolution discards committed immediately before the spell leaves the stack.
+                    let (res_cap, requires_draw) =
+                        spell_resolution_discard_cap(def, receipt.controller, controller);
+                    if res_cap == 0 {
+                        continue;
+                    }
+                    let Some(leave_off) = history[abs_idx + 1..].iter().position(|later| {
+                        matches!(
+                            later,
+                            CommittedEvent::ZoneChange {
+                                object,
+                                from: Zone::Stack,
+                                to,
+                                ..
+                            } if *object == receipt.spell && *to != Zone::Stack
+                        )
+                    }) else {
+                        continue;
+                    };
+                    let leave_idx = abs_idx + 1 + leave_off;
+                    let mut run = Vec::new();
+                    let mut cursor = leave_idx;
+                    while cursor > abs_idx + 1 && run.len() < res_cap {
+                        cursor -= 1;
+                        let prev = &history[cursor];
+                        if is_controller_hand_discard(prev, controller) {
+                            run.push(cursor);
+                        } else if matches!(
+                            prev,
+                            CommittedEvent::TinybonesV72 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    crate::engine::tinybones_v72::JournalV72::Discarded(_)
+                                )
+                        ) {
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(&earliest) = run.last() {
+                        let draw_ok = !requires_draw || {
+                            let mut saw_draw = false;
+                            for mid in history[abs_idx + 1..earliest].iter().rev() {
+                                if matches!(
+                                    mid,
+                                    CommittedEvent::Draw { player, .. } if *player == controller
+                                ) {
+                                    saw_draw = true;
+                                    break;
+                                }
+                                if matches!(
+                                    mid,
+                                    CommittedEvent::SpellCast { .. }
+                                        | CommittedEvent::PublishedCastIdentityV1 { .. }
+                                ) {
+                                    break;
+                                }
+                            }
+                            saw_draw
+                        };
+                        if draw_ok {
+                            spell_discard_indices.extend(run);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
-        if hand_discards < activated_discards.saturating_add(copy_discards.len()) {
+
+        if copy_discards
+            .iter()
+            .any(|idx| spell_discard_indices.contains(idx))
+        {
+            return Err("copy-entry discard overlaps a spell-resolution discard".into());
+        }
+
+        let mut activated_discards: usize = 0;
+        let mut counted_links = HashSet::new();
+        for (id, live) in state.objects.iter() {
+            let uses = activated_discard_uses_for_object(state, id, live, controller, turn_slice);
+            if uses > 0 {
+                counted_links.insert(ObjectLinkV4 {
+                    object: id,
+                    zone_change_count: live.zone_change_count,
+                });
+                activated_discards = activated_discards.saturating_add(uses);
+            }
+        }
+        if let Some(s1b) = super::read_state(state) {
+            for &(link, owner_ctrl, uses) in &s1b.departed_discard_uses {
+                if owner_ctrl == controller && counted_links.insert(link) {
+                    activated_discards = activated_discards.saturating_add(usize::from(uses));
+                }
+            }
+        }
+        let available_discards = hand_discard_indices
+            .difference(&spell_discard_indices)
+            .count();
+        if available_discards < activated_discards.saturating_add(copy_discards.len()) {
             return Err("copy-entry discard violates same-turn hand-discard conservation".into());
         }
     }

@@ -1383,6 +1383,7 @@ fn create_token_copy(
     producer: AbilitySourceContractV4,
     donor: ObjectLinkV4,
     values: CopiableValuesV1,
+    stack_item: Option<crate::ids::StackItemId>,
 ) -> bool {
     let fallback_values = values.clone();
     let CopiableValuesV1 {
@@ -1443,20 +1444,23 @@ fn create_token_copy(
             _ => None,
         })
         .collect();
-    for &(create_at, object) in &created {
-        let applied = capture_battlefield_copiable_values(state, object)
-            .unwrap_or_else(|| fallback_values.clone());
-        crate::copy_entry_v1::record_token_copy_created(
-            state,
-            ObjectLinkV4 {
-                object,
-                zone_change_count: 0,
-            },
-            create_at,
-            producer,
-            donor,
-            applied,
-        );
+    if let Some(stack_item) = stack_item {
+        for &(create_at, object) in &created {
+            let applied = capture_battlefield_copiable_values(state, object)
+                .unwrap_or_else(|| fallback_values.clone());
+            crate::copy_entry_v1::record_token_copy_created(
+                state,
+                ObjectLinkV4 {
+                    object,
+                    zone_change_count: 0,
+                },
+                create_at,
+                producer,
+                donor,
+                applied,
+                stack_item,
+            );
+        }
     }
     !created.is_empty()
 }
@@ -1606,6 +1610,7 @@ fn resolve_vaultborn_death_copy(ctx: &ExecCtx, state: &mut GameState) {
             copied_nightmare_v1: copied_nightmare,
             prototyped: false,
         },
+        ctx.stack_item_id,
     );
 }
 
@@ -1638,7 +1643,15 @@ pub(crate) fn execute(op: &C8bOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     let producer = ctx
                         .ability_source_contract
                         .unwrap_or_else(|| AbilitySourceContractV4::capture(state, ctx.source));
-                    create_token_copy(state, ctx.source, ctx.controller, producer, *host, values)
+                    create_token_copy(
+                        state,
+                        ctx.source,
+                        ctx.controller,
+                        producer,
+                        *host,
+                        values,
+                        ctx.stack_item_id,
+                    )
                 } else {
                     false
                 }

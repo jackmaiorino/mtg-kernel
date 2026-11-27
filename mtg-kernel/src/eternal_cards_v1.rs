@@ -2860,6 +2860,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_premodern_p3b_v1::begin_turn(state, player);
     crate::eternal_premodern_p3d_v1::begin_turn(state, player);
     crate::eternal_premodern_p3e_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1b_v1::begin_turn(state, player);
     crate::eternal_premodern_p3f_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1e_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1f_v1::begin_turn(state, player);

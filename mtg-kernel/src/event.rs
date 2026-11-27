@@ -9228,6 +9228,10 @@ fn materialize_zone_change_v1(
         );
     let enters_battlefield_tapped =
         to_zone == Zone::Battlefield && (force_battlefield_tapped || printed_entry_tapped);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_discard_uses(
+        state, id, from_zone,
+    );
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
