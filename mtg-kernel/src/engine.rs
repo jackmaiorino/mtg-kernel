@@ -3532,6 +3532,14 @@ fn validate_physical_spell_cast_origin(
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (cast_method == CastMethodV4::Normal
                     || (!is_pending_placeholder
+                        && cast_method == CastMethodV4::Bestow
+                        && supported_bestow(def).is_some()
+                        && !crate::eternal_e5a_v1::permissions::citadel_cast(
+                            state,
+                            item.source,
+                            caster,
+                        ))
+                    || (!is_pending_placeholder
                         && cast_method == CastMethodV4::Omen
                         && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
                         && crate::eternal_e5a_v1::permissions::library_overload_allowed(
@@ -3569,7 +3577,9 @@ fn validate_physical_spell_cast_origin(
                 && (graveyard_bestow
                     || ((cast_method != CastMethodV4::Alternative
                         || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none())
-                        && sphinx_lore_cast_v1::ordinary_payment_method(def, cast_method)
+                        && (sphinx_lore_cast_v1::ordinary_payment_method(def, cast_method)
+                            || (cast_method == CastMethodV4::Bestow
+                                && supported_bestow(def).is_some()))
                         && crate::standard_cards_v1::graveyard_cast_granted(
                             state,
                             item.source,
@@ -4365,7 +4375,9 @@ fn storm_source_contract_is_structurally_valid(
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (contract.cast_method == CastMethodV4::Normal
                     || (contract.cast_method == CastMethodV4::Alternative
-                        && definition.alt_cost.is_some()))
+                        && definition.alt_cost.is_some())
+                    || (contract.cast_method == CastMethodV4::Bestow
+                        && supported_bestow(definition).is_some()))
         }
         SpellCastRouteV4::LibraryPermissionV1 {
             holder,
@@ -4374,7 +4386,9 @@ fn storm_source_contract_is_structurally_valid(
             origin.origin_zone == Zone::Library
                 && holder == contract.controller
                 && permission_zone_change_count == origin.origin_zone_change_count
-                && contract.cast_method == CastMethodV4::Normal
+                && (contract.cast_method == CastMethodV4::Normal
+                    || (contract.cast_method == CastMethodV4::Bestow
+                        && supported_bestow(definition).is_some()))
         }
         SpellCastRouteV4::OmniscienceHandV1 {
             holder,
@@ -12786,7 +12800,14 @@ fn viable_pending_spell_forms(
         };
     }
     let free = resolution_cast_v1::free_cast(state, pending.spell);
-    let alternative = if supported_bestow(def).is_some() && !free {
+    let citadel_cast = cfg!(feature = "eternal-fixtures")
+        && pending.origin_zone == Zone::Library
+        && crate::eternal_e5a_v1::permissions::citadel_cast(
+            state,
+            pending.spell,
+            pending.controller,
+        );
+    let alternative = if supported_bestow(def).is_some() && !free && !citadel_cast {
         Some((CastMethodV4::Bestow, &[CardType::Enchantment][..]))
     } else if let Some(adventure) = supported_adventure(def) {
         (pending.origin_zone == Zone::Hand
@@ -13984,8 +14005,14 @@ fn is_castable_with_cost_grant(
                 supported_bestow(def).is_some_and(|bestow| {
                     let graveyard_bestow = cfg!(feature = "eternal-fixtures")
                         && crate::eternal_cube_c8b_v1::graveyard_bestow_allowed(state, id, player);
+                    let eternal_permission_bestow = cfg!(feature = "eternal-fixtures")
+                        && (graveyard_permission_zone_change_count(player, id, state).is_some()
+                            || crate::eternal_e5a_v1::permissions::library_top_cast(
+                                state, player, id,
+                            ) == Some(false));
                     (matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
                         || graveyard_bestow
+                        || eternal_permission_bestow
                         || muldrotha_v1::permissions(state, id, player)
                             .iter()
                             .any(|p| p.permanent_type == CardType::Enchantment))
@@ -19285,7 +19312,7 @@ pub(crate) fn validate_pending_cast(
                         spec,
                         &prefix,
                         pending.controller,
-                        targeting_source_for_object(state, pending.spell),
+                        targeting_source_for_pending_cast(state, pending),
                         state,
                     )
                 };
@@ -20006,7 +20033,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     spec,
                     &pending.targets_chosen,
                     pending.controller,
-                    targeting_source_for_object(state, pending.spell),
+                    targeting_source_for_pending_cast(state, &pending),
                     state,
                 );
                 legal_completion
@@ -35077,20 +35104,23 @@ fn finalize_owned_cast(
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c7c_v1::note_mana_by_color(state, pending.spell, mana_by_color);
     // Lurrus of the Dream-Den's and Serra Paragon's permissions are used once
-    // the cast is paid.
+    // the cast is paid. Detective's Phoenix's own graveyard Bestow permission
+    // does not consume Lurrus or Serra Paragon.
     #[cfg(feature = "eternal-fixtures")]
     if pending.origin_zone == Zone::Graveyard
         && matches!(
             cast_method,
-            CastMethodV4::Normal | CastMethodV4::Alternative
+            CastMethodV4::Normal | CastMethodV4::Alternative | CastMethodV4::Bestow
         )
+        && (cast_method != CastMethodV4::Bestow
+            || !crate::eternal_cube_c8b_v1::is_graveyard_bestow_card(def.name))
     {
         if let Some(origin) = pending
             .source_contract
             .spell_cast_origin
             .filter(|origin| matches!(origin.route, SpellCastRouteV4::GraveyardPermissionV1 { .. }))
         {
-            if cast_method == CastMethodV4::Normal {
+            if matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Bestow) {
                 crate::eternal_lurrus_v1::note_graveyard_permission_cast(
                     state,
                     pending.spell,

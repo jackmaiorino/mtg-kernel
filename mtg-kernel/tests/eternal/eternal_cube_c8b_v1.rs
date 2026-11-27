@@ -1253,6 +1253,194 @@ fn springheart_nantuko_bestow_landfall_copy_decline_opponent_host_detach_and_fiz
     assert_eq!(power_toughness(&state, nantuko), (1, 1));
 }
 
+#[test]
+fn springheart_nantuko_bestow_from_graveyard_via_lurrus_consumes_permission_and_restores() {
+    let mut state = plains();
+    let _lurrus = put(&mut state, P0, "Lurrus of the Dream-Den", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let nantuko = put(&mut state, P0, "Springheart Nantuko", Zone::Graveyard);
+    let mystic = put(&mut state, P0, "Elvish Mystic", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::G], 1);
+
+    assert!(castable(&mut state, nantuko));
+    assert!(castable(&mut state, mystic));
+    cast_mode(&mut state, nantuko, 1, &[Target::Object(elves)]);
+
+    // Finalized Bestow-from-graveyard spell sits on the stack without halting.
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.stack[0].source, nantuko);
+    assert_eq!(
+        state.stack[0].v4.cast_method,
+        Some(mtg_kernel::state::CastMethodV4::Bestow)
+    );
+
+    // Snapshot restore validation while the Bestow-from-graveyard spell is on the stack.
+    let snapshot = serde_json::to_string(&state).expect("serialize stack snapshot");
+    let mut restored: GameState =
+        serde_json::from_str(&snapshot).expect("deserialize stack snapshot");
+    settled(&mut restored);
+    assert_eq!(zone(&restored, nantuko), Zone::Battlefield);
+    assert!(has_type(&restored, nantuko, CardType::Enchantment));
+    assert!(!has_type(&restored, nantuko, CardType::Creature));
+    assert!(has_subtype(&restored, nantuko, Subtype::Aura));
+    assert_eq!(power_toughness(&restored, elves), (2, 2));
+
+    // Resolve on the live state and verify Lurrus's once-per-turn permission is consumed.
+    settled(&mut state);
+    assert_eq!(zone(&state, nantuko), Zone::Battlefield);
+    assert!(has_type(&state, nantuko, CardType::Enchantment));
+    assert!(!has_type(&state, nantuko, CardType::Creature));
+    assert!(has_subtype(&state, nantuko, Subtype::Aura));
+    assert_eq!(power_toughness(&state, elves), (2, 2));
+    assert_eq!(mana(&state, P0, ManaColor::G), 1);
+    assert!(
+        !castable(&mut state, mystic),
+        "Bestow cast via Lurrus must consume Lurrus's once-per-turn graveyard permission"
+    );
+
+    // Next turn Lurrus's permission refreshes.
+    to_next_main(&mut state, P0);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    assert!(castable(&mut state, mystic));
+}
+
+#[test]
+fn springheart_nantuko_bestow_from_graveyard_via_serra_paragon_consumes_permission_and_grants_dies()
+{
+    let mut state = plains();
+    let _paragon = put(&mut state, P0, "Serra Paragon", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let nantuko = put(&mut state, P0, "Springheart Nantuko", Zone::Graveyard);
+    let mystic = put(&mut state, P0, "Elvish Mystic", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::G], 1);
+
+    assert!(castable(&mut state, nantuko));
+    assert!(castable(&mut state, mystic));
+    cast_mode(&mut state, nantuko, 1, &[Target::Object(elves)]);
+
+    // Finalized Bestow-from-graveyard spell sits on the stack without halting.
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.stack[0].source, nantuko);
+    assert_eq!(
+        state.stack[0].v4.cast_method,
+        Some(mtg_kernel::state::CastMethodV4::Bestow)
+    );
+
+    // Snapshot restore validation while the Bestow-from-graveyard spell is on the stack.
+    let snapshot = serde_json::to_string(&state).expect("serialize stack snapshot");
+    let mut restored: GameState =
+        serde_json::from_str(&snapshot).expect("deserialize stack snapshot");
+    settled(&mut restored);
+    assert_eq!(zone(&restored, nantuko), Zone::Battlefield);
+    assert!(has_type(&restored, nantuko, CardType::Enchantment));
+    assert!(!has_type(&restored, nantuko, CardType::Creature));
+    assert!(has_subtype(&restored, nantuko, Subtype::Aura));
+    assert_eq!(power_toughness(&restored, elves), (2, 2));
+
+    // Resolve and verify Serra Paragon's once-per-turn permission is consumed.
+    settled(&mut state);
+    assert_eq!(zone(&state, nantuko), Zone::Battlefield);
+    assert!(has_type(&state, nantuko, CardType::Enchantment));
+    assert!(!has_type(&state, nantuko, CardType::Creature));
+    assert!(has_subtype(&state, nantuko, Subtype::Aura));
+    assert_eq!(power_toughness(&state, elves), (2, 2));
+    assert_eq!(mana(&state, P0, ManaColor::G), 1);
+    assert!(
+        !castable(&mut state, mystic),
+        "Bestow cast via Serra Paragon must consume Serra Paragon's once-per-turn permission"
+    );
+
+    // Serra Paragon's granted dies trigger transferred to the Bestow Aura:
+    // destroying Nantuko exiles it and gains 2 life.
+    let life_before = life(&state, P0);
+    let destroy = put(&mut state, P0, "Disenchant", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    cast(&mut state, destroy, &[Target::Object(nantuko)]);
+    settled(&mut state);
+    assert_eq!(
+        zone(&state, nantuko),
+        Zone::Exile,
+        "Bestow Aura cast via Serra Paragon exiles itself on death"
+    );
+    assert_eq!(life(&state, P0), life_before + 2);
+
+    // Detective's Phoenix cast from graveyard via its OWN Bestow ability does
+    // NOT consume Serra Paragon's once-per-turn permission.
+    let mut state = plains();
+    let _paragon = put(&mut state, P0, "Serra Paragon", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let phoenix = put(&mut state, P0, "Detective's Phoenix", Zone::Graveyard);
+    let _tyrant = put(&mut state, P0, "Vaultborn Tyrant", Zone::Graveyard);
+    let mystic = put(&mut state, P0, "Elvish Mystic", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
+    assert!(castable(&mut state, phoenix));
+    cast_mode(&mut state, phoenix, 1, &[Target::Object(elves)]);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, phoenix), Zone::Battlefield);
+    assert!(
+        castable(&mut state, mystic),
+        "Detective's Phoenix's own graveyard Bestow must not consume Serra Paragon"
+    );
+}
+
+#[test]
+fn springheart_nantuko_library_bestow_future_sight_allowed_and_citadel_normal_only() {
+    // Future Sight: pays ordinary mana cost, so Bestow from library top is legal
+    // and survives snapshot restore on the stack.
+    let mut state = plains();
+    let _future_sight = put(&mut state, P0, "Future Sight", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let nantuko = put(&mut state, P0, "Springheart Nantuko", Zone::Library);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+
+    assert!(castable(&mut state, nantuko));
+    cast_mode(&mut state, nantuko, 1, &[Target::Object(elves)]);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(
+        state.stack[0].v4.cast_method,
+        Some(mtg_kernel::state::CastMethodV4::Bestow)
+    );
+    let snapshot = serde_json::to_string(&state).expect("serialize library bestow snapshot");
+    let mut restored: GameState =
+        serde_json::from_str(&snapshot).expect("deserialize library bestow snapshot");
+    settled(&mut restored);
+    assert_eq!(zone(&restored, nantuko), Zone::Battlefield);
+    assert!(has_subtype(&restored, nantuko, Subtype::Aura));
+    assert_eq!(power_toughness(&restored, elves), (2, 2));
+
+    settled(&mut state);
+    assert_eq!(zone(&state, nantuko), Zone::Battlefield);
+    assert!(has_subtype(&state, nantuko, Subtype::Aura));
+    assert_eq!(power_toughness(&state, elves), (2, 2));
+
+    // Bolas's Citadel: life payment is an alternative cost (CR 118.9a), so Bestow
+    // is NOT offered; casting from library top casts directly as a creature paying 2 life.
+    let mut state = plains();
+    let _citadel = put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
+    let _elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let nantuko = put(&mut state, P0, "Springheart Nantuko", Zone::Library);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    let life_before = life(&state, P0);
+
+    assert!(castable(&mut state, nantuko));
+    act(&mut state, Action::CastSpell(nantuko));
+    // Must finalize directly as a creature without offering ChooseSpellMode for Bestow.
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(
+        state.stack[0].v4.cast_method,
+        Some(mtg_kernel::state::CastMethodV4::Normal)
+    );
+    settled(&mut state);
+    assert_eq!(zone(&state, nantuko), Zone::Battlefield);
+    assert!(has_type(&state, nantuko, CardType::Creature));
+    assert_eq!(life(&state, P0), life_before - 2);
+    assert_eq!(mana(&state, P0, ManaColor::G), 1);
+}
+
 // ---- Detective's Phoenix -------------------------------------------------------
 
 #[test]
