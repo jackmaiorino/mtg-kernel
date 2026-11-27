@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTG Kernel Weekly #2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Article and interactive chart share one reading column. */
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --ink: #12151b;
+  --ink-2: #4a505c;
+  --ink-3: #7a808c;
+  --rule: #dde1e8;
+  --grid: #e9ecf1;
+  --accent: #2a78d6;
+  --basilisk: #5f8dc9;
+  --other: #8a909b;
+  --f-display: "Sora", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111318; --card: #181b21; --ink: #eef0f4; --ink-2: #b9bfca; --ink-3: #8a919d;
+  --rule: #2b3039; --grid: #232830; --accent: #4b93ea;
+  --basilisk: #7ea8dc; --other: #6d7482; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111318; --card: #181b21; --ink: #eef0f4; --ink-2: #b9bfca; --ink-3: #8a919d;
+  --rule: #2b3039; --grid: #232830; --accent: #4b93ea;
+  --basilisk: #7ea8dc; --other: #6d7482; color-scheme: dark }
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.6; }
+.wrap { max-width: 760px; margin: 0 auto; padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+.nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+.nav a, .prose a { color: var(--accent); }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); display: flex; gap: 12px; flex-wrap: wrap; }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(30px, 6vw, 46px); line-height: 1.08; margin: 6px 0 0; text-wrap: balance; letter-spacing: -.01em; }
+h1 em { font-style: normal; color: var(--accent); }
+.dek { font-size: 18px; color: var(--ink-2); margin: 12px 0 0; max-width: 60ch; }
+.card { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 20px; min-width: 0; }
+.chart-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.chart-title { font-family: var(--f-display); font-weight: 500; font-size: 15px; margin: 0; }
+.chart-sub { font-size: 13px; color: var(--ink-3); margin: 2px 0 0; }
+.big { text-align: right; }
+.big .n { font-family: var(--f-display); font-weight: 700; font-size: 40px; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.big .l { font-size: 12px; color: var(--ink-3); }
+.svgbox { position: relative; margin-top: 12px; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { font-family: var(--f-mono); font-size: 11px; fill: var(--ink-3); }
+svg .lab { fill: var(--ink-2); font-size: 12px; }
+svg .lab-hi { fill: var(--ink); font-size: 12px; font-weight: 500; }
+svg .val-hi { fill: var(--accent); font-size: 12px; font-weight: 500; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); margin-top: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.sw.bas { background: var(--basilisk); }
+.sw.oth { background: var(--other); }
+.sw.ci { width: 18px; height: 0; border-top: 2px solid var(--ink-3); border-radius: 0; background: transparent; }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-family: var(--f-mono); font-size: 12px; line-height: 1.45; padding: 8px 10px; border-radius: 6px; width: max-content; max-width: 100%; transform: translateY(calc(-100% - 10px)); }
+.controls { display: flex; justify-content: flex-end; margin-top: 8px; }
+button { font: 500 13px var(--f-body); color: var(--accent); background: transparent; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.intro { background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 10px; padding: 14px 18px; font-size: 15px; color: var(--ink-2); max-width: 64ch; }
+.intro p { margin: 0; }
+.intro b { color: var(--ink); }
+.prose { display: grid; gap: 14px; max-width: 64ch; }
+.prose p { margin: 0; }
+.prose h2 { font-family: var(--f-display); font-size: 20px; margin: 8px 0 0; }
+.foot { font-size: 13px; color: var(--ink-3); border-top: 1px solid var(--rule); padding-top: 16px; display: grid; gap: 8px; }
+.foot p { margin: 0; }
+.foot h3 { font-family: var(--f-display); font-size: 14px; font-weight: 500; color: var(--ink-2); margin: 14px 0 4px; }
+details summary { cursor: pointer; color: var(--ink-2); font-size: 14px; }
+.foot, .foot details { min-width: 0; }
+.tbl { overflow-x: auto; margin-top: 8px; }
+table { border-collapse: collapse; font-family: var(--f-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; width: 100%; }
+th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--rule); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink-3); font-weight: 500; }
+@media (max-width: 560px) { svg text, svg .lab, svg .lab-hi, svg .val-hi { font-size: 13px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+<meta name="description" content="Basilisk 3 took first place on the Spellbench Pauper leaderboard at 1,619.5 Elo, lookahead search missed in a 900-decision screen, and Vintage Cube finished its first shakedown under random play.">
+<link rel="canonical" href="https://mtg-kernel.github.io/mtg-kernel/blog/2026-11-27-basilisk-3/">
+<link rel="alternate" type="application/atom+xml" title="MTG Kernel Weekly" href="../feed.xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MTG Kernel">
+<meta property="og:title" content="A new top bot, a search miss, and Vintage Cube's first run">
+<meta property="og:description" content="Basilisk 3 took first place on the Spellbench Pauper leaderboard at 1,619.5 Elo, lookahead search missed in a 900-decision screen, and Vintage Cube finished its first shakedown under random play.">
+<meta property="og:url" content="https://mtg-kernel.github.io/mtg-kernel/blog/2026-11-27-basilisk-3/">
+<meta property="og:image" content="https://mtg-kernel.github.io/mtg-kernel/blog/2026-11-27-basilisk-3/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+
+<div class="wrap">
+  <nav class="nav" aria-label="Site"><a href="../">All weekly posts</a><a href="../../">Watch the bot play (replay viewer)</a><a href="https://github.com/mtg-kernel/mtg-kernel">Code on GitHub</a></nav>
+  <header>
+    <div class="eyebrow"><span>MTG Kernel weekly</span><span>#2</span><span>Nov 27, 2026</span></div>
+    <h1>A new top bot, <em>a search miss</em>, and Vintage Cube's first run</h1>
+    <p class="dek">Basilisk 3 reached first place on the public Pauper leaderboard at 1,619.5 Elo. Meanwhile, lookahead search fell short in a decision screen, and our Vintage Cube trainer finished its first shakedown.</p>
+  </header>
+
+  <aside class="intro"><p><b>New here?</b> MTG Kernel is an open-source project teaching a computer to play Magic: The Gathering from scratch. It has never watched a human play. The bot learns by playing itself and earlier bots. Its only reward comes from winning. Each week we share one chart about what it learned.</p></aside>
+
+  <section class="card" aria-labelledby="c1t">
+    <div class="chart-head">
+      <div>
+        <p class="chart-title" id="c1t">Public Pauper leaderboard (Spellbench snapshot, Nov 26, 2026)</p>
+        <p class="chart-sub">Elo ratings across 10 bots and 3,072 rated games, anchored at 1,000 for random play. Horizontal lines show 95% confidence ranges across seat-swapped pairs.</p>
+      </div>
+      <div class="big"><div class="n" id="bigN">1,619.5</div><div class="l" id="bigL">Elo for Basilisk 3, rank 1 of 10</div></div>
+    </div>
+    <div class="svgbox" id="box1">
+      <svg id="c1" viewBox="0 0 720 380" role="img" aria-label="Horizontal rating chart of 10 Pauper bots on the Nov 26, 2026 Spellbench leaderboard. Random play is anchored at 1,000.0 Elo, Basilisk 1 is 1,444.3, Basilisk 2 is 1,547.6, and Basilisk 3 ranks first at 1,619.5 Elo with a 95 percent range from 1,561.1 to 1,681.0."></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <div class="legend">
+      <span><i class="sw"></i>Basilisk 3 (new #1)</span>
+      <span><i class="sw bas"></i>Earlier Basilisk bots</span>
+      <span><i class="sw oth"></i>Other bots</span>
+      <span><i class="sw ci"></i>95% confidence range</span>
+    </div>
+    <div class="controls"><button id="replay" type="button">Replay the ladder</button></div>
+  </section>
+
+  <article class="prose">
+    <h2>Basilisk 3 takes first place</h2>
+    <p>Last week we asked whether the Pauper bot would keep improving past 1.59 million training steps. On those three runs, reaching 2.1 million steps added another 3.8 percentage points against Basilisk 1 over the 1.05-million-step mark. Since then, a newer three-run line took over: it also learns whether to throw back a weak opening hand (a mulligan) and when to act during the opponent's turn (action windows). After about 15.7 million total games past its fork, that line gained 9.3 percentage points against its fork starting point, and using its own mulligans beat always keeping seven cards by 6.7 percentage points.</p>
+    <p>A frozen checkpoint from that line, named Basilisk 3, entered the public Spellbench Pauper leaderboard on November 26. Across 384 seat-swapped rated games (292 wins, 92 losses, zero draws or engine halts), it ranked first of 10 bots at 1,619.5 Elo (95% range 1,561.1 to 1,681.0), 71.9 Elo ahead of Basilisk 2 at 1,547.6 Elo. In head-to-head matches of 128 games each, Basilisk 3 won 72.7% against Basilisk 1, 78.1% against Basilisk 1 picking its single top-ranked move (argmax), and 77.3% against Archon 3. One caveat: Basilisk 3 trained with mulligans and action windows, while this leaderboard plays without either.</p>
+
+    <h2>Why lookahead search missed</h2>
+    <p>We also tested whether looking ahead (tree search guided by the bot's value head, which estimates the chance of winning from a board state) improves Basilisk 3's choices. In a countersigned 900-decision screen, no search setting passed the +0.8-point bar to advance. The primary search arm scored -0.49 percentage points against plain policy play (95% range -1.04 to +0.06), and a faster value-only arm scored -2.07 points. Even flat rollouts with no value head reached only +0.23 points (95% range -0.34 to +0.84). This is a negative decision-panel result on one set of positions, not a full-game strength test; a separate full-game search test is still running.</p>
+    <p>Follow-up diagnostics (every number here is exploratory and does not change the screen verdict) pointed to two problems. First, hidden cards hurt lookahead: across 900 decisions at 16 rollouts per move, an exploratory chooser shown the true hidden cards gained +2.00 percentage points, while the same chooser sampling possible opponent hands scored -0.06 points, losing more than half of the true-state gain (at 64 rollouts it reached +0.31 points). Second, on 420 eligible decisions, the value head's exploratory ranking score was 0.206 against an implied ceiling of 0.744, and its training target did not exactly match how the screen graded game continuations.</p>
+
+    <h2>Vintage Cube's first shakedown run</h2>
+    <p>This week we also shifted our main engineering push toward Vintage Cube, where eight players draft from a shared pool of 540 iconic Magic cards, build 40-card decks, and play. Before training a real Cube player, we ran a full pipeline shakedown where the deck builder and drafter learn while games themselves are played by a random legal-move pilot. The first try stopped cleanly at update 14 after 16,800 games when a halt-rate tripwire caught five rules bugs in one 2,000-game window. After fixing those interactions (such as free X-cost spells, library shuffles during a search, and self-attaching Equipment) across 137 pull requests merged to main since November 20, the restarted shakedown completed all 128 builder-only updates (143,360 games, 0.045% first-attempt halts) and all 128 draft-and-build updates (143,360 games, 0.031% halts) with zero stops.</p>
+    <p>Across four countersigned shakedown reads under random play (2,048 games per check, 8,190 of 8,192 games completed), the deck builder climbed from +4.33 percentage points at update 32 to +17.72 at update 64, +23.83 at update 96, and +24.37 points at update 128 (95% range +19.87% to +29.05%) over its untrained starting weights, settling near 23 non-land cards in a 40-card deck. These are shakedown reads under random play, not playing strength, and the shakedown weights are discarded after the report. Along the way, two byte-identical speedups accelerated Cube training without changing a single training outcome: typed in-process game transport ran 1.47x faster (mean update time down from 171.04 s to 116.49 s), and sharing idle game slots across adjacent draft pods added another 1.078x speedup (130.50 s to 121.02 s).</p>
+
+    <h2>Next week</h2>
+    <p>Next we expect the full-game search test to finish, paired tests comparing hidden-card samplers and target-aligned value training, and the move from Vintage Cube shakedowns toward real play training.</p>
+    <p>Follow along with the <a href="../feed.xml">RSS feed</a>, read the <a href="https://github.com/mtg-kernel/mtg-kernel">code on GitHub</a>, or <a href="../../">watch the bot's choices in the replay viewer</a>.</p>
+  </article>
+
+  <footer class="foot">
+    <details>
+      <summary>Show the numbers</summary>
+      <h3>Spellbench Pauper leaderboard (snapshot 2026-11-26)</h3>
+      <p>3,072 rated games across 10 bots, anchored at 1,000.0 Elo for random play. Basilisk 3 trained with London mulligans and action windows; this board plays without either.</p>
+      <div class="tbl"><table id="tbl-board"><thead><tr><th scope="col">Rank</th><th scope="col">Bot</th><th scope="col">Elo</th><th scope="col">95% range</th><th scope="col">Record (W-L)</th></tr></thead><tbody></tbody></table></div>
+
+      <h3>Search screen (negative decision-panel result) and exploratory diagnostics</h3>
+      <p>The search screen evaluated 900 decisions (excluding 19 pregame decisions) under Amendment 3 after the signed November launch gate missed by 0.027 CPU-hours. No arm advanced. Diagnostic rows are exploratory and computed after the screen.</p>
+      <div class="tbl"><table><thead><tr><th scope="col">Reading</th><th scope="col">Label</th><th scope="col">Decisions</th><th scope="col">Estimate</th><th scope="col">95% range</th></tr></thead><tbody>
+        <tr><td>Primary arm (VL8-h0-D160 vs policy)</td><td>Decision panel (negative)</td><td>895</td><td>-0.49 pp</td><td>-1.04 to +0.06</td></tr>
+        <tr><td>Fast value arm (FV-h0 vs policy)</td><td>Decision panel (negative)</td><td>894</td><td>-2.07 pp</td><td>-2.86 to -1.31</td></tr>
+        <tr><td>Flat rollouts (F16 vs policy, resumed)</td><td>Decision panel (negative)</td><td>892</td><td>+0.23 pp</td><td>-0.34 to +0.84</td></tr>
+        <tr><td>True-state chooser (16 rollouts)</td><td>Exploratory</td><td>900</td><td>+2.00 pp</td><td>paired contrast below</td></tr>
+        <tr><td>Sampled-world chooser (16 rollouts)</td><td>Exploratory</td><td>900</td><td>-0.06 pp</td><td>-0.59 to +0.49</td></tr>
+        <tr><td>Sampled-world chooser (64 rollouts)</td><td>Exploratory</td><td>900</td><td>+0.31 pp</td><td>-0.20 to +0.84</td></tr>
+        <tr><td>Value-head ranking (current vs ceiling)</td><td>Exploratory</td><td>420</td><td>0.206 vs 0.744</td><td>b512 head: 0.137</td></tr>
+      </tbody></table></div>
+
+      <h3>Vintage Cube shakedown under random play and byte-identical speedups</h3>
+      <p>Countersigned dose-d8/v2 reads on the b2 builder-only restart (2,048 games per mark, 8,190 of 8,192 completed, 2 halts). Shakedown under random play, not playing strength; weights are discarded.</p>
+      <div class="tbl"><table><thead><tr><th scope="col">Checkpoint</th><th scope="col">Draft pods</th><th scope="col">Gain vs start</th><th scope="col">95% range</th><th scope="col">Mean non-lands</th></tr></thead><tbody>
+        <tr><td>b2 update 32 (dose-0)</td><td>512</td><td>+4.33 pp</td><td>-0.05% to +8.85%</td><td>20.23</td></tr>
+        <tr><td>b2 update 64 (dose-1)</td><td>1,024</td><td>+17.72 pp</td><td>+13.43% to +22.12%</td><td>21.87</td></tr>
+        <tr><td>b2 update 96 (dose-2)</td><td>1,536</td><td>+23.83 pp</td><td>+19.38% to +28.52%</td><td>22.53</td></tr>
+        <tr><td>b2 update 128 (dose-3)</td><td>2,048</td><td>+24.37 pp</td><td>+19.87% to +29.05%</td><td>22.85</td></tr>
+      </tbody></table></div>
+      <p>Byte-identical Cube training speedups (1,120-game updates on guarded desktop cores): typed in-process transport (PR #1004) cut mean update wall time from 171.04 s to 116.49 s (1.468x, verified across 2,240 matched-seed games); filling pod tails (PR #1005) cut mean update wall time from 130.50 s to 121.02 s (1.078x, verified across two 1,120-game updates).</p>
+    </details>
+    <p>Search screen numbers come from a 900-decision panel, value-head diagnostics are exploratory, and Vintage Cube numbers are shakedown reads under random play rather than playing strength.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var bots = [
+    { rank: 1,  name: "Basilisk 3",         short: "Basilisk 3",      elo: 1619.5, low: 1561.1, high: 1681.0, w: 292, l: 92,  g: 384,  group: "new", note: "vs Basilisk 1: 93-35 (72.7%)<br>vs Basilisk 1 argmax: 100-28 (78.1%)<br>vs Archon 3: 99-29 (77.3%)" },
+    { rank: 2,  name: "Basilisk 2",         short: "Basilisk 2",      elo: 1547.6, low: 1491.6, high: 1608.0, w: 260, l: 124, g: 384,  group: "bas" },
+    { rank: 3,  name: "Basilisk 1 (argmax)",short: "Basilisk 1 max",  elo: 1446.3, low: 1396.1, high: 1499.8, w: 388, l: 380, g: 768,  group: "bas" },
+    { rank: 4,  name: "Basilisk 1",         short: "Basilisk 1",      elo: 1444.3, low: 1397.3, high: 1493.6, w: 483, l: 413, g: 896,  group: "bas" },
+    { rank: 5,  name: "Basilisk 1 + search",short: "Basilisk 1 srch", elo: 1398.7, low: 1343.1, high: 1458.3, w: 181, l: 203, g: 384,  group: "bas" },
+    { rank: 6,  name: "Archon 3",           short: "Archon 3",        elo: 1365.1, low: 1318.0, high: 1413.7, w: 475, l: 549, g: 1024, group: "oth" },
+    { rank: 7,  name: "gorge ar8",          short: "gorge ar8",       elo: 1284.6, low: 1243.3, high: 1329.7, w: 386, l: 382, g: 768,  group: "oth" },
+    { rank: 8,  name: "Archon 2",           short: "Archon 2",        elo: 1245.1, low: 1201.6, high: 1290.5, w: 312, l: 328, g: 640,  group: "oth" },
+    { rank: 9,  name: "heuristic",          short: "heuristic",       elo: 1163.4, low: 1120.1, high: 1206.0, w: 214, l: 298, g: 512,  group: "oth" },
+    { rank: 10, name: "random (anchor)",    short: "random",          elo: 1000.0, low: 1000.0, high: 1000.0, w: 81,  l: 303, g: 384,  group: "oth" }
+  ];
+
+  var NS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function fmtElo(v) { return v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+
+  var svg = document.getElementById("c1");
+  var narrow = svg.parentNode.clientWidth < 520;
+  var W = narrow ? 420 : 720, H = narrow ? 400 : 370;
+  var L = narrow ? 132 : 172, R = narrow ? 44 : 58, T = 14, B = 42;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+
+  var xMin = 980, xMax = 1710;
+  function X(v) { return L + (v - xMin) / (xMax - xMin) * (W - L - R); }
+  var rowStep = (H - T - B) / bots.length;
+  function Y(i) { return T + (i + 0.5) * rowStep; }
+
+  // Grid lines and x-axis ticks
+  [1000, 1150, 1300, 1450, 1600].forEach(function (v) {
+    el("line", { x1: X(v), x2: X(v), y1: T, y2: H - B, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    el("text", { x: X(v), y: H - B + 18, "text-anchor": "middle" }, svg).textContent = v.toLocaleString("en-US");
+  });
+  el("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", class: "lab" }, svg).textContent = "Spellbench Pauper rating (Elo, random = 1,000)";
+
+  // Subtle horizontal separator bands
+  var rows = bots.map(function (b, i) {
+    var y = Y(i);
+    var g = el("g", {}, svg);
+    el("line", { x1: L, x2: W - R, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1, "stroke-opacity": 0.55 }, g);
+    var col = b.group === "new" ? "var(--accent)" : (b.group === "bas" ? "var(--basilisk)" : "var(--other)");
+
+    // Label
+    el("text", {
+      x: L - 10, y: y + 4, "text-anchor": "end",
+      class: b.group === "new" ? "lab-hi" : "lab"
+    }, g).textContent = narrow ? b.short : b.name;
+
+    // Confidence interval whisker
+    if (b.high > b.low) {
+      el("line", {
+        x1: X(b.low), x2: X(b.high), y1: y, y2: y,
+        stroke: col, "stroke-width": b.group === "new" ? 3 : 2, "stroke-linecap": "round",
+        "stroke-opacity": b.group === "new" ? 0.9 : 0.65
+      }, g);
+    }
+
+    // Point dot
+    el("circle", {
+      cx: X(b.elo), cy: y, r: b.group === "new" ? 6 : 4.5,
+      fill: col, stroke: "var(--card)", "stroke-width": 2
+    }, g);
+
+    // Value label
+    el("text", {
+      x: X(b.high) + 7, y: y + 4, "text-anchor": "start",
+      class: b.group === "new" ? "val-hi" : "lab"
+    }, g).textContent = Math.round(b.elo);
+
+    return { g: g, b: b, y: y };
+  });
+
+  // Hover tooltip
+  var tip = document.getElementById("tip"), box = document.getElementById("box1");
+  function show(evt) {
+    var r = svg.getBoundingClientRect(), sy = (evt.clientY - r.top) * H / r.height;
+    var best = null, bd = 1e9;
+    rows.forEach(function (row) {
+      var d = Math.abs(row.y - sy);
+      if (d < bd) { bd = d; best = row; }
+    });
+    if (!best || bd > rowStep * 0.6) { tip.hidden = true; return; }
+    var b = best.b;
+    var rangeText = b.high > b.low ? "95% range: " + fmtElo(b.low) + " to " + fmtElo(b.high) : "Anchor (fixed at 1,000.0)";
+    var html = "#" + b.rank + " " + b.name + "<br><b>" + fmtElo(b.elo) + " Elo</b> (" + b.w + "W-" + b.l + "L in " + b.g + " games)<br>" + rangeText;
+    if (b.note) html += "<br>" + b.note;
+    tip.innerHTML = html;
+    tip.hidden = false;
+    var px = X(b.elo) * r.width / W;
+    var centered = px - tip.offsetWidth / 2;
+    tip.style.left = Math.max(0, Math.min(centered, box.clientWidth - tip.offsetWidth)) + "px";
+    tip.style.top = (best.y * r.height / H) + "px";
+  }
+  svg.addEventListener("pointermove", show);
+  svg.addEventListener("pointerleave", function () { tip.hidden = true; });
+
+  // Replay animation: climbs from random (#10) up to Basilisk 3 (#1)
+  var bigN = document.getElementById("bigN"), bigL = document.getElementById("bigL");
+  document.getElementById("replay").addEventListener("click", function () {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    rows.forEach(function (row) { row.g.style.opacity = 0; });
+    var order = rows.slice().reverse();
+    var step = 0;
+    function tick() {
+      if (step >= order.length) {
+        bigN.textContent = "1,619.5";
+        bigL.textContent = "Elo for Basilisk 3, rank 1 of 10";
+        return;
+      }
+      var cur = order[step];
+      cur.g.style.opacity = 1;
+      bigN.textContent = fmtElo(cur.b.elo);
+      bigL.textContent = "Elo for " + cur.b.name + ", rank " + cur.b.rank + " of 10";
+      step += 1;
+      setTimeout(tick, 180);
+    }
+    tick();
+  });
+
+  // Leaderboard table
+  var tb = document.querySelector("#tbl-board tbody");
+  bots.forEach(function (b) {
+    var tr = tb.insertRow();
+    var range = b.high > b.low ? fmtElo(b.low) + " to " + fmtElo(b.high) : "1,000.0 (anchor)";
+    ["#" + b.rank, b.name, fmtElo(b.elo), range, b.w + "-" + b.l + " (" + b.g + ")"].forEach(function (val) {
+      tr.insertCell().textContent = val;
+    });
+  });
+})();
+</script>
+</body>
+</html>
