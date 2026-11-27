@@ -18,6 +18,7 @@
 //! recorded one, and holds only the current minimum's session. It draws no
 //! RNG and never touches collected bytes.
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{episode_session_v1, err, seat, ExpandedEpisodeV1, ExpandedTrajectoryV1};
@@ -30,6 +31,28 @@ pub(super) const LINE_B_ROOT_RANK_DOMAIN_V1: &[u8] = b"mtg-kernel/line-b-teacher
 pub(super) const LINE_B_SEED_PREFIX_V1: &str = "g115-line-b-seed-v1|";
 pub(super) const LINE_B_ROOT_MIN_ACTIONS_V1: u32 = 2;
 pub(super) const LINE_B_ROOT_MAX_ACTIONS_V1: u32 = 8;
+
+/// Selects which rows are eligible learner rows for line (b) root selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LineBRootSelectorV1 {
+    /// Default (v1): counts both seats in self-play episodes as learner rows,
+    /// else only the learner seat. Preserved byte-for-byte for existing
+    /// recipes, chains, and goldens.
+    #[default]
+    #[serde(rename = "line-b-root-selector-v1")]
+    V1,
+    /// Opt-in (v2): counts only the episode's learner seat
+    /// (`actor == episode.learner_seat`), even in self-play episodes, matching
+    /// the update's learner groups.
+    #[serde(rename = "line-b-root-selector-v2")]
+    V2,
+}
+
+impl LineBRootSelectorV1 {
+    pub const fn is_v1(&self) -> bool {
+        matches!(self, Self::V1)
+    }
+}
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,10 +95,16 @@ pub(super) fn line_b_root_rank_v1(root_seed: u64, visible_key: &[u8; 32]) -> [u8
     hash.finalize().into()
 }
 
-/// A row the learner policy produced: every row of a self-play episode, else
-/// the learner seat's rows (the rule the update's learner groups use).
+/// A row the learner policy produced (v1, default): every row of a self-play
+/// episode, else the learner seat's rows.
 pub(super) fn line_b_learner_row_v1(episode: &ExpandedEpisodeV1, actor: u8) -> bool {
     episode.opponent.is_none() || actor == episode.learner_seat
+}
+
+/// A learner-seat row (v2, opt-in): only the episode's learner seat, even in
+/// self-play episodes, matching the update's learner groups.
+pub(super) fn line_b_learner_row_v2(episode: &ExpandedEpisodeV1, actor: u8) -> bool {
+    actor == episode.learner_seat
 }
 
 pub(super) fn line_b_root_eligible_v1(decision: &FastActorDecisionV1, learner_row: bool) -> bool {
@@ -101,12 +130,33 @@ pub(super) struct LineBRootV1 {
     pub(super) session: FastActorSessionV1,
 }
 
-/// Replays `trajectory` and returns its root under `root_seed`, or `None` when
-/// the game has no eligible decision. Any disagreement between the replay and
-/// the recorded rows or terminal is an error, never a skipped game.
+/// Replays `trajectory` and returns its root under `root_seed` using the v1
+/// (default) learner-row rule, or `None` when the game has no eligible
+/// decision. Any disagreement between the replay and the recorded rows or
+/// terminal is an error, never a skipped game.
 pub(super) fn select_line_b_root_v1(
     trajectory: &ExpandedTrajectoryV1,
     root_seed: u64,
+) -> Result<Option<LineBRootV1>, String> {
+    select_line_b_root_with_selector_v1(trajectory, root_seed, LineBRootSelectorV1::V1)
+}
+
+/// Replays `trajectory` and returns its root under `root_seed` using the v2
+/// learner-seat-only rule (`row.actor == episode.learner_seat`), or `None`
+/// when the game has no eligible learner-seat decision. Any disagreement
+/// between the replay and the recorded rows or terminal is an error, never a
+/// skipped game.
+pub(super) fn select_line_b_root_v2(
+    trajectory: &ExpandedTrajectoryV1,
+    root_seed: u64,
+) -> Result<Option<LineBRootV1>, String> {
+    select_line_b_root_with_selector_v1(trajectory, root_seed, LineBRootSelectorV1::V2)
+}
+
+pub(super) fn select_line_b_root_with_selector_v1(
+    trajectory: &ExpandedTrajectoryV1,
+    root_seed: u64,
+    selector: LineBRootSelectorV1,
 ) -> Result<Option<LineBRootV1>, String> {
     let episode = &trajectory.episode;
     let configs = episode.configurations()?;
@@ -131,7 +181,11 @@ pub(super) fn select_line_b_root_v1(
                 "line (b) root replay differs from recorded row {index}"
             ));
         }
-        if line_b_root_eligible_v1(&decision, line_b_learner_row_v1(episode, row.actor)) {
+        let learner_row = match selector {
+            LineBRootSelectorV1::V1 => line_b_learner_row_v1(episode, row.actor),
+            LineBRootSelectorV1::V2 => line_b_learner_row_v2(episode, row.actor),
+        };
+        if line_b_root_eligible_v1(&decision, learner_row) {
             eligible += 1;
             let visible_key = session
                 .kernel_search_visible_key_v4(0)
@@ -271,5 +325,28 @@ mod tests {
             ..decision
         };
         assert!(!line_b_root_eligible_v1(&d, true));
+    }
+
+    #[test]
+    fn root_selector_defaults_to_v1_and_serializes_stable_names() {
+        assert_eq!(LineBRootSelectorV1::default(), LineBRootSelectorV1::V1);
+        assert!(LineBRootSelectorV1::V1.is_v1());
+        assert!(!LineBRootSelectorV1::V2.is_v1());
+        assert_eq!(
+            serde_json::to_string(&LineBRootSelectorV1::V1).unwrap(),
+            "\"line-b-root-selector-v1\""
+        );
+        assert_eq!(
+            serde_json::to_string(&LineBRootSelectorV1::V2).unwrap(),
+            "\"line-b-root-selector-v2\""
+        );
+        assert_eq!(
+            serde_json::from_str::<LineBRootSelectorV1>("\"line-b-root-selector-v1\"").unwrap(),
+            LineBRootSelectorV1::V1
+        );
+        assert_eq!(
+            serde_json::from_str::<LineBRootSelectorV1>("\"line-b-root-selector-v2\"").unwrap(),
+            LineBRootSelectorV1::V2
+        );
     }
 }

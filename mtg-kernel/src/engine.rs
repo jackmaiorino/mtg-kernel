@@ -21933,12 +21933,12 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             } else {
                 state.engine.pending_triggers =
                     trigger::collect_and_process_with_waiting(state, waiting);
-                if let Some(decision) = check_game_over(state) {
-                    return Some(decision);
-                }
-                if let Some((mechanic, source)) = state.engine.halted {
-                    return Some(Decision::Halted { mechanic, source });
-                }
+            }
+            if let Some(decision) = check_game_over(state) {
+                return Some(decision);
+            }
+            if let Some((mechanic, source)) = state.engine.halted {
+                return Some(Decision::Halted { mechanic, source });
             }
             if state.engine.pending_triggers.is_empty() {
                 return None;
@@ -39608,6 +39608,44 @@ mod tests {
         );
         assert_eq!(state.objects.get(journey).zone, Zone::Battlefield);
         assert_eq!(state.objects.get(guardian).zone, Zone::Battlefield);
+    }
+
+    #[test]
+    fn drain_pending_triggers_checks_game_over_and_halt_in_empty_waiting_branch() {
+        let setup = || {
+            let mut state = ready_game_in_main1(0);
+            let target = put_on_battlefield(&mut state, PlayerId::P1, "Voldaren Epicure");
+            state.engine.event_log.clear();
+            let journey = put_in_hand(&mut state, PlayerId::P0, "Journey to Nowhere");
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(journey, Zone::Battlefield),
+            );
+            assert!(state.engine.pending_triggers.is_empty());
+            assert!(state.engine.waiting_placement_triggers.is_empty());
+            assert!(!state.engine.event_log.is_empty());
+            (state, journey, target)
+        };
+
+        let (mut game_over_state, _, _) = setup();
+        game_over_state.players[PlayerId::P1.index()].life = 0;
+        assert_eq!(
+            drain_pending_triggers_or_decide(&mut game_over_state),
+            Some(Decision::GameOver {
+                winner: Some(PlayerId::P0),
+            })
+        );
+
+        let (mut halted_state, journey, _) = setup();
+        halted_state.engine.halted =
+            Some((UnsupportedMechanic::InvalidEffectContinuation, journey));
+        assert_eq!(
+            drain_pending_triggers_or_decide(&mut halted_state),
+            Some(Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source: journey,
+            })
+        );
     }
 
     #[test]
