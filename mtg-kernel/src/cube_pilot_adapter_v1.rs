@@ -133,9 +133,7 @@ impl D9PilotConfig {
     /// decoding mismatch, or compiled card-database hash mismatch.
     pub fn validate(&self) -> Result<(), D9AdapterError> {
         let is_lower_hex = |s: &str, len: usize| {
-            s.len() == len
-                && s.bytes()
-                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
         };
         for (name, value) in [
             ("checkpoint_sha256", &self.pin.checkpoint_sha256),
@@ -193,7 +191,10 @@ impl D9PilotConfig {
 
 /// Checks exact equality on every field of two [`PilotPin`]s, naming the first
 /// disagreeing field.
-pub fn verify_pilot_pin_match(expected: &PilotPin, actual: &PilotPin) -> Result<(), D9AdapterError> {
+pub fn verify_pilot_pin_match(
+    expected: &PilotPin,
+    actual: &PilotPin,
+) -> Result<(), D9AdapterError> {
     let checks: [(&'static str, &str, &str); 7] = [
         (
             "checkpoint_sha256",
@@ -551,9 +552,9 @@ mod tests {
     use crate::card_def::card_id_by_name;
     use crate::cube_draft_v1::CubePool;
     use crate::cube_pod_runner_v1::{
-        is_halted, run_training_pod, stop_kind, training_roles_with_older,
-        uniform_training_chairs, validate_pod_record_json, PilotInfo, PilotKind, PodRunnerError,
-        PodStatus, PodUse, TrainingPodConfig,
+        is_halted, run_training_pod, stop_kind, training_roles_with_older, uniform_training_chairs,
+        validate_pod_record_json, PilotInfo, PilotKind, PodRunnerError, PodStatus, PodUse,
+        TrainingPodConfig,
     };
     use crate::cube_seat_v1::canonical_deck;
 
@@ -587,7 +588,7 @@ mod tests {
             if self.refuse_all
                 || self
                     .refuse_action_seed_mod
-                    .is_some_and(|m| req.action_seed % m == 0)
+                    .is_some_and(|m| req.action_seed.is_multiple_of(m))
             {
                 for step in 1..=7 {
                     req.decision_counter.store(step, Ordering::Relaxed);
@@ -621,7 +622,8 @@ mod tests {
     #[test]
     fn d9_config_and_pin_verification_fail_closed_on_every_mismatch() {
         let pin = sample_pin();
-        let cfg = D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, 0.25);
+        let cfg =
+            D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, 0.25);
         assert!(cfg.validate().is_ok());
 
         let mut bad_db = cfg.clone();
@@ -697,7 +699,8 @@ mod tests {
     #[test]
     fn d9_registry_enforces_full_pin_match_on_load_checkpoint() {
         let pin = sample_pin();
-        let cfg = D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, -0.5);
+        let cfg =
+            D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, -0.5);
         let pilot = D9GamePilot::new(
             cfg.clone(),
             MockCollector {
@@ -784,7 +787,7 @@ mod tests {
             D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, 0.0);
         let pilot = D9GamePilot::new(cfg, AdvancingCollector { pin }).unwrap();
         let forest = card_id_by_name("Forest").unwrap();
-        let deck = canonical_deck(&vec![forest; 40]);
+        let deck = canonical_deck(&[forest; 40]);
         let spec = AttemptSpec {
             decks: [&deck, &deck],
             seats: [0, 1],
@@ -793,9 +796,13 @@ mod tests {
             action_seed: 2,
         };
         // Total play time ~360ms > 200ms watchdog, but counter advances every ~60ms so it must not stall.
-        let (outcome, stalled) =
-            observe_decisions(Duration::from_millis(200), || pilot.play(&spec, &GameCaps::default()));
-        assert!(!stalled, "advancing decision counter must satisfy per-decision-v1 liveness");
+        let (outcome, stalled) = observe_decisions(Duration::from_millis(200), || {
+            pilot.play(&spec, &GameCaps::default())
+        });
+        assert!(
+            !stalled,
+            "advancing decision counter must satisfy per-decision-v1 liveness"
+        );
         assert_eq!(outcome.decisions, 6);
     }
 
@@ -810,11 +817,12 @@ mod tests {
 
         let forest = card_id_by_name("Forest").unwrap();
         let island = card_id_by_name("Island").unwrap();
-        let d0 = canonical_deck(&vec![forest; 40]);
-        let d1 = canonical_deck(&vec![island; 40]);
+        let d0 = canonical_deck(&[forest; 40]);
+        let d1 = canonical_deck(&[island; 40]);
 
         let pin = sample_pin();
-        let cfg = D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, 0.125);
+        let cfg =
+            D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, 0.125);
         let refusing_pilot = D9GamePilot::new(
             cfg.clone(),
             MockCollector {
