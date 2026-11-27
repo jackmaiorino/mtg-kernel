@@ -1259,7 +1259,22 @@ fn cube_json_limited_fast_engine_windows_parity_v1() {
                 );
             };
             if json_semantics != fast_semantics {
-                return divergence(
+                let rows = |semantics: &[_]| -> Vec<String> {
+                    semantics
+                        .iter()
+                        .map(|semantic| serde_json::to_string(semantic).unwrap())
+                        .collect()
+                };
+                let (json_rows, fast_rows) = (rows(&json_semantics), rows(&fast_semantics));
+                let mut sorted = (json_rows.clone(), fast_rows.clone());
+                sorted.0.sort();
+                sorted.1.sort();
+                let at = json_rows
+                    .iter()
+                    .zip(&fast_rows)
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(json_rows.len().min(fast_rows.len()));
+                let mut row = divergence(
                     index,
                     seed,
                     starting_seat,
@@ -1269,6 +1284,13 @@ fn cube_json_limited_fast_engine_windows_parity_v1() {
                     serde_json::to_string(&json_semantics).unwrap(),
                     serde_json::to_string(&fast_semantics).unwrap(),
                 );
+                row["json_rows"] = json!(json_rows.len());
+                row["fast_rows"] = json!(fast_rows.len());
+                row["same_multiset"] = json!(sorted.0 == sorted.1);
+                row["first_differing_row"] = json!(at);
+                row["json_row"] = json!(json_rows.get(at));
+                row["fast_row"] = json!(fast_rows.get(at));
+                return row;
             }
             if json_semantics.is_empty() {
                 return stopped(
