@@ -130,6 +130,7 @@ pub(crate) fn prospective_copy(
             producer,
             chosen_at: state.engine.event_history.len(),
         }),
+        ability: None,
     }
 }
 

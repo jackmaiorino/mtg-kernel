@@ -979,7 +979,9 @@ pub(crate) fn finish_selection(
                 state,
                 ProposedEvent::zone_change_to_battlefield_under_controller(chosen.object, player),
             );
-            if state.engine.halted.is_some() {
+            if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+                || state.engine.halted.is_some()
+            {
                 return Ok(false);
             }
             if state

@@ -416,6 +416,11 @@ fn oath_reveal(state: &mut GameState, player: PlayerId) -> Result<(), String> {
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(library[index], player),
         );
+        if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+            || state.engine.halted.is_some()
+        {
+            return Ok(());
+        }
     }
     let rest = library[..found.unwrap_or(library.len())]
         .iter()
