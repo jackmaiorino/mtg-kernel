@@ -2524,18 +2524,52 @@ fn validate_cast_life_x(
                 .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
                 .is_some_and(|d| d.name == "Bloodletter of Aclazotz")
         };
-        let is_ability_remover_def = |id: ObjectId| {
+        let is_dress_down_def = |id: ObjectId| {
+            state
+                .objects
+                .try_get(id)
+                .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                .is_some_and(|d| d.name == "Dress Down")
+        };
+        let is_loses_abilities_aura_def = |id: ObjectId| {
             state
                 .objects
                 .try_get(id)
                 .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
                 .is_some_and(|d| {
-                    d.name == "Dress Down"
-                        || matches!(
-                            d.attachment,
-                            Some(crate::card_def::AttachmentDef::AuraCreatureOverride(c))
-                                if c.loses_abilities
-                        )
+                    matches!(
+                        d.attachment,
+                        Some(crate::card_def::AttachmentDef::AuraCreatureOverride(c))
+                            if c.loses_abilities
+                    )
+                })
+        };
+        let is_control_steal_stack_item = |stack_item_id: StackItemId| {
+            history
+                .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
+                .any(|(_, ev)| match ev {
+                    CommittedEvent::PublishedCastIdentityV1 { receipt }
+                        if receipt.stack_item_id == stack_item_id =>
+                    {
+                        state
+                            .objects
+                            .try_get(receipt.spell)
+                            .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                            .is_some_and(|d| {
+                                matches!(
+                                    d.name,
+                                    "Dominate"
+                                        | "Blue Sun's Twilight"
+                                        | "Act of Treason"
+                                        | "Claim the Firstborn"
+                                        | "Control Magic"
+                                        | "Treachery"
+                                        | "Threads of Disloyalty"
+                                        | "Mind Control"
+                                )
+                            })
+                    }
+                    _ => false,
                 })
         };
         let has_post_cast_other_spell = after.iter().any(|event| {
@@ -2553,16 +2587,47 @@ fn validate_cast_life_x(
                 }
             )
         });
-        let has_ability_remover_departure = after.iter().any(|event| {
+        let has_pre_existing_dress_down_departure = after.iter().enumerate().any(|(idx, event)| {
             matches!(
                 event,
                 CommittedEvent::ZoneChange {
                     object,
                     from: Zone::Battlefield,
                     ..
-                } if is_ability_remover_def(*object)
+                } if is_dress_down_def(*object)
+                    && !after.iter().take(idx).any(|prev| {
+                        matches!(
+                            prev,
+                            CommittedEvent::ZoneChange {
+                                object: entered,
+                                to: Zone::Battlefield,
+                                ..
+                            } if *entered == *object
+                        )
+                    })
             )
         });
+        let has_pre_existing_aura_remover_departure =
+            after.iter().enumerate().any(|(idx, event)| {
+                matches!(
+                    event,
+                    CommittedEvent::ZoneChange {
+                        object,
+                        from: Zone::Battlefield,
+                        ..
+                    } if is_loses_abilities_aura_def(*object)
+                        && !after.iter().take(idx).any(|prev| {
+                            matches!(
+                                prev,
+                                CommittedEvent::ZoneChange {
+                                    object: entered,
+                                    to: Zone::Battlefield,
+                                    ..
+                                } if *entered == *object
+                            )
+                        })
+                )
+            });
         let has_aegis_departure = after.iter().any(|event| {
             matches!(
                 event,
@@ -2577,7 +2642,7 @@ fn validate_cast_life_x(
                     .is_some_and(|d| d.name == "Assimilation Aegis")
             )
         });
-        let has_pre_existing_ability_remover = state
+        let has_pre_existing_dress_down = state
             .players
             .iter()
             .flat_map(|p| p.battlefield.iter().copied())
@@ -2586,7 +2651,7 @@ fn validate_cast_life_x(
                     .objects
                     .try_get(id)
                     .is_some_and(|o| o.v4.face_down_v1.is_none())
-                    && is_ability_remover_def(id)
+                    && is_dress_down_def(id)
                     && !after.iter().any(|event| {
                         matches!(
                             event,
@@ -2663,13 +2728,14 @@ fn validate_cast_life_x(
             }
         }
         // Every currently active Bloodletter omitted from the receipt must be
-        // explained by a post-payment entry, face-up flip, transform, ability
-        // suppressor departure, or control/copy targeting.
+        // explained by a post-payment entry, face-up flip, transform, pre-existing
+        // ability suppressor departure, or control/copy targeting.
         for &live_link in &live_bloodletters {
             if bloodletters.contains(&live_link) {
                 continue;
             }
-            let explained = has_ability_remover_departure
+            let explained = has_pre_existing_dress_down_departure
+                || has_pre_existing_aura_remover_departure
                 || after.iter().any(|event| {
                     matches!(
                         event,
@@ -2708,9 +2774,10 @@ fn validate_cast_life_x(
             }
         }
         // An active-controlled Bloodletter that departed the battlefield after
-        // payment without entering, flipping face up, or losing abilities first
-        // cannot be omitted from the receipt.
-        if !has_pre_existing_ability_remover && !has_ability_remover_departure {
+        // payment (including after being stolen in the same window) without
+        // entering, flipping face up, or losing abilities first cannot be
+        // omitted from the receipt.
+        if !has_pre_existing_dress_down && !has_pre_existing_dress_down_departure {
             let mut seen_departed = Vec::new();
             for (ev_idx, event) in after.iter().enumerate() {
                 let CommittedEvent::ZoneChange {
@@ -2722,53 +2789,119 @@ fn validate_cast_life_x(
                 else {
                     continue;
                 };
-                if *controller_before != active
-                    || !is_bloodletter_def(*object)
-                    || seen_departed.contains(object)
-                {
+                if !is_bloodletter_def(*object) || seen_departed.contains(object) {
                     continue;
                 }
                 seen_departed.push(*object);
                 if bloodletters.iter().any(|link| link.object == *object) {
                     continue;
                 }
-                let changed_before_departure = after.iter().take(ev_idx).any(|ev| {
-                    matches!(
-                        ev,
-                        CommittedEvent::ZoneChange {
-                            object: o,
-                            to: Zone::Battlefield,
-                            ..
-                        } if *o == *object
-                    ) || matches!(
-                        ev,
-                        CommittedEvent::TurnedFaceUp { object: o, .. } if *o == *object
-                    ) || matches!(
-                        ev,
-                        CommittedEvent::Transformed { object: o, .. } if *o == *object
-                    ) || matches!(
-                        ev,
-                        CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
-                            object: o,
-                            ..
-                        } if *o == *object
-                    )
-                });
+                let stolen_before_departure = *controller_before == player
+                    && after.iter().take(ev_idx).any(|ev| {
+                        matches!(
+                            ev,
+                            CommittedEvent::Targeted {
+                                target,
+                                targeting_stack_item,
+                                ..
+                            } if *target == *object
+                                && *targeting_stack_item != item.v4.stack_item_id
+                                && is_control_steal_stack_item(*targeting_stack_item)
+                        )
+                    })
+                    && !history.range_v2(..at).iter().any(|ev| {
+                        matches!(
+                            ev,
+                            CommittedEvent::ZoneChange {
+                                object: o,
+                                from: Zone::Graveyard | Zone::Exile | Zone::Library,
+                                to: Zone::Battlefield,
+                                ..
+                            } if *o == *object
+                        ) || matches!(
+                            ev,
+                            CommittedEvent::Targeted {
+                                target,
+                                targeting_stack_item,
+                                ..
+                            } if *target == *object
+                                && is_control_steal_stack_item(*targeting_stack_item)
+                        )
+                    });
+                if *controller_before != active && !stolen_before_departure {
+                    continue;
+                }
+                let pre_existing_enchantment_departed =
+                    after.iter().take(ev_idx).enumerate().any(|(j, ev)| {
+                        matches!(
+                            ev,
+                            CommittedEvent::ZoneChange {
+                                object: ench,
+                                from: Zone::Battlefield,
+                                ..
+                            } if *ench != *object
+                                && state
+                                    .objects
+                                    .try_get(*ench)
+                                    .and_then(|o| {
+                                        crate::card_def::CARD_DEFS.get(usize::from(o.card_def))
+                                    })
+                                    .is_some_and(|d| {
+                                        d.has_type(crate::card_def::CardType::Enchantment)
+                                    })
+                                && !after.iter().take(j).any(|prev| {
+                                    matches!(
+                                        prev,
+                                        CommittedEvent::ZoneChange {
+                                            object: entered,
+                                            to: Zone::Battlefield,
+                                            ..
+                                        } if *entered == *ench
+                                    )
+                                })
+                        )
+                    });
+                let changed_before_departure = pre_existing_enchantment_departed
+                    || after.iter().take(ev_idx).any(|ev| {
+                        matches!(
+                            ev,
+                            CommittedEvent::ZoneChange {
+                                object: o,
+                                to: Zone::Battlefield,
+                                ..
+                            } if *o == *object
+                        ) || matches!(
+                            ev,
+                            CommittedEvent::TurnedFaceUp { object: o, .. } if *o == *object
+                        ) || matches!(
+                            ev,
+                            CommittedEvent::Transformed { object: o, .. } if *o == *object
+                        ) || matches!(
+                            ev,
+                            CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                                object: o,
+                                ..
+                            } if *o == *object
+                        )
+                    });
                 if !changed_before_departure {
                     return Err("departed active Bloodletter omitted from payment receipt".into());
                 }
             }
         }
         // A face-up active-owned Bloodletter currently controlled by the
-        // opponent that was targeted after payment (e.g. stolen by Dominate)
-        // and not suppressed or previously targeted cannot be omitted.
-        if !has_pre_existing_ability_remover && !has_ability_remover_departure {
+        // opponent that was targeted by a control-stealing spell after payment
+        // (and not reanimated, previously stolen, or suppressed) cannot be omitted.
+        if !has_pre_existing_dress_down && !has_pre_existing_dress_down_departure {
             for &id in &state.players[player.index()].battlefield {
                 let obj = state.objects.get(id);
                 if obj.v4.face_down_v1.is_some()
                     || obj.owner != active
                     || !is_bloodletter_def(id)
                     || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                    || crate::continuous_characteristics_v1::has_non_dress_down_ability_removal(
+                        state, id,
+                    )
                     || bloodletters.iter().any(|link| link.object == id)
                 {
                     continue;
@@ -2792,7 +2925,7 @@ fn validate_cast_life_x(
                         CommittedEvent::Transformed { object, .. } if *object == id
                     )
                 });
-                let targeted_after = after.iter().any(|event| {
+                let stolen_after = after.iter().any(|event| {
                     matches!(
                         event,
                         CommittedEvent::Targeted {
@@ -2803,19 +2936,31 @@ fn validate_cast_life_x(
                         } if *target == id
                             && *target_zone_change_count == obj.zone_change_count
                             && *targeting_stack_item != item.v4.stack_item_id
+                            && is_control_steal_stack_item(*targeting_stack_item)
                     )
                 });
-                let targeted_before = history.range_v2(..at).iter().any(|event| {
+                let reanimated_or_stolen_before = history.range_v2(..at).iter().any(|event| {
                     matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            from: Zone::Graveyard | Zone::Exile | Zone::Library,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == id
+                    ) || matches!(
                         event,
                         CommittedEvent::Targeted {
                             target,
                             target_zone_change_count,
+                            targeting_stack_item,
                             ..
-                        } if *target == id && *target_zone_change_count == obj.zone_change_count
+                        } if *target == id
+                            && *target_zone_change_count == obj.zone_change_count
+                            && is_control_steal_stack_item(*targeting_stack_item)
                     )
                 });
-                if !entered_or_flipped_after && targeted_after && !targeted_before {
+                if !entered_or_flipped_after && stolen_after && !reanimated_or_stolen_before {
                     return Err("stolen active Bloodletter omitted from payment receipt".into());
                 }
             }
@@ -2828,15 +2973,13 @@ fn validate_cast_life_x(
             .iter()
             .flat_map(|p| p.battlefield.iter().copied())
             .filter(|&id| {
-                state.objects.try_get(id).is_some_and(|o| {
-                    o.v4.face_down_v1.is_none()
-                        && crate::card_def::CARD_DEFS
-                            .get(usize::from(o.card_def))
-                            .is_some_and(|d| d.name == "Dress Down")
-                })
+                state
+                    .objects
+                    .try_get(id)
+                    .is_some_and(|o| o.v4.face_down_v1.is_none() && is_dress_down_def(id))
             })
             .collect();
-        if !has_ability_remover_departure
+        if !has_pre_existing_dress_down_departure
             && !dress_downs_on_bf.is_empty()
             && dress_downs_on_bf.iter().all(|&dd| {
                 after.iter().any(|event| {
@@ -32031,6 +32174,8 @@ pub(crate) fn is_x_bounded_creature_slot(
                 )
             );
         }
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let _ = spec;
         false
     })
 }

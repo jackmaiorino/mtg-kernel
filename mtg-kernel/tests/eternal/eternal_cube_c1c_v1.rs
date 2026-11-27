@@ -3841,8 +3841,10 @@ mod cast_x_routes {
         let bst = put(&mut state, P0, "Blue Sun's Twilight", Zone::Hand);
         pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 2);
         cast(&mut state, bst, &[Target::Object(wall)]);
+        let mut saw_copy_choice = false;
         settle_with(&mut state, |_, decision| match decision {
             Decision::ChooseEffectTargets { legal_targets, .. } => {
+                saw_copy_choice = true;
                 assert!(
                     !legal_targets.contains(&Target::Object(big)),
                     "MV 4 Bloodletter must not be offered for X = 2 copy retarget: {legal_targets:?}"
@@ -3851,6 +3853,7 @@ mod cast_x_routes {
             }
             other => first_answer(other),
         });
+        assert!(saw_copy_choice, "Chandra copy target choice must run");
         assert!(state.engine.halted.is_none());
         assert_eq!(state.objects.get(big).controller, P1);
 
@@ -3858,6 +3861,8 @@ mod cast_x_routes {
         // filter out MV > 1 creatures rather than offering them and halting.
         let mut state = plains();
         let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+        let ballista = put(&mut state, P1, "Walking Ballista", Zone::Battlefield);
+        state.objects.get_mut(ballista).counters.plus1_plus1 = 1;
         let big = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
         let dominate = put(&mut state, P0, "Dominate", Zone::Hand);
         let misdir = put(&mut state, P1, "Misdirection", Zone::Hand);
@@ -3869,12 +3874,19 @@ mod cast_x_routes {
         let _ = next(&mut state);
         pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 3);
         act(&mut state, Action::CastSpell(misdir));
+        let mut saw_misdir_choice = false;
         settle_with(&mut state, |_, decision| match decision {
             Decision::ChooseCastMode { .. } => {
                 Action::ChooseCastMode(mtg_kernel::engine::CastMode::Normal)
             }
             Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(dominate)),
             Decision::ChooseEffectTargets { legal_targets, .. } => {
+                saw_misdir_choice = true;
+                assert_eq!(
+                    legal_targets,
+                    vec![Target::Object(ballista)],
+                    "only MV <= 1 alternative Ballista may be offered for Dominate X = 1 retarget"
+                );
                 assert!(
                     !legal_targets.contains(&Target::Object(big)),
                     "MV 3 Fleshraker must not be offered for Dominate X = 1 retarget: {legal_targets:?}"
@@ -3883,7 +3895,9 @@ mod cast_x_routes {
             }
             other => first_answer(other),
         });
+        assert!(saw_misdir_choice, "Misdirection retarget choice must run");
         assert!(state.engine.halted.is_none());
+        assert_eq!(state.objects.get(ballista).controller, P0);
         assert_eq!(state.objects.get(big).controller, P1);
     }
 
