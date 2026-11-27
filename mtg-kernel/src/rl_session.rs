@@ -6112,6 +6112,7 @@ impl RlEpisodeSessionV1 {
             max_physical_decisions,
             max_policy_steps,
             None,
+            PlayerId::P0,
             deck_ids,
             card_ids,
             companions,
@@ -6133,6 +6134,7 @@ impl RlEpisodeSessionV1 {
         max_physical_decisions: u64,
         max_policy_steps: u64,
         max_stack_objects: Option<u32>,
+        starting_player: PlayerId,
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         companions: [Option<u16>; 2],
@@ -6161,10 +6163,13 @@ impl RlEpisodeSessionV1 {
             )
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         }
-        let mut state =
-            build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
-                session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
-            })?;
+        let mut state = crate::rl::build_deck_pair_state_with_starting_player_v1(
+            env_seed,
+            card_ids[0],
+            card_ids[1],
+            starting_player,
+        )
+        .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string()))?;
         if foundations_combat {
             crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
                 .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;

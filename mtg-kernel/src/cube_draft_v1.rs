@@ -1682,6 +1682,7 @@ fn drive_game_typed(
         max_policy_steps: caps.max_policy_steps,
         max_stack_objects: caps.max_stack_objects,
         outside_the_game: None,
+        starting_player: None,
     };
     loop {
         let decision = match server.handle_request(&request).body {

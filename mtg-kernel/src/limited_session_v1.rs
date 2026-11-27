@@ -247,6 +247,10 @@ pub enum LimitedRequestV1 {
         /// require the London mulligan schema, as companions do.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outside_the_game: Option<[Vec<CustomCardCountV1>; 2]>,
+        /// Explicit starting seat for the public-shroud surface. Absent
+        /// preserves the original seat-zero start.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        starting_player: Option<crate::rl::PlayerSeatV1>,
     },
     Step {
         schema_version: u32,
@@ -570,8 +574,20 @@ impl LimitedJsonlServerV1 {
                 max_policy_steps,
                 max_stack_objects,
                 outside_the_game,
+                starting_player,
                 ..
             } => {
+                if starting_player.is_some() && !self.public_shroud {
+                    return LimitedReplyV1::error(
+                        Some(request_id),
+                        "unsupported_starting_player",
+                        "starting_player requires the public-shroud schema",
+                    );
+                }
+                let starting_player = match starting_player {
+                    None | Some(crate::rl::PlayerSeatV1::P0) => crate::ids::PlayerId::P0,
+                    Some(crate::rl::PlayerSeatV1::P1) => crate::ids::PlayerId::P1,
+                };
                 let mut ids = [Vec::new(), Vec::new()];
                 let mut companions = [None, None];
                 let mut outside = [Vec::new(), Vec::new()];
@@ -607,6 +623,7 @@ impl LimitedJsonlServerV1 {
                         *max_physical_decisions,
                         *max_policy_steps,
                         *max_stack_objects,
+                        starting_player,
                         deck_ids,
                         [&ids[0], &ids[1]],
                         companions,
@@ -635,6 +652,7 @@ impl LimitedJsonlServerV1 {
                         *max_physical_decisions,
                         *max_policy_steps,
                         *max_stack_objects,
+                        starting_player,
                         deck_ids,
                         [&ids[0], &ids[1]],
                         [None, None],
@@ -1604,6 +1622,50 @@ mod tests {
                 assert_eq!(serde_json::to_vec(&request).unwrap(), capped.as_bytes());
             }
         }
+    }
+
+    #[test]
+    fn public_shroud_reset_uses_the_declared_starting_player() {
+        use crate::rl::PlayerSeatV1;
+
+        let mut request = serde_json::json!({
+            "request_type": "reset",
+            "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+            "request_id": "reset",
+            "episode_id": 7,
+            "env_seed": 123,
+            "max_physical_decisions": 128,
+            "max_policy_steps": 128,
+            "decks": [
+                {"cards":[{"name":"Forest","count":40}]},
+                {"cards":[{"name":"Island","count":40}]}
+            ]
+        });
+        for (selection, expected) in [
+            (None, PlayerSeatV1::P0),
+            (Some(PlayerSeatV1::P0), PlayerSeatV1::P0),
+            (Some(PlayerSeatV1::P1), PlayerSeatV1::P1),
+        ] {
+            if let Some(selection) = selection {
+                request["starting_player"] = serde_json::json!(selection);
+            }
+            let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+            let reply: LimitedReplyV1 =
+                serde_json::from_str(&server.handle_line(&request.to_string())).unwrap();
+            let LimitedReplyBodyV1::Decision { decision } = reply.body else {
+                panic!("expected opening decision, got {reply:?}");
+            };
+            assert_eq!(decision.acting_player, expected);
+        }
+
+        request["schema_version"] = serde_json::json!(LIMITED_LONDON_MULLIGANS_SCHEMA_V1);
+        let mut server = LimitedJsonlServerV1::new_with_london_mulligans_v1();
+        let reply: LimitedReplyV1 =
+            serde_json::from_str(&server.handle_line(&request.to_string())).unwrap();
+        let LimitedReplyBodyV1::Error { error } = reply.body else {
+            panic!("older schema should refuse a declared starting player");
+        };
+        assert_eq!(error.code, "unsupported_starting_player");
     }
 
     #[cfg(feature = "eternal-fixtures")]
