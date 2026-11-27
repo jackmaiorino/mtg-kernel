@@ -993,40 +993,6 @@ pub(crate) fn protected_from_attachment(
         && has_protection_from_opponents(state, host)
 }
 
-/// CR 704.5n / 702.16c: detach any battlefield Equipment attached to an
-/// illegal host (a permanent that is no longer a creature, e.g. under Swift
-/// Reconfiguration, or a host whose protection forbids the attachment, e.g.
-/// Hexdrinker LEVEL 8+ or Figure of Fable). Returns whether any detached.
-pub(crate) fn unattach_illegal_equipment(state: &mut GameState) -> bool {
-    let detach: Vec<(ObjectId, ObjectLinkV4)> = state
-        .objects
-        .iter()
-        .filter_map(|(id, live)| {
-            let definition = CARD_DEFS.get(usize::from(live.card_def))?;
-            let link = live.v4.attached_to?;
-            let is_equipment = definition.subtypes.contains(&Subtype::Equipment);
-            (live.zone == Zone::Battlefield
-                && is_equipment
-                && (!link_live_in(state, link, Zone::Battlefield)
-                    || !crate::engine::object_has_type(state, link.object, CardType::Creature)
-                    || crate::progenitus_v1::attachment_forbidden(state, id, link.object)
-                    || protected_from_attachment(state, link.object, id)))
-            .then_some((id, link))
-        })
-        .collect();
-    for &(id, link) in &detach {
-        if state.objects.try_get(link.object).is_some() {
-            state
-                .objects
-                .get_mut(link.object)
-                .attachments
-                .retain(|attachment| *attachment != id);
-        }
-        state.objects.get_mut(id).v4.attached_to = None;
-    }
-    !detach.is_empty()
-}
-
 /// Blocking restriction for Figure of Fable: cannot be blocked by creatures
 /// controlled by an opponent of its current controller.
 pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {

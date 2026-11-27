@@ -1545,27 +1545,15 @@ pub(crate) fn execute(op: &C8cOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             crate::standard_cards_v1::gain_control(state, artifact, ctx.controller);
-            if crate::engine::has_effective_subtype(state, artifact, Subtype::Equipment)
-                && !crate::engine::object_has_type(state, artifact, CardType::Creature)
-            {
-                if let Some(skydiver) = live_ability_source(ctx, state) {
-                    if crate::engine::object_has_type(state, skydiver, CardType::Creature)
-                        && !crate::engine::damage_is_prevented_by_protection(
-                            state,
-                            artifact,
-                            Target::Object(skydiver),
-                        )
-                        && !crate::progenitus_v1::attachment_forbidden(state, artifact, skydiver)
-                    {
-                        let artifact_zcc = state.objects.get(artifact).zone_change_count;
-                        let skydiver_zcc = state.objects.get(skydiver).zone_change_count;
-                        let _ = state.attach_object_exact(
-                            artifact,
-                            artifact_zcc,
-                            skydiver,
-                            skydiver_zcc,
-                        );
-                    }
+            // CR 301.5c / 701.3b / 702.151b / 702.16d: attach stolen Equipment
+            // (including Reconfigure creatures such as Lion Sash) only when
+            // attachment is legal.
+            if let Some(skydiver) = live_ability_source(ctx, state) {
+                if crate::engine::can_attach_equipment_to_host(state, artifact, skydiver) {
+                    let artifact_zcc = state.objects.get(artifact).zone_change_count;
+                    let skydiver_zcc = state.objects.get(skydiver).zone_change_count;
+                    let _ =
+                        state.attach_object_exact(artifact, artifact_zcc, skydiver, skydiver_zcc);
                 }
             }
         }

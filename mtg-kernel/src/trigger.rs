@@ -4869,6 +4869,104 @@ fn token_card_defs() -> &'static [bool] {
     })
 }
 
+/// Whether `id` is an Aura (or Bestow Aura) whose SBA handling belongs to
+/// CR 704.5m (`invalid_sba_aura`) or CR 702.103e (`unattach_illegal_bestow`),
+/// rather than CR 704.5n/704.5p Equipment / non-Aura detachment.
+fn is_sba_aura_object(state: &GameState, id: ObjectId, live: &crate::state::GameObject) -> bool {
+    let Some(definition) = crate::card_def::CARD_DEFS.get(usize::from(live.card_def)) else {
+        return false;
+    };
+    if definition.attachment.is_some()
+        || definition.bestow.is_some()
+        || crate::standard_cards_v1::is_aura(definition)
+        || crate::engine::has_effective_subtype(state, id, crate::card_def::Subtype::Aura)
+    {
+        return true;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cube_c5c_v1::is_necromancy_aura(state, id)
+        || crate::eternal_legacy_e7a_v1::aura_waiting(state, id)
+        || crate::eternal_sideboard_s1f_v1::invalid_player_aura(state, id).is_some()
+    {
+        return true;
+    }
+    false
+}
+
+/// CR 704.5n / 704.5p / 301.5c / 702.16c: whether an attached non-Aura
+/// battlefield permanent must become unattached as a state-based action.
+fn non_aura_attachment_illegal_for_sba(
+    state: &GameState,
+    id: ObjectId,
+    live: &crate::state::GameObject,
+    link: crate::state::ObjectLinkV4,
+) -> bool {
+    if live.zone != Zone::Battlefield || is_sba_aura_object(state, id, live) {
+        return false;
+    }
+    if link.object == id
+        || !crate::engine::has_effective_subtype(state, id, crate::card_def::Subtype::Equipment)
+        || crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature)
+    {
+        return true;
+    }
+    let host_valid = state.objects.try_get(link.object).is_some_and(|host| {
+        host.zone == Zone::Battlefield
+            && host.zone_change_count == link.zone_change_count
+            && host.attachments.contains(&id)
+    });
+    if !host_valid
+        || !crate::engine::object_has_type(state, link.object, crate::card_def::CardType::Creature)
+        || crate::progenitus_v1::attachment_forbidden(state, id, link.object)
+        || crate::controlled_creature_grants_v1::protects_from_colors(
+            state,
+            link.object,
+            crate::engine::object_color_mask(state, id),
+        )
+    {
+        return true;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_e6b_v1::protection_removes_attachment(state, id, link.object) {
+        return true;
+    }
+    false
+}
+
+/// Returns any attached non-Aura battlefield permanent that violates CR 704.5n /
+/// 704.5p at a quiescent decision boundary (e.g. a forged snapshot).
+pub(crate) fn illegal_non_aura_attachment(state: &GameState) -> Option<ObjectId> {
+    state.objects.iter().find_map(|(id, live)| {
+        let link = live.v4.attached_to?;
+        non_aura_attachment_illegal_for_sba(state, id, live, link).then_some(id)
+    })
+}
+
+/// CR 704.5n / 704.5p / 702.16c: unattach every attached non-Aura permanent on
+/// the battlefield that lacks `Subtype::Equipment`, is a creature, or is
+/// attached to itself or an illegal/protected host.
+fn unattach_illegal_non_aura_attachments(state: &mut GameState) -> bool {
+    let detach: Vec<(ObjectId, crate::state::ObjectLinkV4)> = state
+        .objects
+        .iter()
+        .filter_map(|(id, live)| {
+            let link = live.v4.attached_to?;
+            non_aura_attachment_illegal_for_sba(state, id, live, link).then_some((id, link))
+        })
+        .collect();
+    for &(id, link) in &detach {
+        if state.objects.try_get(link.object).is_some() {
+            state
+                .objects
+                .get_mut(link.object)
+                .attachments
+                .retain(|attachment| *attachment != id);
+        }
+        state.objects.get_mut(id).v4.attached_to = None;
+    }
+    !detach.is_empty()
+}
+
 /// 704.5m moves an unattached or illegally attached Aura to its owner's
 /// graveyard. Both directions of the attachment must name the same incarnation.
 pub(crate) fn invalid_sba_aura(
@@ -5100,17 +5198,14 @@ fn sba_fixed_point_with_protected_triggers(
         changed |= crate::controlled_creature_grants_v1::detach_illegal_nonauras(state);
         #[cfg(feature = "eternal-fixtures")]
         {
-            changed |= crate::eternal_pauper_e6b_v1::unattach_protected_equipment(state);
-            // An Equipment that is also a creature (Iron Man Armor) can't
-            // stay attached (Vintage Cube wave C4c).
-            changed |= crate::eternal_cube_c4c_v1::unattach_animated_equipment(state);
             // Bestow Auras detach back into creatures when their host ceases to
             // be a legal creature (CR 702.103e, Vintage Cube wave C8b).
             changed |= crate::eternal_cube_c8b_v1::unattach_illegal_bestow(state);
-            // Equipment attached to a noncreature or protected host unattaches
-            // in SBAs (CR 704.5n / 702.16c, Vintage Cube wave C9b).
-            changed |= crate::eternal_cube_c9b_v1::unattach_illegal_equipment(state);
         }
+        // CR 704.5n / 704.5p / 702.16c: detach any attached non-Aura permanent
+        // that lacks Equipment, is a creature, or is attached to itself or an
+        // illegal/protected host.
+        changed |= unattach_illegal_non_aura_attachments(state);
         if !ordered_graveyard {
             let invalid_auras = state
                 .objects

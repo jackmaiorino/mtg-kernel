@@ -1519,22 +1519,17 @@ pub(crate) fn execute(op: &E8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             put_onto_battlefield(state, card, ctx.controller, false);
-            if state.objects.get(card).zone != Zone::Battlefield
-                || !has_type(state, card, CardType::Creature)
-            {
-                return;
-            }
             let Some(formalwear) = live_ability_source(ctx, state) else {
                 return;
             };
+            // CR 301.5c / 701.3b / 702.151b / 702.16d: returning the creature
+            // still succeeds even when Formalwear cannot legally attach to it.
+            if !crate::engine::can_attach_equipment_to_host(state, formalwear, card) {
+                return;
+            }
             let formalwear_count = state.objects.get(formalwear).zone_change_count;
             let card_count = state.objects.get(card).zone_change_count;
-            if state
-                .attach_object_exact(formalwear, formalwear_count, card, card_count)
-                .is_err()
-            {
-                halt(state, formalwear);
-            }
+            let _ = state.attach_object_exact(formalwear, formalwear_count, card, card_count);
         }
         E8aOpV1::TargetToLibraryTopV1 => {
             if let Some(card) = bound_target_in(ctx, state, 0, Zone::Graveyard) {

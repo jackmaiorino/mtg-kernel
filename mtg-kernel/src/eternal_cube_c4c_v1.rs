@@ -53,9 +53,8 @@
 //! - Iron Man Armor's animation is `CardDef::animation` (Mishra's Factory's
 //!   mechanism, row in `build_support/standard_lands_v1.rs`); its "+1/+1 for
 //!   each artifact you control" is `controlled_boost` and its being unable to
-//!   stay attached while it is a creature (301.5c) is
-//!   `unattach_animated_equipment`, run with the other attachment checks of
-//!   the state-based actions.
+//!   stay attached while it is a creature (301.5c / 704.5n / 704.5p) is
+//!   enforced by the general non-Aura SBA check in `trigger.rs`.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{CardType, DynamicValueDef, TargetSpec, CARD_DEFS};
@@ -597,35 +596,6 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     (total, total)
 }
 
-/// 301.5c and 704.5n: an Equipment that is also a creature can't be attached
-/// to a creature (Iron Man Armor once its ability animates it). Run with the
-/// other attachment checks of the state-based actions; whether it changed
-/// anything.
-pub(crate) fn unattach_animated_equipment(state: &mut GameState) -> bool {
-    let detach: Vec<(ObjectId, ObjectLinkV4)> = state
-        .objects
-        .iter()
-        .filter_map(|(id, live)| {
-            let link = live.v4.attached_to?;
-            (live.zone == Zone::Battlefield
-                && def_name(state, id) == Some(IRON_MAN_ARMOR)
-                && is_creature(state, id))
-            .then_some((id, link))
-        })
-        .collect();
-    for &(id, link) in &detach {
-        if state.objects.try_get(link.object).is_some() {
-            state
-                .objects
-                .get_mut(link.object)
-                .attachments
-                .retain(|attachment| *attachment != id);
-        }
-        state.objects.get_mut(id).v4.attached_to = None;
-    }
-    !detach.is_empty()
-}
-
 // ---- Delayed triggers ---------------------------------------------------------------
 
 /// The triggers this collection puts on the stack that no printed trigger
@@ -1066,30 +1036,27 @@ fn source_in_graveyard(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
 }
 
 /// Sword of the Meek: return the Sword from the graveyard, then attach it to
-/// the creature if that is still the permanent that entered.
+/// the creature if that is still the permanent that entered and attachment is
+/// legal (CR 301.5c / 701.3b / 702.151b / 702.16d).
 fn run_sword_return(ctx: &ExecCtx, state: &mut GameState, creature: ObjectId, count: u32) {
     let Some(sword) = source_in_graveyard(ctx, state) else {
         return;
     };
     event::propose_and_commit(state, ProposedEvent::zone_change(sword, Zone::Battlefield));
-    let Some(returned) = state.objects.try_get(sword) else {
-        return;
-    };
-    if returned.zone != Zone::Battlefield
-        || !on_battlefield(state, creature, count)
-        || !is_creature(state, creature)
+    if !on_battlefield(state, creature, count)
+        || !crate::engine::can_attach_equipment_to_host(state, sword, creature)
     {
         return;
     }
-    let sword_count = returned.zone_change_count;
-    // Attachment can refuse (protection from the Sword); the Sword then stays
-    // where it entered, unattached.
+    let sword_count = state.objects.get(sword).zone_change_count;
+    // Attachment can refuse (CR 701.3b); the Sword then stays where it entered,
+    // unattached.
     let _ = state.attach_object_exact(sword, sword_count, creature, count);
 }
 
 /// Iron Man Armor's "Equip {2}": attach the Armor to target 0 if it is still
-/// the Armor that was activated, not a creature, and the target is still a
-/// legal creature you control other than itself.
+/// the Armor that was activated and attachment is legal (CR 301.5c / 701.3b /
+/// 702.151b / 702.16d).
 fn run_iron_man_equip(ctx: &ExecCtx, state: &mut GameState) {
     let Some(contract) = ctx.ability_source_contract else {
         return;
@@ -1099,17 +1066,13 @@ fn run_iron_man_equip(ctx: &ExecCtx, state: &mut GameState) {
         return;
     };
     if contract.source != ctx.source
-        || target == ctx.source
         || !on_battlefield(state, ctx.source, contract.zone_change_count)
-        || is_creature(state, ctx.source)
-        || !on_battlefield(state, target, state.objects.get(target).zone_change_count)
-        || !is_creature(state, target)
+        || !crate::engine::can_attach_equipment_to_host(state, ctx.source, target)
     {
         return;
     }
     let target_count = state.objects.get(target).zone_change_count;
-    // Attachment can refuse (protection from the Armor): the old attachment
-    // then stays.
+    // Attachment can refuse (CR 701.3b): any existing attachment then stays.
     let _ = state.attach_object_exact(ctx.source, contract.zone_change_count, target, target_count);
 }
 
