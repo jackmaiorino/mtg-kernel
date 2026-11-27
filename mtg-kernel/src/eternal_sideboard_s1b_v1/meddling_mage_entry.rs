@@ -1553,6 +1553,103 @@ pub(crate) fn note_departing_discard_uses(state: &mut GameState, id: ObjectId, f
     }
 }
 
+pub(crate) fn animate_ability_uses_for_object(
+    live: &crate::state::GameObject,
+    card_def: u16,
+) -> u32 {
+    let Some(def) = CARD_DEFS.get(usize::from(card_def)) else {
+        return 0;
+    };
+    def.activated_abilities
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| {
+            matches!(
+                (a.effect)(),
+                crate::effect::EffectOp::AnimateSource
+                    | crate::effect::EffectOp::AnimateSourcePermanentlyV1
+            )
+        })
+        .map(|(idx, _)| {
+            live.v4
+                .ability_uses_this_turn
+                .iter()
+                .filter(|u| {
+                    u.ability_kind == crate::state::AbilityKindV4::Activated
+                        && u.ability_index == idx as u16
+                })
+                .map(|u| u32::from(u.uses))
+                .sum::<u32>()
+        })
+        .sum()
+}
+
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn note_departing_animate_uses(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+    if from_zone != Zone::Battlefield || state.step == crate::state::Step::Untap {
+        return;
+    }
+    let Some(live) = state.objects.try_get(id) else {
+        return;
+    };
+    if live.v4.ability_uses_this_turn.is_empty() {
+        return;
+    }
+    let link = ObjectLinkV4 {
+        object: id,
+        zone_change_count: live.zone_change_count,
+    };
+    let mut uses = animate_ability_uses_for_object(live, live.card_def);
+    if uses == 0 {
+        if let Some(saved_def) = crate::eternal_cube_c8b_v1::read_state(state)
+            .and_then(|c8b| c8b.saheeli_copies.iter().find(|c| c.host == link))
+            .map(|c| c.card_def)
+        {
+            uses = animate_ability_uses_for_object(live, saved_def);
+        }
+    }
+    if uses > 0 {
+        let list = &mut s1b_state(state).departed_animate_uses;
+        if !list.iter().any(|(existing, _)| *existing == link) {
+            list.push((link, uses));
+        }
+    }
+}
+
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn note_resolution_effect_discards(state: &mut GameState, history_before: usize) {
+    if state.step == crate::state::Step::Untap {
+        return;
+    }
+    let new_entries: Vec<(PlayerId, usize, ObjectId)> = state
+        .engine
+        .event_history
+        .get(history_before..)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(offset, ev)| match ev {
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Hand,
+                to,
+                controller_before,
+            } if !matches!(to, Zone::Hand | Zone::Battlefield | Zone::Stack) => {
+                Some((*controller_before, history_before + offset, *object))
+            }
+            _ => None,
+        })
+        .collect();
+    if !new_entries.is_empty() {
+        let list = &mut s1b_state(state).resolution_effect_discards;
+        for entry in new_entries {
+            if !list.contains(&entry) {
+                list.push(entry);
+            }
+        }
+    }
+}
+
 fn player_ref_can_match(
     pref: crate::effect::PlayerRef,
     caster: PlayerId,
@@ -1896,11 +1993,37 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
             }
         }
 
+        if let Some(s1b) = super::read_state(state) {
+            for &(ctrl, idx, obj) in &s1b.resolution_effect_discards {
+                if ctrl != controller {
+                    continue;
+                }
+                if idx < turn_start
+                    || !matches!(
+                        history.get(idx),
+                        Some(CommittedEvent::ZoneChange {
+                            object,
+                            from: Zone::Hand,
+                            to,
+                            controller_before,
+                        }) if *object == obj
+                            && *controller_before == ctrl
+                            && !matches!(to, Zone::Hand | Zone::Battlefield | Zone::Stack)
+                    )
+                {
+                    return Err(
+                        "resolution-effect discard record does not match event history".into(),
+                    );
+                }
+                spell_discard_indices.insert(idx);
+            }
+        }
+
         if copy_discards
             .iter()
             .any(|idx| spell_discard_indices.contains(idx))
         {
-            return Err("copy-entry discard overlaps a spell-resolution discard".into());
+            return Err("copy-entry discard overlaps a non-copy-entry discard".into());
         }
 
         let mut activated_discards: usize = 0;

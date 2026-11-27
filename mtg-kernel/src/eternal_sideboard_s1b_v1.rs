@@ -67,6 +67,16 @@ pub struct S1bStateV1 {
     /// battlefield during the current turn, cleared at Untap.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub departed_discard_uses: Vec<(ObjectLinkV4, PlayerId, u16)>,
+    /// Activated animate-ability uses (`AnimateSource` /
+    /// `AnimateSourcePermanentlyV1`) recorded on permanents that left the
+    /// battlefield during the current turn, cleared at Untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub departed_animate_uses: Vec<(ObjectLinkV4, u32)>,
+    /// Same-turn hand discards committed by spell/ability resolution effects
+    /// (and other non-activation-cost, non-copy-entry hand moves), recording
+    /// `(player, event_history_index, object)`, cleared at Untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolution_effect_discards: Vec<(PlayerId, usize, ObjectId)>,
 }
 
 impl Hash for S1bStateV1 {
@@ -83,6 +93,14 @@ impl Hash for S1bStateV1 {
             if !self.departed_discard_uses.is_empty() {
                 b"departed-discard-uses/v1".hash(state);
                 self.departed_discard_uses.hash(state);
+            }
+            if !self.departed_animate_uses.is_empty() {
+                b"departed-animate-uses/v1".hash(state);
+                self.departed_animate_uses.hash(state);
+            }
+            if !self.resolution_effect_discards.is_empty() {
+                b"resolution-effect-discards/v1".hash(state);
+                self.resolution_effect_discards.hash(state);
             }
         }
     }
@@ -106,9 +124,22 @@ fn read_state(state: &GameState) -> Option<&S1bStateV1> {
     state.eternal_v1.as_ref().map(|eternal| &eternal.s1b)
 }
 
+pub(crate) fn departed_animate_uses_for(state: &GameState, host: ObjectLinkV4) -> u32 {
+    read_state(state)
+        .and_then(|s1b| {
+            s1b.departed_animate_uses
+                .iter()
+                .find(|(link, _)| *link == host)
+                .map(|(_, uses)| *uses)
+        })
+        .unwrap_or(0)
+}
+
 pub(crate) fn begin_turn(state: &mut GameState, _player: PlayerId) {
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal.s1b.departed_discard_uses.clear();
+        eternal.s1b.departed_animate_uses.clear();
+        eternal.s1b.resolution_effect_discards.clear();
     }
 }
 

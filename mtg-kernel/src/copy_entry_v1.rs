@@ -114,6 +114,10 @@ pub enum ProvenanceV1 {
     },
     AbilityCountered {
         stack_item: crate::ids::StackItemId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        springheart_producer: Option<AbilitySourceContractV4>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        animate_host: Option<ObjectLinkV4>,
     },
 }
 
@@ -270,25 +274,53 @@ pub(crate) fn record_ability_countered_if_relevant(
     if item.kind == crate::state::StackItemKind::Spell {
         return;
     }
-    let relevant = matches!(
+    let is_springheart = matches!(
         item.inline_effect.as_ref(),
-        Some(
-            EffectOp::AnimateSource
-                | EffectOp::AnimateSourcePermanentlyV1
-                | EffectOp::StandardV1(StandardOpV1::EternalV1(
-                    EternalOpV1::C8bV1(
-                        C8bOpV1::SaheeliCopyV1
-                            | C8bOpV1::SpringheartLandfallV1
-                            | C8bOpV1::VaultbornDeathCopyV1
-                    ) | EternalOpV1::C8cV1(C8cOpV1::AbsorbingManCopyV1)
-                ))
-        )
+        Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+            EternalOpV1::C8bV1(C8bOpV1::SpringheartLandfallV1)
+        )))
     );
+    let is_animate = matches!(
+        item.inline_effect.as_ref(),
+        Some(EffectOp::AnimateSource | EffectOp::AnimateSourcePermanentlyV1)
+    );
+    let relevant = is_springheart
+        || is_animate
+        || matches!(
+            item.inline_effect.as_ref(),
+            Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+                EternalOpV1::C8bV1(C8bOpV1::SaheeliCopyV1 | C8bOpV1::VaultbornDeathCopyV1)
+                    | EternalOpV1::C8cV1(C8cOpV1::AbsorbingManCopyV1)
+            )))
+        );
     if relevant {
+        let springheart_producer = is_springheart.then(|| {
+            item.v4
+                .ability_source_contract
+                .unwrap_or_else(|| AbilitySourceContractV4::capture(state, item.source))
+        });
+        let animate_host = if is_animate {
+            item.v4
+                .ability_source_contract
+                .map(|c| ObjectLinkV4 {
+                    object: c.source,
+                    zone_change_count: c.zone_change_count,
+                })
+                .or_else(|| {
+                    state.objects.try_get(item.source).map(|live| ObjectLinkV4 {
+                        object: item.source,
+                        zone_change_count: live.zone_change_count,
+                    })
+                })
+        } else {
+            None
+        };
         push_provenance(
             state,
             ProvenanceV1::AbilityCountered {
                 stack_item: item.v4.stack_item_id,
+                springheart_producer,
+                animate_host,
             },
         );
     }
@@ -922,7 +954,9 @@ fn event_uses_stack_item(
             | ProvenanceV1::CopyDiscardPaid {
                 stack_item: item, ..
             }
-            | ProvenanceV1::AbilityCountered { stack_item: item } => *item == stack_item,
+            | ProvenanceV1::AbilityCountered {
+                stack_item: item, ..
+            } => *item == stack_item,
             ProvenanceV1::EntryCopyApplied { .. } => false,
         },
         _ => false,
@@ -2089,49 +2123,70 @@ fn authenticated_mods_for_link(
                     }
                     (producer_saw_landfall, triggers)
                 };
-                let count_springheart_outcomes = |copy_end: usize, insect_end: usize| -> usize {
-                    let mut copy_items = std::collections::BTreeSet::new();
-                    for ev in &state.engine.event_history[..copy_end] {
-                        if let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = ev {
-                            if let ProvenanceV1::TokenCopyCreated {
-                                producer: p,
-                                stack_item: item,
-                                ..
-                            } = journal.as_ref()
-                            {
-                                if Some(p.card_def) == springheart_id
-                                    && p.controller == producer.controller
+                let count_springheart_outcomes =
+                    |copy_end: usize, insect_end: usize, countered_end: usize| -> usize {
+                        let mut copy_items = std::collections::BTreeSet::new();
+                        for ev in &state.engine.event_history[..copy_end] {
+                            if let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = ev {
+                                if let ProvenanceV1::TokenCopyCreated {
+                                    producer: p,
+                                    stack_item: item,
+                                    ..
+                                } = journal.as_ref()
                                 {
-                                    copy_items.insert(*item);
+                                    if Some(p.card_def) == springheart_id
+                                        && p.controller == producer.controller
+                                    {
+                                        copy_items.insert(*item);
+                                    }
                                 }
                             }
                         }
-                    }
-                    let mut insect_triggers: usize = 0;
-                    let mut prev_was_insect = false;
-                    for ev in &state.engine.event_history[..insect_end] {
-                        let is_insect = matches!(
-                            ev,
-                            event::CommittedEvent::CreateToken {
-                                token_def,
-                                controller,
-                                ..
-                            } if Some(*token_def) == insect_id
-                                && *controller == producer.controller
-                        );
-                        if is_insect && !prev_was_insect {
-                            insect_triggers = insect_triggers.saturating_add(1);
+                        let mut countered_items = std::collections::BTreeSet::new();
+                        for ev in &state.engine.event_history[..countered_end] {
+                            if let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = ev {
+                                if let ProvenanceV1::AbilityCountered {
+                                    stack_item: item,
+                                    springheart_producer: Some(p),
+                                    ..
+                                } = journal.as_ref()
+                                {
+                                    if Some(p.card_def) == springheart_id
+                                        && p.controller == producer.controller
+                                    {
+                                        countered_items.insert(*item);
+                                    }
+                                }
+                            }
                         }
-                        prev_was_insect = is_insect;
-                    }
-                    copy_items.len().saturating_add(insect_triggers)
-                };
+                        let mut insect_triggers: usize = 0;
+                        let mut prev_was_insect = false;
+                        for ev in &state.engine.event_history[..insect_end] {
+                            let is_insect = matches!(
+                                ev,
+                                event::CommittedEvent::CreateToken {
+                                    token_def,
+                                    controller,
+                                    ..
+                                } if Some(*token_def) == insect_id
+                                    && *controller == producer.controller
+                            );
+                            if is_insect && !prev_was_insect {
+                                insect_triggers = insect_triggers.saturating_add(1);
+                            }
+                            prev_was_insect = is_insect;
+                        }
+                        copy_items
+                            .len()
+                            .saturating_add(insect_triggers)
+                            .saturating_add(countered_items.len())
+                    };
                 let (producer_saw_landfall, prefix_triggers) =
                     count_springheart_triggers(*create_at);
-                let prefix_outcomes = count_springheart_outcomes(at + 1, *create_at);
+                let prefix_outcomes = count_springheart_outcomes(at + 1, *create_at, *create_at);
                 let full_len = state.engine.event_history.len();
                 let (_, total_triggers) = count_springheart_triggers(full_len);
-                let total_outcomes = count_springheart_outcomes(full_len, full_len);
+                let total_outcomes = count_springheart_outcomes(full_len, full_len, full_len);
                 if !producer_saw_landfall
                     || prefix_triggers < prefix_outcomes
                     || total_triggers < total_outcomes
@@ -2528,12 +2583,11 @@ fn donor_land_animated_at_entry(
             {
                 return false;
             }
-            if donor_same_incarnation
-                && !has_upkeep_between(state, at + 1, state.engine.event_history.len())
+            if !has_upkeep_between(state, at + 1, state.engine.event_history.len())
                 && state.step != crate::state::Step::Untap
             {
                 let (turn_start, _) = turn_window_containing(state, at);
-                let same_turn_receipts = state.engine.event_history[turn_start..]
+                let same_turn_consumed = state.engine.event_history[turn_start..]
                     .iter()
                     .filter(|ev| {
                         matches!(
@@ -2542,6 +2596,12 @@ fn donor_land_animated_at_entry(
                                 if matches!(
                                     journal.as_ref(),
                                     ProvenanceV1::LandAnimated { host: h, .. } if *h == host_link
+                                ) || matches!(
+                                    journal.as_ref(),
+                                    ProvenanceV1::AbilityCountered {
+                                        animate_host: Some(h),
+                                        ..
+                                    } if *h == host_link
                                 )
                         )
                     })
@@ -2553,38 +2613,29 @@ fn donor_land_animated_at_entry(
                             | crate::effect::EffectOp::AnimateSourcePermanentlyV1
                     )
                 });
-                if has_animate_ability
-                    && state.objects.try_get(donor.source).is_none_or(|live| {
-                        if live.card_def != *card_def {
+                if has_animate_ability {
+                    if donor_same_incarnation {
+                        if state.objects.try_get(donor.source).is_none_or(|live| {
+                            if live.card_def != *card_def {
+                                return false;
+                            }
+                            let total_uses =
+                                crate::eternal_sideboard_s1b_v1::meddling_mage_entry::animate_ability_uses_for_object(
+                                    live, *card_def,
+                                ) as usize;
+                            total_uses < same_turn_consumed
+                        }) {
                             return false;
                         }
-                        let total_uses: usize = def
-                            .activated_abilities
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, a)| {
-                                matches!(
-                                    (a.effect)(),
-                                    crate::effect::EffectOp::AnimateSource
-                                        | crate::effect::EffectOp::AnimateSourcePermanentlyV1
-                                )
-                            })
-                            .map(|(idx, _)| {
-                                live.v4
-                                    .ability_uses_this_turn
-                                    .iter()
-                                    .filter(|u| {
-                                        u.ability_kind == crate::state::AbilityKindV4::Activated
-                                            && u.ability_index == idx as u16
-                                    })
-                                    .map(|u| usize::from(u.uses))
-                                    .sum::<usize>()
-                            })
-                            .sum();
-                        total_uses < same_turn_receipts
-                    })
-                {
-                    return false;
+                    } else {
+                        let departed_uses =
+                            crate::eternal_sideboard_s1b_v1::departed_animate_uses_for(
+                                state, host_link,
+                            ) as usize;
+                        if departed_uses < same_turn_consumed {
+                            return false;
+                        }
+                    }
                 }
             }
             zone_and_zcc_at(state, host.object, at)

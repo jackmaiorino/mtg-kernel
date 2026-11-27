@@ -9482,6 +9482,8 @@ fn commit_cost_components_from_plan_v1(
                 // Cycling discards its card (Hollow One counts it; Gempalm
                 // Incinerator's cycle trigger sees it).
                 #[cfg(feature = "eternal-fixtures")]
+                let history_before = state.engine.event_history.len();
+                #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_vintage_e7b_v1::statics::note_discard(state, source);
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_sideboard_s1b_v1::note_discard(state, source);
@@ -9496,7 +9498,12 @@ fn commit_cost_components_from_plan_v1(
                 event::propose_and_commit(
                     state,
                     ProposedEvent::zone_change(source, Zone::Graveyard),
-                )
+                );
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_resolution_effect_discards(
+                    state,
+                    history_before,
+                );
             }
             CostComponent::SacrificeLands(n) => {
                 debug_assert_eq!(
@@ -9679,11 +9686,22 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::PayEnergyV1(amount) => {
                 crate::eternal_cards_v1::pay_energy(state, player, *amount)?;
             }
-            CostComponent::ExileCardFromHandWithColorV1(_) => event::propose_and_commit(
-                state,
-                ProposedEvent::zone_change(object_cost_chosen[0], Zone::Exile),
-            ),
+            CostComponent::ExileCardFromHandWithColorV1(_) => {
+                #[cfg(feature = "eternal-fixtures")]
+                let history_before = state.engine.event_history.len();
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(object_cost_chosen[0], Zone::Exile),
+                );
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_resolution_effect_discards(
+                    state,
+                    history_before,
+                );
+            }
             CostComponent::ExileCardsFromHandWithColorV1 { .. } => {
+                #[cfg(feature = "eternal-fixtures")]
+                let history_before = state.engine.event_history.len();
                 event::propose_and_commit_batch(
                     state,
                     object_cost_chosen
@@ -9691,13 +9709,18 @@ fn commit_cost_components_from_plan_v1(
                         .map(|&card| ProposedEvent::zone_change(card, Zone::Exile))
                         .collect(),
                 );
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_resolution_effect_discards(
+                    state,
+                    history_before,
+                );
             }
             CostComponent::DiscardLandCardsV1(_) => {
                 if cfg!(feature = "eternal-fixtures") {
-                    commit_discarded_cards(state, object_cost_chosen);
+                    commit_discarded_cards_inner(state, object_cost_chosen, false);
                 } else {
                     for &card in object_cost_chosen {
-                        commit_discarded_card(state, card);
+                        commit_discarded_cards_inner(state, &[card], false);
                     }
                 }
             }
@@ -9707,10 +9730,10 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::DiscardIslandAndAnotherCardV1 => {
                 if cfg!(feature = "eternal-fixtures") {
-                    commit_discarded_cards(state, object_cost_chosen);
+                    commit_discarded_cards_inner(state, object_cost_chosen, false);
                 } else {
                     for &card in object_cost_chosen {
-                        commit_discarded_card(state, card);
+                        commit_discarded_cards_inner(state, &[card], false);
                     }
                 }
             }
@@ -17744,13 +17767,27 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
 /// replacement and ordinary owner-controlled trigger queue. Choice-bearing
 /// discard callers retain their own authentication and completion stages.
 pub(crate) fn commit_discarded_card(state: &mut GameState, id: ObjectId) {
-    commit_discarded_cards(state, &[id]);
+    commit_discarded_cards_inner(state, &[id], true);
+}
+
+pub(crate) fn commit_discarded_card_for_copy_entry(state: &mut GameState, id: ObjectId) {
+    commit_discarded_cards_inner(state, &[id], false);
 }
 
 pub(crate) fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId]) {
+    commit_discarded_cards_inner(state, chosen, true);
+}
+
+fn commit_discarded_cards_inner(
+    state: &mut GameState,
+    chosen: &[ObjectId],
+    #[allow(unused_variables)] record_effect_discard: bool,
+) {
     if chosen.is_empty() {
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let history_before = state.engine.event_history.len();
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c6a_v1::note_discards(state, chosen);
     #[cfg(feature = "eternal-fixtures")]
@@ -17795,6 +17832,13 @@ pub(crate) fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId])
     }
     if state.engine.halted.is_some() {
         return;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if record_effect_discard {
+        crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_resolution_effect_discards(
+            state,
+            history_before,
+        );
     }
     for (id, tinybones_discard, madness) in inputs {
         if madness {
@@ -17944,7 +17988,11 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
         None
     };
     state.engine.pending_discard = None;
-    commit_discarded_cards(state, &chosen);
+    let record_effect_discard = !matches!(
+        pending_discard.resume,
+        DiscardResume::FinishActivation { .. }
+    );
+    commit_discarded_cards_inner(state, &chosen, record_effect_discard);
     if let Some(input) = kaito_discard {
         if effect::kaito_cunning_v75::record_discard_finished(state, input).is_err() {
             state.engine.halted =

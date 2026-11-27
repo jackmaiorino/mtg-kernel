@@ -9232,6 +9232,10 @@ fn materialize_zone_change_v1(
     crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_discard_uses(
         state, id, from_zone,
     );
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1b_v1::meddling_mage_entry::note_departing_animate_uses(
+        state, id, from_zone,
+    );
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
