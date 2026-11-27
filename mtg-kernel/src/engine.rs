@@ -2627,32 +2627,31 @@ fn validate_cast_life_x(
                 {
                     return false;
                 }
-                // Only excuse `target_link` if this departing Aura actually
-                // targeted `target_link` before payment.
-                let aura_stack_ids: Vec<StackItemId> = history
-                    .range_v2(..at)
-                    .iter()
-                    .filter_map(|ev| match ev {
+                // Only excuse `target_link` if this departing Aura's latest
+                // pre-payment cast actually targeted `target_link`.
+                let latest_aura_stack_id =
+                    history.range_v2(..at).iter().rev().find_map(|ev| match ev {
                         CommittedEvent::PublishedCastIdentityV1 { receipt }
                             if receipt.spell == *aura =>
                         {
                             Some(receipt.stack_item_id)
                         }
                         _ => None,
+                    });
+                latest_aura_stack_id.is_some_and(|aura_stack_id| {
+                    history.range_v2(..at).iter().any(|ev| {
+                        matches!(
+                            ev,
+                            CommittedEvent::Targeted {
+                                target,
+                                target_zone_change_count,
+                                targeting_stack_item,
+                                ..
+                            } if *target == target_link.object
+                                && *target_zone_change_count == target_link.zone_change_count
+                                && *targeting_stack_item == aura_stack_id
+                        )
                     })
-                    .collect();
-                history.range_v2(..at).iter().any(|ev| {
-                    matches!(
-                        ev,
-                        CommittedEvent::Targeted {
-                            target,
-                            target_zone_change_count,
-                            targeting_stack_item,
-                            ..
-                        } if *target == target_link.object
-                            && *target_zone_change_count == target_link.zone_change_count
-                            && aura_stack_ids.contains(targeting_stack_item)
-                    )
                 })
             })
         };
@@ -2755,15 +2754,83 @@ fn validate_cast_life_x(
                 }
             }
         }
+        // Helper: whether `id`'s exact pre-payment battlefield incarnation
+        // (`zcc`) was reanimated by `player` or stolen by `player` before `at`.
+        let opponent_acquired_before = |id: ObjectId, zcc: u32| {
+            let last_entry_before = history.range_v2(..at).iter().enumerate().rev().find_map(
+                |(entry_idx, ev)| match ev {
+                    CommittedEvent::ZoneChange {
+                        object,
+                        from,
+                        to: Zone::Battlefield,
+                        ..
+                    } if *object == id => Some((entry_idx, *from)),
+                    _ => None,
+                },
+            );
+            let reanimated_by_opponent = last_entry_before.is_some_and(|(entry_idx, from)| {
+                matches!(from, Zone::Graveyard | Zone::Exile | Zone::Library)
+                    && history
+                        .range_v2(..entry_idx)
+                        .iter()
+                        .rev()
+                        .take_while(|ev| {
+                            !matches!(
+                                ev,
+                                CommittedEvent::ZoneChange { object, .. } if *object == id
+                            )
+                        })
+                        .any(|ev| {
+                            matches!(
+                                ev,
+                                CommittedEvent::Targeted {
+                                    target,
+                                    targeting_controller,
+                                    ..
+                                } if *target == id && *targeting_controller == player
+                            )
+                        })
+            });
+            let stolen_by_opponent = history.range_v2(..at).iter().any(|ev| {
+                matches!(
+                    ev,
+                    CommittedEvent::Targeted {
+                        target,
+                        target_zone_change_count,
+                        targeting_stack_item,
+                        targeting_controller,
+                        ..
+                    } if *target == id
+                        && *targeting_controller == player
+                        && *target_zone_change_count == zcc
+                        && is_control_steal_stack_item(*targeting_stack_item)
+                )
+            });
+            reanimated_by_opponent || stolen_by_opponent
+        };
+        let is_spell_stack_item = |stack_item_id: StackItemId| {
+            history
+                .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
+                .any(|(_, ev)| {
+                    matches!(
+                        ev,
+                        CommittedEvent::PublishedCastIdentityV1 { receipt }
+                            if receipt.stack_item_id == stack_item_id
+                    )
+                })
+        };
         // Every currently active Bloodletter omitted from the receipt must be
         // explained by a post-payment entry, face-up flip, transform, pre-existing
-        // ability suppressor departure for that permanent, control-steal targeting,
-        // or an active Assimilation Aegis copy.
+        // ability suppressor departure for that permanent, active-player
+        // control-regain targeting of an opponent-acquired incarnation, or a
+        // post-payment Assimilation Aegis equip.
         for &live_link in &live_bloodletters {
             if bloodletters.contains(&live_link) {
                 continue;
             }
             let aegis_copy = crate::standard_cards_v1::active_aegis_copy(state, live_link.object);
+            let acquired_by_opponent =
+                opponent_acquired_before(live_link.object, live_link.zone_change_count);
             let explained = has_pre_existing_dress_down_departure
                 || pre_existing_aura_remover_departed_for(live_link)
                 || after.iter().any(|event| {
@@ -2790,11 +2857,15 @@ fn validate_cast_life_x(
                             target,
                             target_zone_change_count,
                             targeting_stack_item,
+                            targeting_controller,
                             ..
                         } if *target == live_link.object
                             && *target_zone_change_count == live_link.zone_change_count
                             && *targeting_stack_item != item.v4.stack_item_id
-                            && (aegis_copy || is_control_steal_stack_item(*targeting_stack_item))
+                            && ((aegis_copy && !is_spell_stack_item(*targeting_stack_item))
+                                || (*targeting_controller == active
+                                    && acquired_by_opponent
+                                    && is_control_steal_stack_item(*targeting_stack_item)))
                     )
                 });
             if !explained {
@@ -2804,50 +2875,6 @@ fn validate_cast_life_x(
                 );
             }
         }
-        // Helper: whether `id`'s current (or latest pre-payment) battlefield
-        // incarnation was reanimated by `player` or stolen by `player` before `at`.
-        let opponent_acquired_before = |id: ObjectId, zcc: Option<u32>| {
-            let last_entry_before = history.range_v2(..at).iter().enumerate().rev().find_map(
-                |(entry_idx, ev)| match ev {
-                    CommittedEvent::ZoneChange {
-                        object,
-                        from,
-                        to: Zone::Battlefield,
-                        ..
-                    } if *object == id => Some((entry_idx, *from)),
-                    _ => None,
-                },
-            );
-            let reanimated_by_opponent = last_entry_before.is_some_and(|(entry_idx, from)| {
-                matches!(from, Zone::Graveyard | Zone::Exile | Zone::Library)
-                    && history.range_v2(..entry_idx).iter().rev().any(|ev| {
-                        matches!(
-                            ev,
-                            CommittedEvent::Targeted {
-                                target,
-                                targeting_controller,
-                                ..
-                            } if *target == id && *targeting_controller == player
-                        )
-                    })
-            });
-            let stolen_by_opponent = history.range_v2(..at).iter().any(|ev| {
-                matches!(
-                    ev,
-                    CommittedEvent::Targeted {
-                        target,
-                        target_zone_change_count,
-                        targeting_stack_item,
-                        targeting_controller,
-                        ..
-                    } if *target == id
-                        && *targeting_controller == player
-                        && zcc.is_none_or(|expected| *target_zone_change_count == expected)
-                        && is_control_steal_stack_item(*targeting_stack_item)
-                )
-            });
-            reanimated_by_opponent || stolen_by_opponent
-        };
         // An active-controlled Bloodletter that departed the battlefield after
         // payment (including after being stolen in the same window) without
         // entering, flipping face up, or losing abilities first cannot be
@@ -2872,19 +2899,24 @@ fn validate_cast_life_x(
                     continue;
                 }
                 let stolen_before_departure = *controller_before == player
-                    && after.iter().take(ev_idx).any(|ev| {
-                        matches!(
-                            ev,
+                    && after
+                        .iter()
+                        .take(ev_idx)
+                        .find_map(|ev| match ev {
                             CommittedEvent::Targeted {
                                 target,
+                                target_zone_change_count,
                                 targeting_stack_item,
                                 ..
                             } if *target == *object
                                 && *targeting_stack_item != item.v4.stack_item_id
-                                && is_control_steal_stack_item(*targeting_stack_item)
-                        )
-                    })
-                    && !opponent_acquired_before(*object, None);
+                                && is_control_steal_stack_item(*targeting_stack_item) =>
+                            {
+                                Some(*target_zone_change_count)
+                            }
+                            _ => None,
+                        })
+                        .is_some_and(|stolen_zcc| !opponent_acquired_before(*object, stolen_zcc));
                 if *controller_before != active && !stolen_before_departure {
                     continue;
                 }
@@ -2968,7 +3000,7 @@ fn validate_cast_life_x(
                 });
                 if !entered_or_flipped_after
                     && stolen_after
-                    && !opponent_acquired_before(id, Some(obj.zone_change_count))
+                    && !opponent_acquired_before(id, obj.zone_change_count)
                 {
                     return Err("stolen active Bloodletter omitted from payment receipt".into());
                 }
@@ -3019,6 +3051,7 @@ fn validate_cast_life_x(
                 {
                     continue;
                 }
+                let acquired_by_opponent = opponent_acquired_before(id, obj.zone_change_count);
                 let changed_after = after.iter().any(|event| {
                     matches!(
                         event,
@@ -3042,10 +3075,13 @@ fn validate_cast_life_x(
                             target,
                             target_zone_change_count,
                             targeting_stack_item,
+                            targeting_controller,
                             ..
                         } if *target == id
                             && *target_zone_change_count == obj.zone_change_count
                             && *targeting_stack_item != item.v4.stack_item_id
+                            && *targeting_controller == active
+                            && acquired_by_opponent
                             && is_control_steal_stack_item(*targeting_stack_item)
                     )
                 });
