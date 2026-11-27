@@ -1696,7 +1696,7 @@ mod tests {
                     "episode_id": 7,
                     "expected_step": expected_step,
                     "selected_index": 0,
-                    "selected_action_id": action.action_id,
+                    "selected_action_id": action.stable_id,
                 });
                 reply = serde_json::from_str(&json.handle_line(&step.to_string())).unwrap();
                 fast.step(7, expected_step, 0).unwrap();
