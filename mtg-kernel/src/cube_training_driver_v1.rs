@@ -2031,6 +2031,16 @@ impl TrainingDriver {
                 let mut expected_cfg = config.clone();
                 expected_cfg.boundary = record.config.boundary.clone();
                 check_run_plan(&record.config, &expected_cfg)?;
+                let run_path = config.root.join("run.json");
+                if run_path.exists() {
+                    let saved: RunConfig = read_json(&run_path)?;
+                    if saved.boundary != record.config.boundary {
+                        return Err(invalid(
+                            "pick phase boundary differs from its staged checkpoint",
+                        ));
+                    }
+                    check_run_plan(&saved, &expected_cfg)?;
+                }
                 if initial_path.exists()
                     && fs::read(&initial_path)? != json_bytes(&record.checkpoint)?
                 {
