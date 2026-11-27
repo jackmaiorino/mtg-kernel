@@ -1720,8 +1720,9 @@ pub struct ExpandedEpisodeV1 {
     pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
     /// Some gives each physical seat a priority-window rule
     /// (`priority_action_windows_v1`: `"harness-v2"`, `"action-windows-v1"`,
-    /// `"action-windows-end-step-v1"`), set on the surface before the first
-    /// decision. Refused with a reset start and with a search opponent. None
+    /// `"action-windows-end-step-v1"`). The Limited engine surface uses
+    /// `"engine-windows-v1"` for both seats and requires London v1.
+    /// Refused with a reset start and with a search opponent. None
     /// keeps every prior serialized byte and today's surface.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority_windows: Option<[crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2]>,
@@ -1840,6 +1841,15 @@ impl ExpandedEpisodeV1 {
             self.opponent_search.is_none(),
             "priority_windows is refused with a search opponent",
         )?;
+        use crate::priority_action_windows_v1::SeatPriorityWindowsV1::EngineWindowsV1;
+        if windows.contains(&EngineWindowsV1) {
+            ensure(
+                windows == [EngineWindowsV1; 2]
+                    && self.deck_format == Some(crate::sideboard::DeckFormatV1::Limited40V1)
+                    && self.opening == Some(PauperOpeningV1::LondonV1),
+                "engine-windows-v1 requires both seats, limited40-v1 and a London opening",
+            )?;
+        }
         Ok(windows)
     }
 

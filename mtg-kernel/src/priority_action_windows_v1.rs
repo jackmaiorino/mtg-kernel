@@ -47,6 +47,9 @@ pub enum SeatPriorityWindowsV1 {
     /// empty. Every other window is HarnessV2's.
     #[serde(rename = "action-windows-end-step-v1")]
     ActionWindowsEndStepV1,
+    /// The shared engine-window mode requires this selection in both seats.
+    #[serde(rename = "engine-windows-v1")]
+    EngineWindowsV1,
 }
 
 impl SeatPriorityWindowsV1 {
@@ -102,7 +105,7 @@ pub fn offer_v1(
     options: &PriorityOptionsV1,
 ) -> bool {
     match rule {
-        SeatPriorityWindowsV1::HarnessV2 => false,
+        SeatPriorityWindowsV1::HarnessV2 | SeatPriorityWindowsV1::EngineWindowsV1 => false,
         SeatPriorityWindowsV1::ActionWindowsV1 => has_action_or_enabling_mana_v1(state, options),
         SeatPriorityWindowsV1::ActionWindowsEndStepV1 => {
             end_step_scope_v1(state, options.player)

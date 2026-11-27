@@ -936,6 +936,9 @@ impl HarnessSurfaceV2 {
         &mut self,
         rules: [SeatPriorityWindowsV1; 2],
     ) -> Result<(), String> {
+        if rules.contains(&SeatPriorityWindowsV1::EngineWindowsV1) {
+            return Err("engine-windows-v1 must select the Limited engine surface".into());
+        }
         if rules.iter().any(|rule| !rule.is_harness_v2())
             && self.priority_mode != PriorityModeV1::HarnessV2
         {

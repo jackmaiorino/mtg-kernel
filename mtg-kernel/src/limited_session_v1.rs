@@ -1625,6 +1625,86 @@ mod tests {
     }
 
     #[test]
+    fn cube_engine_windows_match_the_limited_opening_prompt() {
+        use crate::ids::PlayerId;
+        use crate::priority_action_windows_v1::SeatPriorityWindowsV1::EngineWindowsV1;
+        use crate::rl::PlayerSeatV1;
+        use crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned;
+        use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+        use crate::sideboard::DeckFormatV1::Limited40V1;
+
+        for (starting_player, starter) in [
+            (PlayerId::P0, PlayerSeatV1::P0),
+            (PlayerId::P1, PlayerSeatV1::P1),
+        ] {
+            let request = serde_json::json!({
+                "request_type": "reset",
+                "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+                "request_id": "reset",
+                "episode_id": 7,
+                "env_seed": 123,
+                "starting_player": starter,
+                "max_physical_decisions": 128,
+                "max_policy_steps": 128,
+                "decks": [
+                    {"cards":[{"name":"Forest","count":40}]},
+                    {"cards":[{"name":"Island","count":40}]}
+                ]
+            });
+            let mut json = LimitedJsonlServerV1::new_with_public_shroud_v1();
+            let mut reply: LimitedReplyV1 =
+                serde_json::from_str(&json.handle_line(&request.to_string())).unwrap();
+            let mainboards =
+                ["Forest", "Island"].map(|name| vec![card_id_by_name(name).unwrap(); 40]);
+            let mut fast = FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
+                7,
+                123,
+                128,
+                128,
+                ["Forest".into(), "Island".into()],
+                mainboards,
+                starting_player,
+                [Learned; 2],
+                [EngineWindowsV1; 2],
+                Some(Limited40V1),
+            )
+            .unwrap();
+            for expected_step in 0..2 {
+                let LimitedReplyBodyV1::Decision { decision } = reply.body else {
+                    panic!("expected a Limited London decision");
+                };
+                let FastActorResponseV1::Decision(current) = fast.current_response() else {
+                    panic!("expected a fast London decision");
+                };
+                assert_eq!(decision.step, expected_step);
+                assert_eq!(decision.step, current.step);
+                assert_eq!(decision.acting_player, current.acting_player);
+                assert_eq!(decision.physical_decision_id, current.physical_decision_id);
+                assert_eq!(
+                    decision
+                        .legal_actions
+                        .iter()
+                        .map(|action| action.semantic.clone())
+                        .collect::<Vec<_>>(),
+                    fast.diagnostic_current_action_semantics().unwrap(),
+                );
+                let action = &decision.legal_actions[0];
+                let step = serde_json::json!({
+                    "request_type": "step",
+                    "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+                    "request_id": format!("step-{expected_step}"),
+                    "episode_id": 7,
+                    "expected_step": expected_step,
+                    "selected_index": 0,
+                    "selected_action_id": action.action_id,
+                });
+                reply = serde_json::from_str(&json.handle_line(&step.to_string())).unwrap();
+                fast.step(7, expected_step, 0).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn public_shroud_reset_uses_the_declared_starting_player() {
         use crate::rl::PlayerSeatV1;
 

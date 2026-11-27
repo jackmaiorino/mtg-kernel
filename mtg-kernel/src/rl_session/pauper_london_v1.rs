@@ -236,17 +236,57 @@ impl FastActorSessionV1 {
         windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
         deck_format: Option<crate::sideboard::DeckFormatV1>,
     ) -> Result<Self, RlSessionError> {
-        let (deck_hashes, mut state) = build_session_deck_pair_state_from_explicit_decks(
-            &mainboards,
-            pair_environment_seed,
-            Some(starting_player),
-            deck_format,
-        )?;
+        use crate::priority_action_windows_v1::SeatPriorityWindowsV1::EngineWindowsV1;
+        let engine_windows = windows.contains(&EngineWindowsV1);
+        let (deck_hashes, mut state, surface) = if engine_windows {
+            if windows != [EngineWindowsV1; 2]
+                || deck_format != Some(crate::sideboard::DeckFormatV1::Limited40V1)
+                || !matches!(starting_player, PlayerId::P0 | PlayerId::P1)
+            {
+                return Err(session_error(
+                    RlSessionErrorCode::UnsupportedDeck,
+                    "engine-windows-v1 requires both seats, limited40-v1 and a valid starter",
+                ));
+            }
+            let mut decks = resolve_explicit_decks(&mainboards, deck_format)?;
+            // The JSON Limited reset addresses the same sorted deck with the
+            // legacy deal stream. Keep the default trainer's environment-v2
+            // stream on its existing branch.
+            decks.iter_mut().for_each(|deck| deck.sort_unstable());
+            let mut state = crate::rl::build_deck_pair_state_with_starting_player_v1(
+                pair_environment_seed,
+                &decks[0],
+                &decks[1],
+                starting_player,
+            )
+            .map_err(|error| {
+                session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+            })?;
+            crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
+                .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+            crate::rl::enable_public_shroud_v1(&mut state);
+            (
+                decks.each_ref().map(|deck| explicit_deck_hash_v1(deck)),
+                state,
+                PolicySurfaceV5::new_with_priority_mode_v1(
+                    crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                    SuppressionAuditMode::Off,
+                ),
+            )
+        } else {
+            let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
+                &mainboards,
+                pair_environment_seed,
+                Some(starting_player),
+                deck_format,
+            )?;
+            let mut surface = PolicySurfaceV5::new_for_session();
+            surface
+                .set_action_window_seats_v1(windows)
+                .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+            (deck_hashes, state, surface)
+        };
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
-            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        let mut surface = PolicySurfaceV5::new_for_session();
-        surface
-            .set_action_window_seats_v1(windows)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         let mut session = FastActorSessionV1 {
             deck_ids,
