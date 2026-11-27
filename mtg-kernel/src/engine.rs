@@ -12635,28 +12635,51 @@ fn selected_spell_target_spec(
     }
 }
 
-fn kicker_targets_complete(
+fn kicker_form_status(
+    state: &GameState,
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    form: u8,
+    kicked: bool,
+    x: u16,
+) -> (bool, bool) {
+    let mut selected = pending.clone();
+    selected.mode_chosen = Some(form);
+    let method = finalized_cast_method(&selected, selected.source_contract.cast_method, def);
+    let payable = pending_cast_quote_v1(def, &selected, method, kicked, x, state).is_some();
+    let targets_ok = selected_spell_target_spec(def, form, kicked).is_some_and(|spec| {
+        target_prefix_can_complete_for_controller_and_source(
+            spec,
+            &pending.targets_chosen,
+            pending.controller,
+            targeting_source_for_pending_cast(state, &selected),
+            state,
+        )
+    });
+    (payable, targets_ok)
+}
+
+fn viable_kicker_forms(
     state: &GameState,
     def: &card_def::CardDef,
     pending: &PendingCast,
     kicked: bool,
-) -> bool {
-    let source = targeting_source_for_pending_cast(state, pending);
-    let can_complete_form = |form: u8| {
-        selected_spell_target_spec(def, form, kicked).is_some_and(|spec| {
-            target_prefix_can_complete_for_controller_and_source(
-                spec,
-                &pending.targets_chosen,
-                pending.controller,
-                source,
-                state,
-            )
-        })
+) -> Vec<u8> {
+    let x = pending
+        .selected_x_v59()
+        .unwrap_or_else(|| kicker_min_x(def, kicked));
+    let mut forms = Vec::new();
+    let range = match pending.mode_chosen {
+        Some(form) => form..=form,
+        None => 0..=printed_spell_form_count(def).saturating_sub(1),
     };
-    match pending.mode_chosen {
-        Some(form) => can_complete_form(form),
-        None => (0..printed_spell_form_count(def)).any(can_complete_form),
+    for form in range {
+        let (payable, targets_ok) = kicker_form_status(state, def, pending, form, kicked, x);
+        if payable && targets_ok {
+            forms.push(form);
+        }
     }
+    forms
 }
 
 fn spell_types_have_instant(types: &[CardType]) -> bool {
@@ -12817,28 +12840,7 @@ fn viable_pending_spell_forms(
             .collect();
     }
     if def.kicked_target_spec.is_some() && pending.kicked.is_some() {
-        let kicked = pending.kicked == Some(true);
-        let x = pending
-            .selected_x_v59()
-            .unwrap_or_else(|| kicker_min_x(def, kicked));
-        let source = targeting_source_for_pending_cast(state, pending);
-        return (0..printed_spell_form_count(def))
-            .filter(|&form| {
-                let mut selected = pending.clone();
-                selected.mode_chosen = Some(form);
-                let method =
-                    finalized_cast_method(&selected, selected.source_contract.cast_method, def);
-                selected_spell_target_spec(def, form, kicked).is_some_and(|spec| {
-                    target_prefix_can_complete_for_controller_and_source(
-                        spec,
-                        &pending.targets_chosen,
-                        pending.controller,
-                        source,
-                        state,
-                    )
-                }) && pending_cast_quote_v1(def, &selected, method, kicked, x, state).is_some()
-            })
-            .collect();
+        return viable_kicker_forms(state, def, pending, pending.kicked == Some(true));
     }
     let free = resolution_cast_v1::free_cast(state, pending.spell);
     let escaped_form = escape_restricted_to_first_form(state, pending, def);
@@ -13185,20 +13187,27 @@ fn validate_kicker_branch(
     pending: &PendingCast,
     kicked: bool,
 ) -> Result<(), &'static str> {
-    let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
-    if pending_cast_quote_v1(
-        def,
-        pending,
-        method,
-        kicked,
-        kicker_min_x(def, kicked),
-        state,
-    )
-    .is_none()
-    {
+    let x = pending
+        .selected_x_v59()
+        .unwrap_or_else(|| kicker_min_x(def, kicked));
+    let range = match pending.mode_chosen {
+        Some(form) => form..=form,
+        None => 0..=printed_spell_form_count(def).saturating_sub(1),
+    };
+    let mut any_payable = false;
+    let mut any_viable = false;
+    for form in range {
+        let (payable, targets_ok) = kicker_form_status(state, def, pending, form, kicked, x);
+        any_payable |= payable;
+        if payable && targets_ok {
+            any_viable = true;
+            break;
+        }
+    }
+    if !any_payable {
         return Err("the kicker choice is no longer payable");
     }
-    if !kicker_targets_complete(state, def, pending, kicked) {
+    if !any_viable {
         return Err("chosen kicker option has no legal target completion");
     }
     if def.target_spec == TargetSpec::KickerControlledCreatures
@@ -42146,8 +42155,8 @@ mod tests {
             vec![0]
         );
 
-        // Multi-form completion accepts any completable form when mode_chosen is None
-        // (Abrade mode 0 targets a Creature; mode 1 targets an Artifact).
+        // Multi-form validation requires the SAME form to satisfy both payment
+        // and targeting (Abrade mode 0 targets a Creature; mode 1 targets an Artifact).
         let mut modal = ready_game_in_main1(2);
         let abrade = put_in_hand(&mut modal, PlayerId::P0, "Abrade");
         let _artifact = put_on_battlefield(&mut modal, PlayerId::P1, "Experimental Synthesizer");
@@ -42155,26 +42164,20 @@ mod tests {
         let mut modal_pending = modal.engine.pending_cast.clone().unwrap();
         let abrade_def = &card_def::CARD_DEFS[modal.objects.get(abrade).card_def as usize];
         assert_eq!(modal_pending.mode_chosen, None);
-        assert!(kicker_targets_complete(
-            &modal,
-            abrade_def,
-            &modal_pending,
-            false
-        ));
+        assert!(validate_kicker_branch(&modal, abrade_def, &modal_pending, false).is_ok());
+        assert_eq!(
+            viable_kicker_forms(&modal, abrade_def, &modal_pending, false),
+            vec![1]
+        );
         modal_pending.mode_chosen = Some(0);
-        assert!(!kicker_targets_complete(
-            &modal,
-            abrade_def,
-            &modal_pending,
-            false
-        ));
+        assert!(validate_kicker_branch(&modal, abrade_def, &modal_pending, false).is_err());
+        assert!(viable_kicker_forms(&modal, abrade_def, &modal_pending, false).is_empty());
         modal_pending.mode_chosen = Some(1);
-        assert!(kicker_targets_complete(
-            &modal,
-            abrade_def,
-            &modal_pending,
-            false
-        ));
+        assert!(validate_kicker_branch(&modal, abrade_def, &modal_pending, false).is_ok());
+        assert_eq!(
+            viable_kicker_forms(&modal, abrade_def, &modal_pending, false),
+            vec![1]
+        );
     }
 
     #[test]
