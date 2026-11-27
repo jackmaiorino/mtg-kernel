@@ -1698,7 +1698,7 @@ fn drive_game_typed(
                 return typed_terminal_end(terminal, setup.seats);
             }
         };
-        tally.record_stack_len(decision.observation.projection.stack.len());
+        tally.record_stack_len(decision.observation.projection.surface.stack.len());
         tally.last_step = Some(decision.step);
         tally.last_physical_decision_id = Some(decision.physical_decision_id);
         let actions = &decision.legal_actions;
