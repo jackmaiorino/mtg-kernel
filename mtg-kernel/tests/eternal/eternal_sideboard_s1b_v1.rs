@@ -5035,6 +5035,511 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
         act(&mut restored, Action::Pass);
     }
 
+    // Positive control D1g (R8 Finding 3, Stifled Liliana +1): activating
+    // Liliana of the Veil +1 and countering it with Stifle must NOT consume
+    // a resolved effect-discard slot, so a subsequent genuine Putrid Imp land
+    // discard plus genuine Reanimate Mox Diamond land discard restores cleanly.
+    {
+        let mut lili_stifled = islands();
+        lili_stifled.active_player = P0;
+        lili_stifled.priority_player = P0;
+        let mox = put(&mut lili_stifled, P0, "Mox Diamond", Zone::Battlefield);
+        settle_first(&mut lili_stifled);
+        let imp = put(&mut lili_stifled, P0, "Putrid Imp", Zone::Battlefield);
+        let liliana = put(&mut lili_stifled, P0, "Liliana of the Veil", Zone::Hand);
+        pool(&mut lili_stifled, P0, &[ManaColor::B, ManaColor::B], 1);
+        cast(&mut lili_stifled, liliana, &[]);
+        settled(&mut lili_stifled);
+        assert_eq!(zone(&lili_stifled, liliana), Zone::Battlefield);
+        let stifle = put(&mut lili_stifled, P0, "Stifle", Zone::Hand);
+        let l1 = put(&mut lili_stifled, P0, "Island", Zone::Hand);
+        let l2 = put(&mut lili_stifled, P0, "Island", Zone::Hand);
+        let metamorph = put(
+            &mut lili_stifled,
+            P0,
+            "Phyrexian Metamorph",
+            Zone::Graveyard,
+        );
+        let reanimate = put(&mut lili_stifled, P0, "Reanimate", Zone::Hand);
+
+        activate(&mut lili_stifled, liliana, 0, &[]);
+        next(&mut lili_stifled);
+        let lili_item = lili_stifled
+            .stack
+            .iter()
+            .find(|item| item.source == liliana)
+            .expect("Liliana +1 on stack")
+            .v4
+            .stack_item_id;
+        pool(&mut lili_stifled, P0, &[ManaColor::U], 0);
+        cast(&mut lili_stifled, stifle, &[Target::StackItem(lili_item)]);
+        settled(&mut lili_stifled);
+        let lili_stifled_json = serde_json::to_value(&lili_stifled).unwrap();
+        assert!(lili_stifled_json["engine"]["event_history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|ev| {
+                ev.get("CopyEntryProvenanceV1")
+                    .and_then(|e| e.get("journal"))
+                    .and_then(|j| j.get("AbilityCountered"))
+                    .is_some_and(|c| {
+                        c["stack_item"] == serde_json::json!(lili_item)
+                            && c["kind"]["EffectDiscard"]["source"]["object"]
+                                == serde_json::json!(liliana)
+                            && c["kind"]["EffectDiscard"]["ability_index"] == serde_json::json!(0)
+                    })
+            }));
+
+        pool(&mut lili_stifled, P0, &[ManaColor::B], 0);
+        cast(&mut lili_stifled, reanimate, &[Target::Object(metamorph)]);
+        next(&mut lili_stifled);
+        activate(&mut lili_stifled, imp, 0, &[]);
+        run_until(
+            &mut lili_stifled,
+            |s| {
+                s.stack.len() == 1
+                    && s.engine.pending_discard.is_none()
+                    && zone(s, l1) == Zone::Graveyard
+            },
+            |_, decision| match decision {
+                Decision::Discard { .. } => Some(Action::Discard(vec![l1])),
+                _ => None,
+            },
+        );
+        assert!(matches!(
+            settle(&mut lili_stifled),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        act(
+            &mut lili_stifled,
+            Action::ChooseEffectTarget(Target::Object(mox)),
+        );
+        assert!(matches!(
+            next(&mut lili_stifled),
+            Decision::ChooseEffectOption { .. }
+        ));
+        act(&mut lili_stifled, Action::ChooseEffectOption(1));
+        settled(&mut lili_stifled);
+        assert_eq!(zone(&lili_stifled, l1), Zone::Graveyard);
+        assert_eq!(zone(&lili_stifled, l2), Zone::Graveyard);
+        assert_eq!(zone(&lili_stifled, metamorph), Zone::Battlefield);
+        assert_eq!(
+            lili_stifled.objects.get(metamorph).card_def,
+            id("Mox Diamond")
+        );
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&lili_stifled).unwrap()).unwrap();
+        act(&mut restored, Action::Pass);
+    }
+
+    // Forgery D1h (R8 Finding 2, departed Liliana +1): killing Liliana of the
+    // Veil with two Lightning Bolts after her +1 resolves must retain her
+    // resolved effect-discard uses in `departed_effect_discard_uses`, so
+    // clearing `resolution_effect_discards` still refuses a forged Mox Diamond
+    // copy backed only by Putrid Imp's land discard.
+    {
+        let mut lili_dead = islands();
+        lili_dead.active_player = P0;
+        lili_dead.priority_player = P0;
+        let mox = put(&mut lili_dead, P0, "Mox Diamond", Zone::Battlefield);
+        settle_first(&mut lili_dead);
+        let stone = put(&mut lili_dead, P0, "Mind Stone", Zone::Battlefield);
+        let imp = put(&mut lili_dead, P0, "Putrid Imp", Zone::Battlefield);
+        let liliana = put(&mut lili_dead, P0, "Liliana of the Veil", Zone::Hand);
+        pool(&mut lili_dead, P0, &[ManaColor::B, ManaColor::B], 1);
+        cast(&mut lili_dead, liliana, &[]);
+        settled(&mut lili_dead);
+        assert_eq!(zone(&lili_dead, liliana), Zone::Battlefield);
+        let junk = put(&mut lili_dead, P0, "Mind Stone", Zone::Hand);
+        let p1_junk = put(&mut lili_dead, P1, "Mind Stone", Zone::Hand);
+        let l1 = put(&mut lili_dead, P0, "Island", Zone::Hand);
+        let bolt1 = put(&mut lili_dead, P0, "Lightning Bolt", Zone::Hand);
+        let bolt2 = put(&mut lili_dead, P0, "Lightning Bolt", Zone::Hand);
+        let metamorph = put(&mut lili_dead, P0, "Phyrexian Metamorph", Zone::Graveyard);
+        let reanimate = put(&mut lili_dead, P0, "Reanimate", Zone::Hand);
+
+        activate(&mut lili_dead, liliana, 0, &[]);
+        run_until(
+            &mut lili_dead,
+            |s| {
+                s.stack.is_empty()
+                    && s.engine.pending_discard.is_none()
+                    && zone(s, junk) == Zone::Graveyard
+                    && zone(s, p1_junk) == Zone::Graveyard
+            },
+            |_, decision| match decision {
+                Decision::Discard { player, .. } => Some(Action::Discard(vec![if *player == P0 {
+                    junk
+                } else {
+                    p1_junk
+                }])),
+                _ => None,
+            },
+        );
+        pool(&mut lili_dead, P0, &[ManaColor::R, ManaColor::R], 0);
+        cast(&mut lili_dead, bolt1, &[Target::Object(liliana)]);
+        settled(&mut lili_dead);
+        cast(&mut lili_dead, bolt2, &[Target::Object(liliana)]);
+        settled(&mut lili_dead);
+        assert_eq!(zone(&lili_dead, liliana), Zone::Graveyard);
+
+        let l1_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&lili_dead, l1);
+        pool(&mut lili_dead, P0, &[ManaColor::B], 0);
+        cast(&mut lili_dead, reanimate, &[Target::Object(metamorph)]);
+        next(&mut lili_dead);
+        activate(&mut lili_dead, imp, 0, &[]);
+        run_until(
+            &mut lili_dead,
+            |s| {
+                s.stack.len() == 1
+                    && s.engine.pending_discard.is_none()
+                    && zone(s, l1) == Zone::Graveyard
+            },
+            |_, decision| match decision {
+                Decision::Discard { .. } => Some(Action::Discard(vec![l1])),
+                _ => None,
+            },
+        );
+        let imp_discard = lili_dead
+            .engine
+            .event_history
+            .iter()
+            .rposition(|ev| {
+                matches!(
+                    ev,
+                    mtg_kernel::event::CommittedEvent::ZoneChange {
+                        object,
+                        from: Zone::Hand,
+                        to: Zone::Graveyard,
+                        ..
+                    } if *object == l1
+                )
+            })
+            .unwrap();
+
+        assert!(matches!(
+            settle(&mut lili_dead),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        act(
+            &mut lili_dead,
+            Action::ChooseEffectTarget(Target::Object(stone)),
+        );
+        settled(&mut lili_dead);
+        assert_eq!(zone(&lili_dead, metamorph), Zone::Battlefield);
+
+        let mox_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&lili_dead, mox);
+        let mox_id = id("Mox Diamond");
+        let stone_id = id("Mind Stone");
+        lili_dead.objects.get_mut(metamorph).card_def = mox_id;
+        lili_dead.objects.get_mut(metamorph).name = "Mox Diamond".to_string();
+        let mut forged = serde_json::to_value(&lili_dead).unwrap();
+        if let Some(defs) = forged["standard_v1"]["copied_card_defs"].as_array_mut() {
+            for row in defs.iter_mut() {
+                if row[0] == serde_json::json!(metamorph) && row[2] == serde_json::json!(stone_id) {
+                    row[2] = serde_json::json!(mox_id);
+                }
+            }
+        }
+        let history = forged["engine"]["event_history"].as_array_mut().unwrap();
+        for ev in history.iter_mut() {
+            if let Some(journal) = ev
+                .get_mut("MeddlingMageEntryV1")
+                .and_then(|e| e.get_mut("journal"))
+            {
+                if let Some(prep) = journal.get_mut("NoncastCopyPrepared") {
+                    prep["copy"]["copied"] = serde_json::to_value(mox_contract).unwrap();
+                    prep["copy"]["entry_answer"] = serde_json::json!({"Discard": l1_contract});
+                    prep["copy"]["discarded_at"] = serde_json::json!(imp_discard);
+                }
+                if let Some(copied) = journal.get_mut("MetamorphCopied") {
+                    copied["entrant"]["card_def"] = serde_json::json!(mox_id);
+                    copied["copy"]["copied"] = serde_json::to_value(mox_contract).unwrap();
+                    copied["copy"]["entry_answer"] = serde_json::json!({"Discard": l1_contract});
+                    copied["copy"]["discarded_at"] = serde_json::json!(imp_discard);
+                }
+            }
+        }
+        let prep_idx = history
+            .iter()
+            .position(|ev| {
+                ev.get("MeddlingMageEntryV1")
+                    .and_then(|e| e.get("journal"))
+                    .and_then(|j| j.get("NoncastCopyPrepared"))
+                    .is_some()
+            })
+            .unwrap();
+        let (stack_item, physical) = {
+            let copy =
+                &history[prep_idx]["MeddlingMageEntryV1"]["journal"]["NoncastCopyPrepared"]["copy"];
+            (copy["stack_item"].clone(), copy["physical"].clone())
+        };
+        history.insert(
+            prep_idx,
+            serde_json::json!({
+                "CopyEntryProvenanceV1": {
+                    "journal": {
+                        "CopyDiscardPaid": {
+                            "stack_item": stack_item,
+                            "physical": physical,
+                            "land": l1_contract,
+                            "discard_at": imp_discard,
+                        }
+                    }
+                }
+            }),
+        );
+        for ev in history.iter_mut() {
+            if let Some(journal) = ev
+                .get_mut("MeddlingMageEntryV1")
+                .and_then(|e| e.get_mut("journal"))
+            {
+                if let Some(prep) = journal.get_mut("NoncastCopyPrepared") {
+                    let old_p = prep["copy"]["prepared_at"].as_u64().unwrap();
+                    prep["copy"]["prepared_at"] = serde_json::json!(old_p + 1);
+                }
+                if let Some(copied) = journal.get_mut("MetamorphCopied") {
+                    let old_e = copied["entry_history_index"].as_u64().unwrap();
+                    copied["entry_history_index"] = serde_json::json!(old_e + 1);
+                    let old_p = copied["copy"]["prepared_at"].as_u64().unwrap();
+                    copied["copy"]["prepared_at"] = serde_json::json!(old_p + 1);
+                }
+            }
+        }
+        let mut forged_cleared = forged.clone();
+        forged_cleared["eternal_v1"]["s1b"]["resolution_effect_discards"] = serde_json::json!([]);
+        assert_copy_restore_refused(forged, Action::Pass);
+        assert_copy_restore_refused(forged_cleared, Action::Pass);
+    }
+
+    // Forgery D1i (R8 Finding 2, opponent's half of `EachPlayerDiscards` via
+    // Aether Vial): P0 activates Liliana of the Veil +1 (both players discard),
+    // then opponent P1 uses Putrid Imp + Aether Vial Metamorph forgery with
+    // `resolution_effect_discards` cleared. Must be refused because
+    // `EachPlayerDiscards` accounts for every affected player, not only
+    // Liliana's controller.
+    {
+        let mut lili_opp = vial_metamorph_opening(P1, "Phyrexian Metamorph");
+        for player in [P1, P0] {
+            assert!(matches!(
+                next(&mut lili_opp),
+                Decision::ChooseLondonMulligan { player: chooser, .. } if chooser == player
+            ));
+            act(
+                &mut lili_opp,
+                Action::ChooseLondonMulligan { mulligan: false },
+            );
+        }
+        for player in [P1, P0] {
+            assert!(matches!(
+                next(&mut lili_opp),
+                Decision::ChooseEternalOpeningV1 { player: chooser, .. } if chooser == player
+            ));
+            act(&mut lili_opp, Action::FinishEffectSelection);
+        }
+        let p1_hand = |state: &GameState, name| {
+            state.players[P1.index()]
+                .hand
+                .iter()
+                .copied()
+                .find(|&o| state.objects.get(o).card_def == id(name))
+                .unwrap()
+        };
+        let vial = p1_hand(&lili_opp, "Aether Vial");
+        let metamorph = p1_hand(&lili_opp, "Phyrexian Metamorph");
+        pass_until(&mut lili_opp, |s| {
+            s.active_player == P1 && s.step == Step::Main1
+        });
+        pool(&mut lili_opp, P1, &[], 1);
+        cast(&mut lili_opp, vial, &[]);
+        settled(&mut lili_opp);
+        lili_opp.objects.get_mut(vial).counters.charge = 4;
+        pass_until(&mut lili_opp, |s| {
+            s.active_player == P0 && s.step == Step::Main1
+        });
+        let mox = put(&mut lili_opp, P1, "Mox Diamond", Zone::Battlefield);
+        let stone = put(&mut lili_opp, P1, "Mind Stone", Zone::Battlefield);
+        let imp = put(&mut lili_opp, P1, "Putrid Imp", Zone::Battlefield);
+        let liliana = put(&mut lili_opp, P0, "Liliana of the Veil", Zone::Hand);
+        pool(&mut lili_opp, P0, &[ManaColor::B, ManaColor::B], 1);
+        cast(&mut lili_opp, liliana, &[]);
+        settled(&mut lili_opp);
+        assert_eq!(zone(&lili_opp, liliana), Zone::Battlefield);
+        let p0_junk = put(&mut lili_opp, P0, "Mind Stone", Zone::Hand);
+        let p1_junk = put(&mut lili_opp, P1, "Mind Stone", Zone::Hand);
+        let p1_land = put(&mut lili_opp, P1, "Island", Zone::Hand);
+
+        activate(&mut lili_opp, liliana, 0, &[]);
+        run_until(
+            &mut lili_opp,
+            |s| {
+                s.stack.is_empty()
+                    && s.engine.pending_discard.is_none()
+                    && zone(s, p0_junk) == Zone::Graveyard
+                    && zone(s, p1_junk) == Zone::Graveyard
+            },
+            |_, decision| match decision {
+                Decision::Discard { player, .. } => Some(Action::Discard(vec![if *player == P0 {
+                    p0_junk
+                } else {
+                    p1_junk
+                }])),
+                _ => None,
+            },
+        );
+        // Pass P0 priority so P1 can activate Aether Vial and Putrid Imp.
+        next(&mut lili_opp);
+        act(&mut lili_opp, Action::Pass);
+        assert!(matches!(
+            next(&mut lili_opp),
+            Decision::CastSpellOrPass { player: P1, .. }
+        ));
+
+        let p1_land_contract =
+            mtg_kernel::state::AbilitySourceContractV4::capture(&lili_opp, p1_land);
+        activate(&mut lili_opp, vial, 0, &[]);
+        next(&mut lili_opp);
+        activate(&mut lili_opp, imp, 0, &[]);
+        run_until(
+            &mut lili_opp,
+            |s| {
+                s.stack.len() == 1
+                    && s.engine.pending_discard.is_none()
+                    && zone(s, p1_land) == Zone::Graveyard
+            },
+            |_, decision| match decision {
+                Decision::Discard { .. } => Some(Action::Discard(vec![p1_land])),
+                _ => None,
+            },
+        );
+        let imp_discard = lili_opp
+            .engine
+            .event_history
+            .iter()
+            .rposition(|ev| {
+                matches!(
+                    ev,
+                    mtg_kernel::event::CommittedEvent::ZoneChange {
+                        object,
+                        from: Zone::Hand,
+                        to: Zone::Graveyard,
+                        ..
+                    } if *object == p1_land
+                )
+            })
+            .unwrap();
+
+        assert!(matches!(
+            settle(&mut lili_opp),
+            Some(Decision::ChooseEffectTargets { player: P1, .. })
+        ));
+        act(
+            &mut lili_opp,
+            Action::ChooseEffectTarget(Target::Object(metamorph)),
+        );
+        assert!(matches!(
+            next(&mut lili_opp),
+            Decision::ChooseEffectTargets { player: P1, .. }
+        ));
+        act(
+            &mut lili_opp,
+            Action::ChooseEffectTarget(Target::Object(stone)),
+        );
+        settled(&mut lili_opp);
+        assert_eq!(zone(&lili_opp, metamorph), Zone::Battlefield);
+        {
+            let mut ok_restored: GameState =
+                serde_json::from_value(serde_json::to_value(&lili_opp).unwrap()).unwrap();
+            act(&mut ok_restored, Action::Pass);
+        }
+
+        let mox_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&lili_opp, mox);
+        let mox_id = id("Mox Diamond");
+        let stone_id = id("Mind Stone");
+        lili_opp.objects.get_mut(metamorph).card_def = mox_id;
+        lili_opp.objects.get_mut(metamorph).name = "Mox Diamond".to_string();
+        let mut forged = serde_json::to_value(&lili_opp).unwrap();
+        if let Some(defs) = forged["standard_v1"]["copied_card_defs"].as_array_mut() {
+            for row in defs.iter_mut() {
+                if row[0] == serde_json::json!(metamorph) && row[2] == serde_json::json!(stone_id) {
+                    row[2] = serde_json::json!(mox_id);
+                }
+            }
+        }
+        let history = forged["engine"]["event_history"].as_array_mut().unwrap();
+        for ev in history.iter_mut() {
+            if let Some(journal) = ev
+                .get_mut("MeddlingMageEntryV1")
+                .and_then(|e| e.get_mut("journal"))
+            {
+                if let Some(prep) = journal.get_mut("NoncastCopyPrepared") {
+                    prep["copy"]["copied"] = serde_json::to_value(mox_contract).unwrap();
+                    prep["copy"]["entry_answer"] = serde_json::json!({"Discard": p1_land_contract});
+                    prep["copy"]["discarded_at"] = serde_json::json!(imp_discard);
+                }
+                if let Some(copied) = journal.get_mut("MetamorphCopied") {
+                    copied["entrant"]["card_def"] = serde_json::json!(mox_id);
+                    copied["copy"]["copied"] = serde_json::to_value(mox_contract).unwrap();
+                    copied["copy"]["entry_answer"] =
+                        serde_json::json!({"Discard": p1_land_contract});
+                    copied["copy"]["discarded_at"] = serde_json::json!(imp_discard);
+                }
+            }
+        }
+        let prep_idx = history
+            .iter()
+            .position(|ev| {
+                ev.get("MeddlingMageEntryV1")
+                    .and_then(|e| e.get("journal"))
+                    .and_then(|j| j.get("NoncastCopyPrepared"))
+                    .is_some()
+            })
+            .unwrap();
+        let (stack_item, physical) = {
+            let copy =
+                &history[prep_idx]["MeddlingMageEntryV1"]["journal"]["NoncastCopyPrepared"]["copy"];
+            (copy["stack_item"].clone(), copy["physical"].clone())
+        };
+        history.insert(
+            prep_idx,
+            serde_json::json!({
+                "CopyEntryProvenanceV1": {
+                    "journal": {
+                        "CopyDiscardPaid": {
+                            "stack_item": stack_item,
+                            "physical": physical,
+                            "land": p1_land_contract,
+                            "discard_at": imp_discard,
+                        }
+                    }
+                }
+            }),
+        );
+        for ev in history.iter_mut() {
+            if let Some(journal) = ev
+                .get_mut("MeddlingMageEntryV1")
+                .and_then(|e| e.get_mut("journal"))
+            {
+                if let Some(prep) = journal.get_mut("NoncastCopyPrepared") {
+                    let old_p = prep["copy"]["prepared_at"].as_u64().unwrap();
+                    prep["copy"]["prepared_at"] = serde_json::json!(old_p + 1);
+                }
+                if let Some(copied) = journal.get_mut("MetamorphCopied") {
+                    let old_e = copied["entry_history_index"].as_u64().unwrap();
+                    copied["entry_history_index"] = serde_json::json!(old_e + 1);
+                    let old_p = copied["copy"]["prepared_at"].as_u64().unwrap();
+                    copied["copy"]["prepared_at"] = serde_json::json!(old_p + 1);
+                }
+            }
+        }
+        let mut forged_cleared = forged.clone();
+        forged_cleared["eternal_v1"]["s1b"]["resolution_effect_discards"] = serde_json::json!([]);
+        assert_copy_restore_refused(forged, Action::Pass);
+        assert_copy_restore_refused(forged_cleared, Action::Pass);
+    }
+
     // Forgery D2 (Test isolation): inserting a non-blacklisted event (LifeGain,
     // which r2's event blacklist allowed) between a genuine Mox Diamond land
     // discard and its CopyDiscardPaid receipt isolates r3's companion-only
@@ -7300,6 +7805,29 @@ fn noncast_metamorph_completed_snapshot_refuses_coherent_forgery() {
                 "omitting producer on SpringheartLandfall must fail deserialization"
             );
             assert_copy_restore_refused(mutated_producer, Action::Pass);
+            // R8 Finding 1: substituting `kind` on the Springheart
+            // `AbilityCountered` receipt with any unauthenticated unit variant
+            // (`AbsorbingMan`, `SaheeliCopy`, `VaultbornDeathCopy`) must also
+            // be refused rather than bypassing Springheart conservation.
+            for sub_kind in ["AbsorbingMan", "SaheeliCopy", "VaultbornDeathCopy"] {
+                let mut forged_sub = forged.clone();
+                let mut replaced = false;
+                for ev in forged_sub["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                {
+                    if let Some(countered) = ev
+                        .get_mut("CopyEntryProvenanceV1")
+                        .and_then(|e| e.get_mut("journal"))
+                        .and_then(|j| j.get_mut("AbilityCountered"))
+                    {
+                        countered["kind"] = serde_json::json!(sub_kind);
+                        replaced = true;
+                    }
+                }
+                assert!(replaced, "expected AbilityCountered receipt in 8g");
+                assert_copy_restore_refused(forged_sub, Action::Pass);
+            }
             assert_copy_restore_refused(forged, Action::Pass);
         }
     }

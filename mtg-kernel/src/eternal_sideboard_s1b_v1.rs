@@ -77,6 +77,12 @@ pub struct S1bStateV1 {
     /// `(player, event_history_index, object)`, cleared at Untap.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resolution_effect_discards: Vec<(PlayerId, usize, ObjectId)>,
+    /// Activated-ability mandatory effect-discard uses recorded on permanents
+    /// that left the battlefield during the current turn, storing
+    /// `(source_link, affected_player, ability_index, raw_uses)`, cleared at
+    /// Untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub departed_effect_discard_uses: Vec<(ObjectLinkV4, PlayerId, usize, u32)>,
 }
 
 impl Hash for S1bStateV1 {
@@ -101,6 +107,10 @@ impl Hash for S1bStateV1 {
             if !self.resolution_effect_discards.is_empty() {
                 b"resolution-effect-discards/v1".hash(state);
                 self.resolution_effect_discards.hash(state);
+            }
+            if !self.departed_effect_discard_uses.is_empty() {
+                b"departed-effect-discard-uses/v1".hash(state);
+                self.departed_effect_discard_uses.hash(state);
             }
         }
     }
@@ -140,6 +150,7 @@ pub(crate) fn begin_turn(state: &mut GameState, _player: PlayerId) {
         eternal.s1b.departed_discard_uses.clear();
         eternal.s1b.departed_animate_uses.clear();
         eternal.s1b.resolution_effect_discards.clear();
+        eternal.s1b.departed_effect_discard_uses.clear();
     }
 }
 

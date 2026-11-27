@@ -1225,6 +1225,7 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
                 crate::copy_entry_v1::ProvenanceV1::AbilityCountered { stack_item, kind } => {
                     if !crate::copy_entry_v1::validate_ability_countered_receipt(
                         state,
+                        index,
                         *stack_item,
                         kind,
                     ) {
@@ -1564,6 +1565,93 @@ pub(crate) fn note_departing_discard_uses(state: &mut GameState, id: ObjectId, f
     }
 }
 
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn note_departing_effect_discard_uses(
+    state: &mut GameState,
+    id: ObjectId,
+    from_zone: Zone,
+) {
+    use crate::state::AbilityKindV4;
+    if from_zone != Zone::Battlefield || state.step == crate::state::Step::Untap {
+        return;
+    }
+    let Some(live) = state.objects.try_get(id) else {
+        return;
+    };
+    if live.v4.ability_uses_this_turn.is_empty()
+        || crate::eternal_cube_c8b_v1::has_saheeli_copy(state, id)
+        || crate::standard_cards_v1::active_aegis_copy(state, id)
+        || crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+        || crate::eternal_legacy_e7a_v1::active_copy(state, id)
+    {
+        return;
+    }
+    let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
+        return;
+    };
+    let source_controller = live.controller;
+    let link = ObjectLinkV4 {
+        object: id,
+        zone_change_count: live.zone_change_count,
+    };
+    let history = &state.engine.event_history;
+    let turn_start = history
+        .iter()
+        .rposition(|ev| matches!(ev, CommittedEvent::UpkeepBegan { .. }))
+        .map_or(0, |idx| idx + 1);
+    let turn_slice = &history[turn_start..];
+    let stolen_this_turn = turn_slice.iter().any(|ev| {
+        matches!(
+            ev,
+            CommittedEvent::TemporaryControlInstalledV1 { installation }
+                if matches!(
+                    installation.target,
+                    crate::state::StackTargetContractV4::Object { object, .. }
+                        if object == id
+                )
+        )
+    });
+    let mut to_record = Vec::new();
+    for entry in &live.v4.ability_uses_this_turn {
+        if entry.ability_kind != AbilityKindV4::Activated || entry.uses == 0 {
+            continue;
+        }
+        let ability_index = usize::from(entry.ability_index);
+        let Some(ability) = def.activated_abilities.get(ability_index) else {
+            continue;
+        };
+        if ability.activation_zone != Zone::Battlefield {
+            continue;
+        }
+        let effect = (ability.effect)();
+        let countered = countered_effect_discard_uses(turn_slice, link, ability_index);
+        if usize::from(entry.uses) <= countered {
+            continue;
+        }
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let per_use = if stolen_this_turn {
+                mandatory_each_player_discards(&effect)
+            } else {
+                mandatory_effect_discards_for(&effect, source_controller, player)
+            };
+            if per_use > 0 {
+                to_record.push((link, player, ability_index, u32::from(entry.uses)));
+            }
+        }
+    }
+    if !to_record.is_empty() {
+        let list = &mut s1b_state(state).departed_effect_discard_uses;
+        for record in to_record {
+            if !list
+                .iter()
+                .any(|&(l, p, idx, _)| l == record.0 && p == record.1 && idx == record.2)
+            {
+                list.push(record);
+            }
+        }
+    }
+}
+
 pub(crate) fn animate_ability_uses_for_object(
     live: &crate::state::GameObject,
     card_def: u16,
@@ -1781,7 +1869,11 @@ fn is_controller_hand_discard(ev: &CommittedEvent, controller: PlayerId) -> bool
     )
 }
 
-fn mandatory_controller_effect_discards(op: &crate::effect::EffectOp) -> usize {
+pub(crate) fn mandatory_effect_discards_for(
+    op: &crate::effect::EffectOp,
+    source_controller: PlayerId,
+    target_player: PlayerId,
+) -> usize {
     use crate::effect::{EffectOp, PlayerRef};
     use crate::standard_cards_v1::StandardOpV1;
     match op {
@@ -1789,16 +1881,130 @@ fn mandatory_controller_effect_discards(op: &crate::effect::EffectOp) -> usize {
         EffectOp::DiscardCards {
             player: PlayerRef::Controller,
             count,
-        } => *count as usize,
+        } if source_controller == target_player => *count as usize,
         EffectOp::DiscardBasicLandOrCards {
             player: PlayerRef::Controller,
             otherwise,
-        } => (*otherwise as usize).min(1),
+        } if source_controller == target_player => (*otherwise as usize).min(1),
         EffectOp::Sequence(ops) => ops.iter().fold(0usize, |acc, step| {
-            acc.saturating_add(mandatory_controller_effect_discards(step))
+            acc.saturating_add(mandatory_effect_discards_for(
+                step,
+                source_controller,
+                target_player,
+            ))
         }),
         _ => 0,
     }
+}
+
+fn mandatory_each_player_discards(op: &crate::effect::EffectOp) -> usize {
+    use crate::effect::EffectOp;
+    use crate::standard_cards_v1::StandardOpV1;
+    match op {
+        EffectOp::StandardV1(StandardOpV1::EachPlayerDiscards { count }) => *count as usize,
+        EffectOp::Sequence(ops) => ops.iter().fold(0usize, |acc, step| {
+            acc.saturating_add(mandatory_each_player_discards(step))
+        }),
+        _ => 0,
+    }
+}
+
+pub(crate) fn has_mandatory_effect_discard(op: &crate::effect::EffectOp) -> bool {
+    mandatory_effect_discards_for(op, PlayerId::P0, PlayerId::P0) > 0
+}
+
+fn countered_effect_discard_uses(
+    turn_slice: &[CommittedEvent],
+    source: ObjectLinkV4,
+    ability_index: usize,
+) -> usize {
+    let mut countered_items = HashSet::new();
+    for ev in turn_slice {
+        if let CommittedEvent::CopyEntryProvenanceV1 { journal } = ev {
+            if let crate::copy_entry_v1::ProvenanceV1::AbilityCountered {
+                stack_item,
+                kind:
+                    crate::copy_entry_v1::CounteredAbilityKindV1::EffectDiscard {
+                        source: src,
+                        ability_index: idx,
+                    },
+            } = journal.as_ref()
+            {
+                if *src == source && *idx == ability_index {
+                    countered_items.insert(*stack_item);
+                }
+            }
+        }
+    }
+    countered_items.len()
+}
+
+fn pending_effect_discard_stack_items(
+    state: &GameState,
+    source: ObjectLinkV4,
+    ability_index: usize,
+    effect: Option<&crate::effect::EffectOp>,
+) -> usize {
+    use crate::state::StackItemKind;
+    state
+        .stack
+        .iter()
+        .filter(|item| {
+            if item.kind != StackItemKind::ActivatedAbility || item.source != source.object {
+                return false;
+            }
+            let item_zcc = item
+                .v4
+                .ability_source_contract
+                .map(|c| c.zone_change_count)
+                .or_else(|| {
+                    state
+                        .objects
+                        .try_get(item.source)
+                        .map(|o| o.zone_change_count)
+                });
+            if item_zcc != Some(source.zone_change_count) {
+                return false;
+            }
+            match item.v4.activated_ability_index {
+                Some(idx) => usize::from(idx) == ability_index,
+                None => effect.is_some_and(|e| item.inline_effect.as_ref() == Some(e)),
+            }
+        })
+        .count()
+}
+
+fn departed_effect_discard_per_use(
+    state: &GameState,
+    link: ObjectLinkV4,
+    ability_index: usize,
+    player: PlayerId,
+) -> usize {
+    let from_def = |card_def: u16| -> Option<usize> {
+        let ability = CARD_DEFS
+            .get(usize::from(card_def))?
+            .activated_abilities
+            .get(ability_index)?;
+        if ability.activation_zone != Zone::Battlefield {
+            return None;
+        }
+        let count = mandatory_effect_discards_for(&(ability.effect)(), player, player);
+        (count > 0).then_some(count)
+    };
+    if let Some(live) = state.objects.try_get(link.object) {
+        if let Some(count) = from_def(live.card_def) {
+            return count;
+        }
+        if let Some(count) = crate::standard_cards_v1::find_had_card_def(
+            state,
+            link.object,
+            link.zone_change_count,
+            from_def,
+        ) {
+            return count;
+        }
+    }
+    1
 }
 
 fn activated_effect_discard_uses_for_object(
@@ -1808,9 +2014,8 @@ fn activated_effect_discard_uses_for_object(
     controller: PlayerId,
     turn_slice: &[CommittedEvent],
 ) -> usize {
-    use crate::state::{AbilityKindV4, StackItemKind};
+    use crate::state::AbilityKindV4;
     if live.zone != Zone::Battlefield
-        || live.controller != controller
         || live.v4.ability_uses_this_turn.is_empty()
         || crate::eternal_cube_c8b_v1::has_saheeli_copy(state, id)
         || crate::standard_cards_v1::active_aegis_copy(state, id)
@@ -1830,42 +2035,40 @@ fn activated_effect_discard_uses_for_object(
                 )
         )
     });
-    if stolen_this_turn {
-        return 0;
-    }
     let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
         return 0;
+    };
+    let link = ObjectLinkV4 {
+        object: id,
+        zone_change_count: live.zone_change_count,
     };
     let mut total: usize = 0;
     for entry in &live.v4.ability_uses_this_turn {
         if entry.ability_kind != AbilityKindV4::Activated || entry.uses == 0 {
             continue;
         }
-        let Some(ability) = def
-            .activated_abilities
-            .get(usize::from(entry.ability_index))
-        else {
+        let ability_index = usize::from(entry.ability_index);
+        let Some(ability) = def.activated_abilities.get(ability_index) else {
             continue;
         };
         if ability.activation_zone != Zone::Battlefield {
             continue;
         }
         let effect = (ability.effect)();
-        let per_use = mandatory_controller_effect_discards(&effect);
+        let per_use = if stolen_this_turn {
+            mandatory_each_player_discards(&effect)
+        } else {
+            mandatory_effect_discards_for(&effect, live.controller, controller)
+        };
         if per_use == 0 {
             continue;
         }
-        let pending_on_stack = state
-            .stack
-            .iter()
-            .filter(|item| {
-                item.kind == StackItemKind::ActivatedAbility
-                    && item.source == id
-                    && item.controller == controller
-                    && item.inline_effect.as_ref() == Some(&effect)
-            })
-            .count();
-        let resolved_uses = usize::from(entry.uses).saturating_sub(pending_on_stack);
+        let pending_on_stack =
+            pending_effect_discard_stack_items(state, link, ability_index, Some(&effect));
+        let countered = countered_effect_discard_uses(turn_slice, link, ability_index);
+        let resolved_uses = usize::from(entry.uses)
+            .saturating_sub(pending_on_stack)
+            .saturating_sub(countered);
         total = total.saturating_add(per_use.saturating_mul(resolved_uses));
     }
     total
@@ -1874,18 +2077,20 @@ fn activated_effect_discard_uses_for_object(
 /// Same-turn hand-discard conservation law: every activated ability with a
 /// fixed hand-discard cost (live or departed on the current turn, such as
 /// Putrid Imp), every spell-resolution / spell-cost discard (such as Faithless
-/// Looting or `ResolutionDiscardWaitsV1`), every live mandatory
-/// ability-resolution discard (such as Liliana of the Veil's +1), and every
-/// Mox Diamond `CopyDiscardPaid` receipt in the current turn consumes a
-/// distinct `Hand -> Graveyard | Exile | Library` move by that controller.
+/// Looting or `ResolutionDiscardWaitsV1`), every live or departed mandatory
+/// ability-resolution discard (such as Liliana of the Veil's +1, for every
+/// affected player), and every Mox Diamond `CopyDiscardPaid` receipt in the
+/// current turn consumes a distinct `Hand -> Graveyard | Exile | Library` move
+/// by that player.
 ///
 /// Threat-model boundary: snapshots are produced and stored by our own pinned
 /// code, so stateless restore validation guards against corruption and engine
 /// bugs, not an adversary. Direct edits of `S1bStateV1` departed-use counters
-/// (`departed_animate_uses`, `departed_discard_uses`) that produce a state
-/// byte-for-byte identical to a legal alternative game are out of scope for
-/// stateless restore validation; integrity of stored snapshots rests on the
-/// record hashes in manifests and receipts.
+/// (`departed_animate_uses`, `departed_discard_uses`,
+/// `departed_effect_discard_uses`) that produce a state byte-for-byte
+/// identical to a legal alternative game are out of scope for stateless
+/// restore validation; integrity of stored snapshots rests on the record
+/// hashes in manifests and receipts.
 ///
 /// Residual boundary: once Untap clears `ability_uses_this_turn` and Cleanup
 /// expires temporary boosts on a subsequent turn, an unauthenticated JSON
@@ -2137,9 +2342,16 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
         }
 
         let mut activated_discards: usize = 0;
-        let mut live_effect_discard_uses: usize = 0;
+        let mut resolved_effect_discard_uses: usize = 0;
         let mut counted_links = HashSet::new();
+        let mut live_battlefield_links = HashSet::new();
         for (id, live) in state.objects.iter() {
+            if live.zone == Zone::Battlefield {
+                live_battlefield_links.insert(ObjectLinkV4 {
+                    object: id,
+                    zone_change_count: live.zone_change_count,
+                });
+            }
             let uses = activated_discard_uses_for_object(state, id, live, controller, turn_slice);
             if uses > 0 {
                 counted_links.insert(ObjectLinkV4 {
@@ -2150,7 +2362,30 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
             }
             let effect_uses =
                 activated_effect_discard_uses_for_object(state, id, live, controller, turn_slice);
-            live_effect_discard_uses = live_effect_discard_uses.saturating_add(effect_uses);
+            resolved_effect_discard_uses = resolved_effect_discard_uses.saturating_add(effect_uses);
+        }
+        if let Some(s1b) = super::read_state(state) {
+            let mut counted_departed_effect_keys = HashSet::new();
+            for &(link, affected_player, ability_index, raw_uses) in
+                &s1b.departed_effect_discard_uses
+            {
+                if affected_player != controller
+                    || live_battlefield_links.contains(&link)
+                    || !counted_departed_effect_keys.insert((link, ability_index))
+                {
+                    continue;
+                }
+                let per_use =
+                    departed_effect_discard_per_use(state, link, ability_index, controller);
+                let pending_on_stack =
+                    pending_effect_discard_stack_items(state, link, ability_index, None);
+                let countered = countered_effect_discard_uses(turn_slice, link, ability_index);
+                let resolved_uses = (raw_uses as usize)
+                    .saturating_sub(pending_on_stack)
+                    .saturating_sub(countered);
+                resolved_effect_discard_uses = resolved_effect_discard_uses
+                    .saturating_add(per_use.saturating_mul(resolved_uses));
+            }
         }
         let pending_effect_discard = state
             .engine
@@ -2166,7 +2401,8 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
                     )
             })
             .map_or(0usize, |p| p.count as usize);
-        live_effect_discard_uses = live_effect_discard_uses.saturating_sub(pending_effect_discard);
+        resolved_effect_discard_uses =
+            resolved_effect_discard_uses.saturating_sub(pending_effect_discard);
         if let Some(s1b) = super::read_state(state) {
             for &(link, owner_ctrl, uses) in &s1b.departed_discard_uses {
                 if owner_ctrl == controller && counted_links.insert(link) {
@@ -2180,7 +2416,8 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
         let extra_resolution_discards = resolution_effect_discard_indices
             .difference(&spell_discard_indices)
             .count();
-        let effective_resolution_discards = extra_resolution_discards.max(live_effect_discard_uses);
+        let effective_resolution_discards =
+            extra_resolution_discards.max(resolved_effect_discard_uses);
         if non_spell_discards
             < effective_resolution_discards
                 .saturating_add(activated_discards)

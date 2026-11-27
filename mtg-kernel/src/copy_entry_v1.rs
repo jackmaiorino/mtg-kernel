@@ -69,8 +69,16 @@ pub enum CounteredAbilityKindV1 {
     AbsorbingMan,
     SaheeliCopy,
     VaultbornDeathCopy,
-    SpringheartLandfall { producer: AbilitySourceContractV4 },
-    LandAnimate { host: ObjectLinkV4 },
+    SpringheartLandfall {
+        producer: AbilitySourceContractV4,
+    },
+    LandAnimate {
+        host: ObjectLinkV4,
+    },
+    EffectDiscard {
+        source: ObjectLinkV4,
+        ability_index: usize,
+    },
 }
 
 /// History-only provenance receipts emitted exclusively in Eternal builds
@@ -319,6 +327,36 @@ pub(crate) fn record_ability_countered_if_relevant(
         Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C8cV1(
             C8cOpV1::AbsorbingManCopyV1,
         )))) => CounteredAbilityKindV1::AbsorbingMan,
+        Some(effect)
+            if item.kind == crate::state::StackItemKind::ActivatedAbility
+                && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::has_mandatory_effect_discard(
+                    effect,
+                ) =>
+        {
+            let Some(ability_index) = item.v4.activated_ability_index.map(usize::from) else {
+                return;
+            };
+            let Some(source) = item
+                .v4
+                .ability_source_contract
+                .map(|c| ObjectLinkV4 {
+                    object: c.source,
+                    zone_change_count: c.zone_change_count,
+                })
+                .or_else(|| {
+                    state.objects.try_get(item.source).map(|live| ObjectLinkV4 {
+                        object: item.source,
+                        zone_change_count: live.zone_change_count,
+                    })
+                })
+            else {
+                return;
+            };
+            CounteredAbilityKindV1::EffectDiscard {
+                source,
+                ability_index,
+            }
+        }
         _ => return,
     };
     push_provenance(
@@ -330,16 +368,89 @@ pub(crate) fn record_ability_countered_if_relevant(
     );
 }
 
+fn object_was_link_on_battlefield_prior_to(
+    state: &GameState,
+    link: ObjectLinkV4,
+    at: usize,
+) -> bool {
+    if zone_and_zcc_before(state, link.object, at)
+        == Some((crate::state::Zone::Battlefield, link.zone_change_count))
+    {
+        return true;
+    }
+    state.engine.event_history[..at]
+        .iter()
+        .enumerate()
+        .any(|(i, ev)| {
+            matches!(
+                ev,
+                event::CommittedEvent::ZoneChange {
+                    object,
+                    from: crate::state::Zone::Battlefield,
+                    ..
+                } if *object == link.object
+            ) && zone_and_zcc_before(state, link.object, i)
+                == Some((crate::state::Zone::Battlefield, link.zone_change_count))
+        })
+}
+
+fn any_object_named_on_battlefield_prior_to(state: &GameState, name: &str, at: usize) -> bool {
+    let Some(target_id) = card_id_by_name(name) else {
+        return false;
+    };
+    let matches_def = |id: ObjectId, live: &crate::state::GameObject, zcc: u32| -> bool {
+        live.card_def == target_id
+            || crate::standard_cards_v1::had_card_def(state, id, zcc, target_id)
+    };
+    if state.objects.iter().any(|(id, live)| {
+        matches!(
+            zone_and_zcc_before(state, id, at),
+            Some((crate::state::Zone::Battlefield, zcc)) if matches_def(id, live, zcc)
+        )
+    }) {
+        return true;
+    }
+    state.engine.event_history[..at]
+        .iter()
+        .enumerate()
+        .any(|(i, ev)| {
+            let event::CommittedEvent::ZoneChange {
+                object,
+                from: crate::state::Zone::Battlefield,
+                ..
+            } = ev
+            else {
+                return false;
+            };
+            let Some(live) = state.objects.try_get(*object) else {
+                return false;
+            };
+            matches!(
+                zone_and_zcc_before(state, *object, i),
+                Some((crate::state::Zone::Battlefield, zcc)) if matches_def(*object, live, zcc)
+            )
+        })
+}
+
 pub(crate) fn validate_ability_countered_receipt(
     state: &GameState,
+    at: usize,
     stack_item: crate::ids::StackItemId,
     kind: &CounteredAbilityKindV1,
 ) -> bool {
-    if stack_item.0 == 0 || stack_item.0 > state.engine.next_stack_item_id {
+    if at >= state.engine.event_history.len()
+        || !stack_item_in_bounds(state, stack_item)
+        || stack_item_collides_in_history(state, stack_item, at, true)
+    {
         return false;
     }
+    let history_before = &state.engine.event_history[..at];
     match kind {
         CounteredAbilityKindV1::SpringheartLandfall { producer } => {
+            let link = ObjectLinkV4 {
+                object: producer.source,
+                zone_change_count: producer.zone_change_count,
+            };
             card_id_by_name(crate::eternal_cube_c8b_v1::SPRINGHEART_NANTUKO)
                 == Some(producer.card_def)
                 && producer.zone == crate::state::Zone::Battlefield
@@ -354,14 +465,134 @@ pub(crate) fn validate_ability_countered_receipt(
                                 producer.card_def,
                             ))
                 })
+                && object_was_link_on_battlefield_prior_to(state, link, at)
         }
-        CounteredAbilityKindV1::LandAnimate { host } => state
-            .objects
-            .try_get(host.object)
-            .is_some_and(|live| live.zone_change_count >= host.zone_change_count),
-        CounteredAbilityKindV1::AbsorbingMan
-        | CounteredAbilityKindV1::SaheeliCopy
-        | CounteredAbilityKindV1::VaultbornDeathCopy => true,
+        CounteredAbilityKindV1::LandAnimate { host } => {
+            let has_animate = |card_def: u16| -> bool {
+                crate::card_def::CARD_DEFS
+                    .get(usize::from(card_def))
+                    .is_some_and(|def| {
+                        def.activated_abilities.iter().any(|a| {
+                            matches!(
+                                (a.effect)(),
+                                crate::effect::EffectOp::AnimateSource
+                                    | crate::effect::EffectOp::AnimateSourcePermanentlyV1
+                            )
+                        })
+                    })
+            };
+            let saheeli_saved = read_state(state)
+                .and_then(|c8b| c8b.saheeli_copies.iter().find(|c| c.host == *host))
+                .is_some_and(|c| has_animate(c.card_def));
+            state.objects.try_get(host.object).is_some_and(|live| {
+                live.zone_change_count >= host.zone_change_count
+                    && (has_animate(live.card_def)
+                        || saheeli_saved
+                        || crate::standard_cards_v1::had_card_def_matching(
+                            state,
+                            host.object,
+                            host.zone_change_count,
+                            has_animate,
+                        ))
+            }) && object_was_link_on_battlefield_prior_to(state, *host, at)
+        }
+        CounteredAbilityKindV1::AbsorbingMan => {
+            let targeted_count = history_before
+                .iter()
+                .filter(|ev| {
+                    matches!(
+                        ev,
+                        event::CommittedEvent::Targeted {
+                            targeting_stack_item,
+                            ..
+                        } if *targeting_stack_item == stack_item
+                    )
+                })
+                .count();
+            targeted_count >= 1
+                && any_object_named_on_battlefield_prior_to(
+                    state,
+                    crate::eternal_cube_c8c_v1::ABSORBING_MAN,
+                    at,
+                )
+        }
+        CounteredAbilityKindV1::SaheeliCopy => {
+            let targeted_count = history_before
+                .iter()
+                .filter(|ev| {
+                    matches!(
+                        ev,
+                        event::CommittedEvent::Targeted {
+                            targeting_stack_item,
+                            ..
+                        } if *targeting_stack_item == stack_item
+                    )
+                })
+                .count();
+            targeted_count >= 2
+                && any_object_named_on_battlefield_prior_to(
+                    state,
+                    crate::eternal_cube_c8b_v1::SAHEELI,
+                    at,
+                )
+        }
+        CounteredAbilityKindV1::VaultbornDeathCopy => {
+            let Some(vaultborn_id) = card_id_by_name(crate::eternal_cube_c8b_v1::VAULTBORN_TYRANT)
+            else {
+                return false;
+            };
+            history_before.iter().enumerate().any(|(i, ev)| {
+                let event::CommittedEvent::ZoneChange {
+                    object,
+                    from: crate::state::Zone::Battlefield,
+                    to: crate::state::Zone::Graveyard,
+                    ..
+                } = ev
+                else {
+                    return false;
+                };
+                let Some(live) = state.objects.try_get(*object) else {
+                    return false;
+                };
+                matches!(
+                    zone_and_zcc_before(state, *object, i),
+                    Some((crate::state::Zone::Battlefield, zcc))
+                        if live.card_def == vaultborn_id
+                            || crate::standard_cards_v1::had_card_def(
+                                state,
+                                *object,
+                                zcc,
+                                vaultborn_id,
+                            )
+                )
+            })
+        }
+        CounteredAbilityKindV1::EffectDiscard {
+            source,
+            ability_index,
+        } => {
+            let has_discard = |card_def: u16| -> bool {
+                crate::card_def::CARD_DEFS
+                    .get(usize::from(card_def))
+                    .and_then(|def| def.activated_abilities.get(*ability_index))
+                    .is_some_and(|ability| {
+                        ability.activation_zone == crate::state::Zone::Battlefield
+                            && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::has_mandatory_effect_discard(
+                                &(ability.effect)(),
+                            )
+                    })
+            };
+            state.objects.try_get(source.object).is_some_and(|live| {
+                live.zone_change_count >= source.zone_change_count
+                    && (has_discard(live.card_def)
+                        || crate::standard_cards_v1::had_card_def_matching(
+                            state,
+                            source.object,
+                            source.zone_change_count,
+                            has_discard,
+                        ))
+            }) && object_was_link_on_battlefield_prior_to(state, *source, at)
+        }
     }
 }
 
@@ -2856,7 +3087,8 @@ fn donor_type_granted_at_entry(
 /// Threat-model boundary: snapshots are produced and stored by our own pinned
 /// code, so stateless restore validation guards against corruption and engine
 /// bugs, not an adversary. Direct edits of `S1bStateV1` departed-use counters
-/// (`departed_animate_uses`, `departed_discard_uses`) that produce a state
+/// (`departed_animate_uses`, `departed_discard_uses`,
+/// `departed_effect_discard_uses`) that produce a state
 /// byte-for-byte identical to a legal alternative game are out of scope for
 /// stateless restore validation; integrity of stored snapshots rests on the
 /// record hashes in manifests and receipts.

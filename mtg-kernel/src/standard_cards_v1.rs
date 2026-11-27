@@ -5961,6 +5961,41 @@ pub(crate) fn had_card_def(
     })
 }
 
+/// Whether `object`'s battlefield incarnation `zone_change_count` was ever any
+/// `card_def` matching `predicate` through a copy effect.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn had_card_def_matching(
+    state: &GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+    mut predicate: impl FnMut(u16) -> bool,
+) -> bool {
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard
+            .copied_card_defs
+            .iter()
+            .any(|&(obj, zcc, def)| obj == object && zcc == zone_change_count && predicate(def))
+    })
+}
+
+/// First `card_def` recorded in `copied_card_defs` for `(object, zone_change_count)`
+/// where `f(card_def)` returns `Some(value)`.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn find_had_card_def<T>(
+    state: &GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+    mut f: impl FnMut(u16) -> Option<T>,
+) -> Option<T> {
+    state.standard_v1.as_ref().and_then(|standard| {
+        standard
+            .copied_card_defs
+            .iter()
+            .filter(|&&(obj, zcc, _)| obj == object && zcc == zone_change_count)
+            .find_map(|&(_, _, def)| f(def))
+    })
+}
+
 /// Ends the copy at `index`: a later copy of the same creature inherits the
 /// values it saved; otherwise the creature gets them back.
 fn end_aegis_copy(state: &mut GameState, index: usize) {
