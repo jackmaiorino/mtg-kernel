@@ -44,6 +44,17 @@ pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64
     removal_timestamp_with(state, host, true)
 }
 
+/// Whether `host` currently has a creature ability-removal effect other than
+/// Dress Down (Aura override, Standard creature removal, or Oko Elk).
+#[cfg_attr(not(feature = "standard-magezero-fixtures"), allow(dead_code))]
+pub(crate) fn has_non_dress_down_ability_removal(state: &GameState, host: ObjectId) -> bool {
+    creature_override(state, host)
+        .is_some_and(|(characteristics, _)| characteristics.loses_abilities)
+        || crate::standard_creatures_v1::removal_timestamp(state, host).is_some()
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_e5a_v1::statics::removal_timestamp(state, host).is_some())
+}
+
 /// The latest effect that also removes abilities other effects granted
 /// `host`, those with earlier timestamps (613.7). A land-type setter
 /// (Harbinger of the Seas, the moons) is left out: under 305.7 the land loses

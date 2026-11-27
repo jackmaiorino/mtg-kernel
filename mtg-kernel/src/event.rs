@@ -2328,6 +2328,16 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         path: Vec<u16>,
     },
+    /// Nominal additional life payment for this stack incarnation (CR 118.11).
+    CastLifeXPaidV1 {
+        spell: ObjectId,
+        stack_item: StackItemId,
+        player: PlayerId,
+        amount: u16,
+        loss: Option<(u64, i32)>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bloodletters: Vec<crate::state::ObjectLinkV4>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -165,8 +165,10 @@ pub(crate) fn copy_snapshot_legal_targets(
         .v4
         .source_contract
         .ok_or("copy snapshot source missing")?;
+    let spec = spell.v4.target_spec.ok_or("copy target spec missing")?;
+    let x_bounded = is_x_bounded_creature_slot(state, spell.source, spec, prefix.len());
     Ok(legal_targets_for_controller_from_source(
-        spell.v4.target_spec.ok_or("copy target spec missing")?,
+        spec,
         prefix,
         controller,
         Some(TargetingSource {
@@ -183,7 +185,16 @@ pub(crate) fn copy_snapshot_legal_targets(
             text_color_origin: None,
         }),
         state,
-    ))
+    )
+    .into_iter()
+    .filter(|target| {
+        !x_bounded
+            || !matches!(
+                target,
+                Target::Object(o) if object_mana_value(state, *o) > spell.v4.x_value
+            )
+    })
+    .collect())
 }
 
 /// Target identity follows CR 400.7, not mutable controller metadata or just

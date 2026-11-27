@@ -3819,7 +3819,7 @@ pub fn blue_suns_twilight() -> EffectOp {
 
 /// "Target creature with mana value X or less": Blue Sun's Twilight, and
 /// Dominate in eternal builds (wave P3c).
-fn x_bounded_creature_target(def: &CardDef) -> bool {
+pub(crate) fn x_bounded_creature_target(def: &CardDef) -> bool {
     (def.cost.x_count != 0 && def.name == BLUE_SUNS_TWILIGHT)
         || (cfg!(feature = "eternal-fixtures")
             && crate::eternal_premodern_p3c_v1::statics::x_bounded_creature_target(def))
