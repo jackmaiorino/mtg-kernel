@@ -1343,7 +1343,7 @@ fn a_restored_draw_step_wait_needs_its_reveal_and_the_riddler_draws_it_names() {
 }
 
 #[test]
-fn a_restored_miracle_wait_keeps_the_two_riddler_attempts_left_after_dredge() {
+fn a_restored_miracle_wait_keeps_the_last_draw_after_dredge_with_two_riddlers() {
     let mut state = game(&["Island", "Island", "Island", "Terminus", "Island", "Island"]);
     state.active_player = P1;
     state.priority_player = P1;
@@ -1370,13 +1370,30 @@ fn a_restored_miracle_wait_keeps_the_two_riddler_attempts_left_after_dredge() {
     assert_eq!(state.players[0].draws_this_turn, 1);
     assert_eq!(zone(&state, later), Zone::Library);
 
-    let snapshot = serde_json::to_vec(&state).unwrap();
-    let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
-    act(&mut restored, Action::ChooseEffectOption(0));
-    settled(&mut restored);
-    assert_eq!(state.players[0].draws_this_turn, 1);
-    assert_eq!(restored.players[0].draws_this_turn, 2);
-    assert_eq!(zone(&restored, later), Zone::Hand);
+    let mut skipped = state.clone();
+    skipped.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining =
+        mtg_kernel::eternal_vintage_e7b_v1::OptionalRemainingV1(None);
+    assert!(engine::step(&mut skipped, Action::ChooseEffectOption(0)).is_err());
+
+    // The saved layout predating exact draw-step receipts is still readable.
+    let mut legacy = state.clone();
+    legacy
+        .engine
+        .event_history
+        .retain(|entry| !matches!(entry, CommittedEvent::EternalOwnedDrawV1 { .. }));
+    assert_eq!(
+        legacy.engine.event_history.len() + 1,
+        state.engine.event_history.len()
+    );
+
+    for saved in [&state, &legacy] {
+        let snapshot = serde_json::to_vec(saved).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        act(&mut restored, Action::ChooseEffectOption(0));
+        settled(&mut restored);
+        assert_eq!(restored.players[0].draws_this_turn, 2);
+        assert_eq!(zone(&restored, later), Zone::Hand);
+    }
 }
 
 // ---- Leyline Binding and Static Prison ---------------------------------------------

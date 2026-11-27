@@ -457,6 +457,13 @@ pub enum JournalV1 {
     },
     KnowledgeV1(knowledge::JournalV1),
     DenialV1(denial::JournalV1),
+    /// The turn-based draw attempt that drew the first Miracle, and how
+    /// many attempts the original instruction still owes (possibly zero).
+    DrawStepMiracleV1 {
+        player: PlayerId,
+        draw_at: usize,
+        remaining: u32,
+    },
 }
 
 impl JournalV1 {
