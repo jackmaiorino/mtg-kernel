@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Frozen schema tag of [`PodRecord`].
@@ -1192,11 +1192,99 @@ fn play_game_task(
     Ok((record, timings))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrainingPodSlot {
+    First,
+    Second,
+}
+
+#[derive(Default)]
+struct TrainingPairState {
+    active: usize,
+    first_dispatched: bool,
+    second_cancelled: bool,
+}
+
+/// One game-worker budget for two training pods. The second pod can use
+/// vacant slots once every game in the first pod has been assigned.
+pub(crate) struct TrainingPairSlots {
+    limit: usize,
+    state: Mutex<TrainingPairState>,
+    changed: Condvar,
+}
+
+impl TrainingPairSlots {
+    pub(crate) fn new(workers: usize) -> Self {
+        Self {
+            limit: workers.max(1),
+            state: Mutex::default(),
+            changed: Condvar::new(),
+        }
+    }
+
+    pub(crate) fn cancel_second(&self) {
+        self.state
+            .lock()
+            .expect("training worker slots")
+            .second_cancelled = true;
+        self.changed.notify_all();
+    }
+
+    fn claim(
+        &self,
+        pod: TrainingPodSlot,
+        next: &AtomicUsize,
+        game_count: usize,
+        stopped: impl Fn() -> bool,
+    ) -> Option<(usize, TrainingGameSlot<'_>)> {
+        let mut state = self.state.lock().expect("training worker slots");
+        loop {
+            if stopped()
+                || next.load(Ordering::Relaxed) >= game_count
+                || (pod == TrainingPodSlot::Second && state.second_cancelled)
+            {
+                return None;
+            }
+            if state.active < self.limit
+                && (pod == TrainingPodSlot::First || state.first_dispatched)
+            {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                if pod == TrainingPodSlot::First && index + 1 == game_count {
+                    state.first_dispatched = true;
+                    self.changed.notify_all();
+                }
+                state.active += 1;
+                return Some((index, TrainingGameSlot(self)));
+            }
+            state = self.changed.wait(state).expect("training worker slots");
+        }
+    }
+}
+
+struct TrainingGameSlot<'a>(&'a TrainingPairSlots);
+
+impl Drop for TrainingGameSlot<'_> {
+    fn drop(&mut self) {
+        self.0.state.lock().expect("training worker slots").active -= 1;
+        self.0.changed.notify_all();
+    }
+}
+
 pub(crate) fn execute_game_tasks_with_options(
     tasks: &[GameTask],
     built_decks: &[Deck],
     pilot: &(dyn GamePilot + Sync),
     options: &ExecOptions<'_, '_>,
+) -> Result<ExecOutput, PodRunnerError> {
+    execute_game_tasks(tasks, built_decks, pilot, options, None)
+}
+
+fn execute_game_tasks(
+    tasks: &[GameTask],
+    built_decks: &[Deck],
+    pilot: &(dyn GamePilot + Sync),
+    options: &ExecOptions<'_, '_>,
+    pair: Option<(&TrainingPairSlots, TrainingPodSlot)>,
 ) -> Result<ExecOutput, PodRunnerError> {
     if tasks.is_empty() {
         return Ok(ExecOutput {
@@ -1241,16 +1329,34 @@ pub(crate) fn execute_game_tasks_with_options(
                 .name(format!("cube-pod-w{worker_id}"))
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || loop {
-                    if worker_failed.load(Ordering::Acquire)
-                        || (ctx.stop_on_watchdog && ctx.watchdog_tripped.load(Ordering::Acquire))
-                    {
-                        return Ok(());
-                    }
-                    let index = next_index.fetch_add(1, Ordering::Relaxed);
-                    if index >= ctx.tasks.len() {
-                        return Ok(());
-                    }
+                    let stopped = || {
+                        worker_failed.load(Ordering::Acquire)
+                            || (ctx.stop_on_watchdog
+                                && ctx.watchdog_tripped.load(Ordering::Acquire))
+                    };
+                    let (index, _permit) = if let Some((admission, pod)) = pair {
+                        let Some((index, permit)) =
+                            admission.claim(pod, next_index, ctx.tasks.len(), stopped)
+                        else {
+                            return Ok(());
+                        };
+                        (index, Some(permit))
+                    } else {
+                        if stopped() {
+                            return Ok(());
+                        }
+                        let index = next_index.fetch_add(1, Ordering::Relaxed);
+                        if index >= ctx.tasks.len() {
+                            return Ok(());
+                        }
+                        (index, None)
+                    };
                     let result = play_game_task(&ctx.tasks[index], ctx);
+                    if let Some((admission, TrainingPodSlot::First)) = pair
+                        .filter(|_| !result.as_ref().is_ok_and(|(game, _)| game.scores.is_some()))
+                    {
+                        admission.cancel_second();
+                    }
                     if let Err(error @ PodRunnerError::ProcessDeath { .. }) = result {
                         worker_failed.store(true, Ordering::Release);
                         return Err(error);
@@ -1516,6 +1622,16 @@ pub fn run_training_pod(
     chairs: &mut [TrainingChair; SEATS],
     pilot: &(dyn GamePilot + Sync),
 ) -> Result<PodRecord, PodRunnerError> {
+    run_training_pod_with_slots(pool, config, chairs, pilot, None)
+}
+
+pub(crate) fn run_training_pod_with_slots(
+    pool: &CubePool,
+    config: &TrainingPodConfig,
+    chairs: &mut [TrainingChair; SEATS],
+    pilot: &(dyn GamePilot + Sync),
+    pair: Option<(&TrainingPairSlots, TrainingPodSlot)>,
+) -> Result<PodRecord, PodRunnerError> {
     validate_training_pod_config(config.pod_use, &config.namespace, &config.run, config.caps)?;
 
     let (mut learning, mut older, mut fixture) = (0usize, 0usize, 0usize);
@@ -1682,7 +1798,7 @@ pub fn run_training_pod(
         stop_on_watchdog: true,
         on_game_complete: None,
     };
-    let exec_out = execute_game_tasks_with_options(&tasks, &built_decks, pilot, &exec_opts)?;
+    let exec_out = execute_game_tasks(&tasks, &built_decks, pilot, &exec_opts, pair)?;
 
     let (halts, status, stop) = collect_halts_and_stop(&exec_out.games, true);
     let record = PodRecord {

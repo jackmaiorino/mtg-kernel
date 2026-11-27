@@ -7,7 +7,9 @@ use mtg_kernel::cube_draft_build_v1::model::{
     ModelCardRowsV1, ModelV1,
 };
 use mtg_kernel::cube_draft_v1::{basic_land_ids, game_seed, CubePool, GameCaps, GameEnd};
-use mtg_kernel::cube_pod_runner_v1::{attempt_seeds, pod_play_seed, watchdog_game_end};
+use mtg_kernel::cube_pod_runner_v1::{
+    attempt_seeds, pod_play_seed, watchdog_game_end, ATTEMPT_PROCESS_DEATH,
+};
 use mtg_kernel::cube_read_plan_v1::sha256_hex;
 use mtg_kernel::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot};
 use mtg_kernel::cube_training_driver_v1::fixtures::{
@@ -23,7 +25,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -107,6 +110,200 @@ impl GamePilot for NaturalPilot {
             },
             last_action_source: None,
         }
+    }
+}
+
+struct UniformFixture<P>(Arc<P>);
+
+impl<P: GamePilot + Sync + 'static> PilotProvider for UniformFixture<P> {
+    fn uniform_pilot(&self) -> Arc<dyn GamePilot + Sync> {
+        self.0.clone()
+    }
+
+    fn load_checkpoint(
+        &self,
+        _pin: &PilotPin,
+    ) -> Result<Arc<dyn GamePilot + Sync>, TrainingDriverError> {
+        unreachable!("these runs use the uniform pilot")
+    }
+}
+
+fn uniform_config(root: &Path, fill_pod_tails: bool) -> RunConfig {
+    let mut config = RunConfig::shakedown(root, "b1", Segment::BuilderOnly);
+    config.update_range = [0, 1];
+    config.workers = 2;
+    config.fill_pod_tails = fill_pod_tails;
+    config
+}
+
+fn uniform_action_seed(pod: u64, group: usize) -> u64 {
+    let seed = pod_play_seed("shakedown-pods", "b1", pod).unwrap();
+    attempt_seeds(game_seed(seed, group), 0).2
+}
+
+#[test]
+fn paired_pods_fill_a_vacant_slot_and_publish_identical_bytes() {
+    struct TailPilot {
+        first_blocked: AtomicBool,
+        second_started: Mutex<bool>,
+        ready: Condvar,
+        active: AtomicUsize,
+    }
+
+    impl GamePilot for TailPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            assert!(self.active.fetch_add(1, Ordering::SeqCst) < 2);
+            if spec.action_seed == uniform_action_seed(1, 0) {
+                *self.second_started.lock().unwrap() = true;
+                self.ready.notify_all();
+            }
+            if spec.action_seed == uniform_action_seed(0, 27)
+                && !self.first_blocked.swap(true, Ordering::SeqCst)
+            {
+                let (started, _) = self
+                    .ready
+                    .wait_timeout_while(
+                        self.second_started.lock().unwrap(),
+                        Duration::from_secs(10),
+                        |started| !*started,
+                    )
+                    .unwrap();
+                assert!(*started, "the second pod did not fill the vacant slot");
+            }
+            let outcome = NaturalPilot.play(spec, caps);
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            outcome
+        }
+    }
+
+    let temp = TempTestDir::new("paired-pod-output");
+    let serial = temp.join("serial");
+    let paired = temp.join("paired");
+    let cube = pool();
+    let rows = model_rows();
+    let mut baseline =
+        TrainingDriver::open(uniform_config(&serial, false), rows.clone(), 1234).unwrap();
+    let mut candidate = TrainingDriver::open(uniform_config(&paired, true), rows, 1234).unwrap();
+    let pilot = UniformFixture(Arc::new(TailPilot {
+        first_blocked: AtomicBool::new(false),
+        second_started: Mutex::new(false),
+        ready: Condvar::new(),
+        active: AtomicUsize::new(0),
+    }));
+    assert_eq!(
+        baseline.run_next_update(&cube, &UniformFixture(Arc::new(NaturalPilot))),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    assert_eq!(
+        candidate.run_next_update(&cube, &pilot),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    assert!(pilot.0.first_blocked.load(Ordering::SeqCst));
+    assert_eq!(
+        directory_bytes(&serial.join("updates/update-0000")),
+        directory_bytes(&paired.join("updates/update-0000"))
+    );
+}
+
+#[test]
+fn paired_pods_preserve_the_retry_exhaustion_record() {
+    let temp = TempTestDir::new("paired-pod-retry-stop");
+    let serial = temp.join("serial");
+    let paired = temp.join("paired");
+    for (root, fill) in [(&serial, false), (&paired, true)] {
+        let mut driver =
+            TrainingDriver::open(uniform_config(root, fill), model_rows(), 1234).unwrap();
+        assert_eq!(
+            driver.run_next_update(&pool(), &UniformFixture(Arc::new(AlwaysHaltPilot))),
+            Ok(RunOutcome::Stopped {
+                update: 0,
+                kind: "retry_exhausted".to_owned(),
+            })
+        );
+        assert!(!root.join("updates/update-0000").exists());
+    }
+    let stop = "stops/stop-0000.json";
+    assert_eq!(
+        fs::read(serial.join(stop)).unwrap(),
+        fs::read(paired.join(stop)).unwrap()
+    );
+}
+
+#[test]
+fn paired_pods_keep_the_prefix_for_a_death_in_the_second_pod() {
+    struct SecondPodDeath(u64);
+
+    impl GamePilot for SecondPodDeath {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            if spec.action_seed == self.0 {
+                return AttemptOutcome {
+                    decisions: 0,
+                    physical_decisions: None,
+                    policy_steps: None,
+                    end: GameEnd::SessionError {
+                        code: ATTEMPT_PROCESS_DEATH.to_owned(),
+                        message: "injected exit".to_owned(),
+                    },
+                    last_action_source: None,
+                };
+            }
+            NaturalPilot.play(spec, caps)
+        }
+    }
+
+    let temp = TempTestDir::new("paired-pod-death");
+    let root = temp.join("b1");
+    let mut driver = TrainingDriver::open(uniform_config(&root, true), model_rows(), 1234).unwrap();
+    let pilot = UniformFixture(Arc::new(SecondPodDeath(uniform_action_seed(1, 0))));
+    assert_eq!(
+        driver.run_next_update(&pool(), &pilot),
+        Ok(RunOutcome::Stopped {
+            update: 0,
+            kind: "process_death".to_owned(),
+        })
+    );
+    assert!(!root.join("updates/update-0000").exists());
+    let stop = read_value(&root.join("stops/stop-0000.json"));
+    let batch = stop["batch"].as_array().unwrap();
+    assert_eq!(batch.len(), 1);
+    assert_eq!(batch[0]["pod_index"], 0);
+}
+
+#[test]
+fn paired_pods_rerun_a_watchdog_void_before_publishing() {
+    let temp = TempTestDir::new("paired-pod-watchdog");
+    let root = temp.join("b1");
+    let plain = temp.join("plain");
+    let cube = pool();
+    let mut driver = TrainingDriver::open(uniform_config(&root, true), model_rows(), 1234).unwrap();
+    let mut control =
+        TrainingDriver::open(uniform_config(&plain, false), model_rows(), 1234).unwrap();
+    let pilot = UniformFixture(Arc::new(FirstWatchdogPilot {
+        fired: AtomicBool::new(false),
+    }));
+    assert_eq!(
+        driver.run_next_update(&cube, &pilot),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    assert_eq!(
+        control.run_next_update(&cube, &UniformFixture(Arc::new(NaturalPilot))),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    let void = fs::read(root.join("watchdog/update-0000.json")).unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&void).unwrap();
+    assert_eq!(record["kind"], "watchdog_void");
+    assert_eq!(record["first_watchdog_pod"], 0);
+    let update = "updates/update-0000";
+    assert_eq!(
+        fs::read(root.join(update).join("execution-0.json")).unwrap(),
+        void
+    );
+    assert!(!root.join(update).join("partial").exists());
+    for name in ["pods.json", "checkpoint.json"] {
+        assert_eq!(
+            fs::read(root.join(update).join(name)).unwrap(),
+            fs::read(plain.join(update).join(name)).unwrap()
+        );
     }
 }
 
