@@ -1151,6 +1151,57 @@ fn miracle_pauses_riddler_draws_before_the_next_card() {
 }
 
 #[test]
+fn miracle_pauses_fixed_riddler_draw_before_hullbreacher_replacements() {
+    let mut state = game(&["Island"; 3]);
+    state.step = Step::Upkeep;
+    let terminus = put(&mut state, P0, "Terminus", Zone::Library);
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    put(
+        &mut state,
+        P0,
+        "Jace, Wielder of Mysteries",
+        Zone::Battlefield,
+    );
+    put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+    let recall = put(&mut state, P0, "Ancestral Recall", Zone::Hand);
+    pass_until(&mut state, |state| state.step == Step::Draw);
+    assert_eq!(state.players[0].draws_this_turn, 0);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, recall, &[Target::Player(P0)]);
+
+    // The starting player skips the turn-based draw. Hullbreacher exempts
+    // Recall's first draw, then replaces the three remaining attempts.
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        }) if source == terminus
+    ));
+    assert_eq!(state.players[0].hand, [terminus]);
+    assert_eq!(state.players[0].library.len(), 3);
+    assert!(!state.objects.iter().any(|(_, object)| {
+        object.zone == Zone::Battlefield && object.name == "Treasure Token"
+    }));
+
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(state.players[0].hand, [terminus]);
+    assert_eq!(state.players[0].library.len(), 3);
+    assert_eq!(
+        state
+            .objects
+            .iter()
+            .filter(|(_, object)| {
+                object.zone == Zone::Battlefield && object.name == "Treasure Token"
+            })
+            .count(),
+        3
+    );
+}
+
+#[test]
 fn miracle_pauses_owned_riddler_draws_after_a_dredge() {
     // Riddler fixes four attempts (121.2b) and a dredger makes the draw an
     // owned instruction. The first attempt is dredged; Terminus is the
