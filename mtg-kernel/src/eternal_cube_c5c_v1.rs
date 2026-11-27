@@ -823,10 +823,6 @@ fn mark_buyback(ctx: &ExecCtx, state: &mut GameState) {
 }
 
 fn corpse_dance_resolve(ctx: &ExecCtx, state: &mut GameState) {
-    // Buyback is paid whether or not a creature card is there to return.
-    if ctx.kicked {
-        mark_buyback(ctx, state);
-    }
     let controller = ctx.controller;
     // The top of a graveyard is its most recently added card.
     let Some(card) = state.players[controller.index()]
@@ -842,9 +838,21 @@ fn corpse_dance_resolve(ctx: &ExecCtx, state: &mut GameState) {
                     .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
         })
     else {
+        // Buyback is paid whether or not a creature card is there to return.
+        if ctx.kicked {
+            mark_buyback(ctx, state);
+        }
         return;
     };
     put_onto_battlefield(state, card, controller);
+    if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state)
+        || state.engine.halted.is_some()
+    {
+        return;
+    }
+    if ctx.kicked {
+        mark_buyback(ctx, state);
+    }
     if state.objects.get(card).zone != Zone::Battlefield {
         return;
     }

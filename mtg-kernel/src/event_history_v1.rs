@@ -383,11 +383,13 @@ pub enum EventKindV1 {
     ResolutionDrawChoiceAnsweredV1,
     CastLifeXPaidV1,
     CopyEntryProvenanceV1,
+    CopyProducerAbilityPublishedV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 340;
-const _: () = assert!(EventKindV1::CopyEntryProvenanceV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 341;
+const _: () =
+    assert!(EventKindV1::CopyProducerAbilityPublishedV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -837,6 +839,9 @@ impl CommittedEvent {
             }
             Self::CastLifeXPaidV1 { .. } => EventKindV1::CastLifeXPaidV1,
             Self::CopyEntryProvenanceV1 { .. } => EventKindV1::CopyEntryProvenanceV1,
+            Self::CopyProducerAbilityPublishedV1 { .. } => {
+                EventKindV1::CopyProducerAbilityPublishedV1
+            }
         }
     }
 }
