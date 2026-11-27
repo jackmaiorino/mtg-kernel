@@ -940,6 +940,485 @@ fn card_names(ids: &[u16]) -> Vec<&'static str> {
 
 #[test]
 #[cfg(feature = "eternal-fixtures")]
+fn cube_json_limited_fast_engine_windows_parity_v1() {
+    use crate::ids::PlayerId;
+    use crate::limited_session_v1::{
+        LimitedJsonlServerV1, LimitedReplyBodyV1, LimitedReplyV1, LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+    };
+    use crate::priority_action_windows_v1::SeatPriorityWindowsV1::EngineWindowsV1;
+    use crate::rl::PlayerSeatV1;
+    use crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned;
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    use crate::sideboard::DeckFormatV1::Limited40V1;
+
+    const LIMIT: u64 = 3000;
+    const PICK_STREAM: u64 = 0x7033_5041_5249_5459;
+
+    fn short(text: &str) -> String {
+        text.chars().take(300).collect()
+    }
+
+    fn divergence(
+        index: usize,
+        seed: u64,
+        starting_player: usize,
+        decisions: u64,
+        step: u64,
+        field: &str,
+        json_side: String,
+        fast_side: String,
+    ) -> Value {
+        json!({
+            "index": index,
+            "seed": seed,
+            "starting_player": starting_player,
+            "result": "divergence",
+            "decisions_compared": decisions,
+            "step": step,
+            "field": field,
+            "json": short(&json_side),
+            "fast": short(&fast_side),
+        })
+    }
+
+    fn stopped(
+        index: usize,
+        seed: u64,
+        starting_player: usize,
+        result: &str,
+        decisions: u64,
+        step: Option<u64>,
+        side: &str,
+        text: String,
+    ) -> Value {
+        json!({
+            "index": index,
+            "seed": seed,
+            "starting_player": starting_player,
+            "result": result,
+            "decisions_compared": decisions,
+            "step": step,
+            "side": side,
+            "error": text,
+        })
+    }
+
+    fn parse_reply(response: &str) -> Result<LimitedReplyV1, String> {
+        serde_json::from_str(response).map_err(|error| {
+            format!(
+                "JSON Limited reply does not deserialize: {error}; reply: {}",
+                short(response)
+            )
+        })
+    }
+
+    fn play(pool: &CubePoolV1, index: usize, seed: u64) -> Value {
+        let starting_seat = index % 2;
+        let (starting_player, starter) = if starting_seat == 0 {
+            (PlayerId::P0, PlayerSeatV1::P0)
+        } else {
+            (PlayerId::P1, PlayerSeatV1::P1)
+        };
+        let decks = match deal_pair_v1(pool, seed) {
+            Ok(decks) => decks,
+            Err(error) => {
+                return stopped(index, seed, starting_seat, "error", 0, None, "deal", error)
+            }
+        };
+        if let Err(error) = check_deal_v1(pool, &decks) {
+            return stopped(index, seed, starting_seat, "error", 0, None, "deal", error);
+        }
+        let deck_labels = [0, 1].map(|seat| decks[seat].label(seed, seat));
+        // Both sides get the same library order before the shuffle: the
+        // JSON server expands each name/count row in order through
+        // `card_id_by_name`, so the fast session's mainboard is built from
+        // the same rows the same way.
+        let rows = [0, 1].map(|seat| {
+            let mut counts = BTreeMap::<&str, u32>::new();
+            for name in card_names(&decks[seat].mainboard(&pool.basics)) {
+                *counts.entry(name).or_default() += 1;
+            }
+            counts.into_iter().collect::<Vec<_>>()
+        });
+        let mainboards = [0, 1].map(|seat| {
+            rows[seat]
+                .iter()
+                .flat_map(|&(name, count)| {
+                    let id = crate::card_def::card_id_by_name(name)
+                        .unwrap_or_else(|| panic!("unknown card {name:?}"));
+                    std::iter::repeat_n(id, count as usize)
+                })
+                .collect::<Vec<_>>()
+        });
+        let deck_rows = |seat: usize| {
+            rows[seat]
+                .iter()
+                .map(|&(name, count)| json!({"name": name, "count": count}))
+                .collect::<Vec<_>>()
+        };
+        let episode_id = seed;
+        let reset = json!({
+            "request_type": "reset",
+            "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+            "request_id": "reset",
+            "episode_id": episode_id,
+            "env_seed": seed,
+            "starting_player": starter,
+            "max_physical_decisions": LIMIT,
+            "max_policy_steps": LIMIT,
+            "decks": [
+                {"cards": deck_rows(0)},
+                {"cards": deck_rows(1)},
+            ],
+        });
+        let mut json = LimitedJsonlServerV1::new_with_public_shroud_v1();
+        let response = json.handle_line(&reset.to_string());
+        let mut reply = match parse_reply(&response) {
+            Ok(reply) => reply,
+            Err(error) => {
+                return stopped(index, seed, starting_seat, "error", 0, None, "json", error)
+            }
+        };
+        let mut fast = match FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
+            episode_id,
+            seed,
+            LIMIT,
+            LIMIT,
+            deck_labels,
+            mainboards,
+            starting_player,
+            [Learned; 2],
+            [EngineWindowsV1; 2],
+            Some(Limited40V1),
+        ) {
+            Ok(session) => session,
+            Err(error) => {
+                return stopped(
+                    index,
+                    seed,
+                    starting_seat,
+                    "error",
+                    0,
+                    None,
+                    "fast",
+                    error.to_string(),
+                )
+            }
+        };
+        let mut picks = SplitMix64::seed(seed ^ PICK_STREAM);
+        let mut decisions = 0u64;
+        loop {
+            let (json_decision, fast_decision) = match (&reply.body, fast.current_response()) {
+                (LimitedReplyBodyV1::Error { error }, _) => {
+                    return stopped(
+                        index,
+                        seed,
+                        starting_seat,
+                        "error",
+                        decisions,
+                        Some(decisions),
+                        "json",
+                        format!("{}: {}", error.code, error.message),
+                    )
+                }
+                (
+                    LimitedReplyBodyV1::Decision { decision },
+                    FastActorResponseV1::Decision(current),
+                ) => (decision.as_ref(), current),
+                (
+                    LimitedReplyBodyV1::Terminal { terminal },
+                    FastActorResponseV1::Terminal(fast_terminal),
+                ) => {
+                    let json_terminal = serde_json::to_value(terminal).unwrap();
+                    let fast_terminal = serde_json::to_value(fast_terminal).unwrap();
+                    for field in [
+                        "policy_step_count",
+                        "physical_decision_count",
+                        "episode_id",
+                        "terminal_outcome",
+                        "terminal_classification",
+                        "terminal_code",
+                        "winner",
+                        "terminal_reward",
+                        "terminal_reason",
+                    ] {
+                        if json_terminal[field] != fast_terminal[field] {
+                            return divergence(
+                                index,
+                                seed,
+                                starting_seat,
+                                decisions,
+                                terminal.policy_step_count,
+                                field,
+                                json_terminal[field].to_string(),
+                                fast_terminal[field].to_string(),
+                            );
+                        }
+                    }
+                    return json!({
+                        "index": index,
+                        "seed": seed,
+                        "starting_player": starting_seat,
+                        "result": "match",
+                        "decisions_compared": decisions,
+                        "terminal_kind": terminal.terminal_classification,
+                        "terminal_outcome": terminal.terminal_outcome,
+                    });
+                }
+                (
+                    LimitedReplyBodyV1::Decision { decision },
+                    FastActorResponseV1::Terminal(terminal),
+                ) => {
+                    return divergence(
+                        index,
+                        seed,
+                        starting_seat,
+                        decisions,
+                        decision.step,
+                        "response_kind",
+                        "decision".to_owned(),
+                        format!("terminal at step {}", terminal.policy_step_count),
+                    )
+                }
+                (
+                    LimitedReplyBodyV1::Terminal { terminal },
+                    FastActorResponseV1::Decision(current),
+                ) => {
+                    return divergence(
+                        index,
+                        seed,
+                        starting_seat,
+                        decisions,
+                        current.step,
+                        "response_kind",
+                        format!("terminal at step {}", terminal.policy_step_count),
+                        "decision".to_owned(),
+                    )
+                }
+            };
+            if json_decision.step != fast_decision.step {
+                return divergence(
+                    index,
+                    seed,
+                    starting_seat,
+                    decisions,
+                    json_decision.step,
+                    "step",
+                    json_decision.step.to_string(),
+                    fast_decision.step.to_string(),
+                );
+            }
+            if json_decision.acting_player != fast_decision.acting_player {
+                return divergence(
+                    index,
+                    seed,
+                    starting_seat,
+                    decisions,
+                    json_decision.step,
+                    "acting_player",
+                    json!(json_decision.acting_player).to_string(),
+                    json!(fast_decision.acting_player).to_string(),
+                );
+            }
+            if json_decision.physical_decision_id != fast_decision.physical_decision_id {
+                return divergence(
+                    index,
+                    seed,
+                    starting_seat,
+                    decisions,
+                    json_decision.step,
+                    "physical_decision_id",
+                    json_decision.physical_decision_id.to_string(),
+                    fast_decision.physical_decision_id.to_string(),
+                );
+            }
+            let json_semantics = json_decision
+                .legal_actions
+                .iter()
+                .map(|action| action.semantic.clone())
+                .collect::<Vec<_>>();
+            let Some(fast_semantics) = fast.diagnostic_current_action_semantics() else {
+                return stopped(
+                    index,
+                    seed,
+                    starting_seat,
+                    "error",
+                    decisions,
+                    Some(json_decision.step),
+                    "fast",
+                    "current fast decision has no action semantics".to_owned(),
+                );
+            };
+            if json_semantics != fast_semantics {
+                return divergence(
+                    index,
+                    seed,
+                    starting_seat,
+                    decisions,
+                    json_decision.step,
+                    "legal_action_semantics",
+                    serde_json::to_string(&json_semantics).unwrap(),
+                    serde_json::to_string(&fast_semantics).unwrap(),
+                );
+            }
+            if json_semantics.is_empty() {
+                return stopped(
+                    index,
+                    seed,
+                    starting_seat,
+                    "error",
+                    decisions,
+                    Some(json_decision.step),
+                    "panel",
+                    "decision has no legal actions".to_owned(),
+                );
+            }
+            let selected = (picks.next_u64() % json_semantics.len() as u64) as usize;
+            let selected_action = &json_decision.legal_actions[selected];
+            if selected_action.semantic != fast_semantics[selected] {
+                return divergence(
+                    index,
+                    seed,
+                    starting_seat,
+                    decisions,
+                    json_decision.step,
+                    "submitted_action_semantic",
+                    serde_json::to_string(&selected_action.semantic).unwrap(),
+                    serde_json::to_string(&fast_semantics[selected]).unwrap(),
+                );
+            }
+            let step_request = json!({
+                "request_type": "step",
+                "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+                "request_id": format!("step-{}", json_decision.step),
+                "episode_id": episode_id,
+                "expected_step": json_decision.step,
+                "selected_index": selected,
+                "selected_action_id": selected_action.stable_id,
+            });
+            decisions += 1;
+            let response = json.handle_line(&step_request.to_string());
+            let fast_result = fast.step(episode_id, json_decision.step, selected as u32);
+            if let Err(error) = fast_result {
+                return stopped(
+                    index,
+                    seed,
+                    starting_seat,
+                    "error",
+                    decisions,
+                    Some(json_decision.step),
+                    "fast",
+                    error.to_string(),
+                );
+            }
+            reply = match parse_reply(&response) {
+                Ok(reply) => reply,
+                Err(error) => {
+                    return stopped(
+                        index,
+                        seed,
+                        starting_seat,
+                        "error",
+                        decisions,
+                        Some(json_decision.step),
+                        "json",
+                        error,
+                    )
+                }
+            };
+        }
+    }
+
+    let env_u64 = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value
+                .parse::<u64>()
+                .unwrap_or_else(|_| panic!("{name} must be an unsigned integer"))
+        })
+    };
+    let games = env_usize("MTG_KERNEL_CUBE_PARITY_GAMES", 4);
+    assert!(
+        games > 0 && games % 2 == 0,
+        "MTG_KERNEL_CUBE_PARITY_GAMES must be a positive even count"
+    );
+    let first_seed =
+        env_u64("MTG_KERNEL_CUBE_PARITY_FIRST_SEED").unwrap_or(SEED_BASE_CUBE + 0x10_0000);
+    let threads = env_usize("MTG_KERNEL_CUBE_PARITY_THREADS", 1).max(1);
+    let (pool, _) = load_cube_pool_v1();
+    let mut results: Vec<(usize, Value)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|thread| {
+                let pool = &pool;
+                scope.spawn(move || {
+                    let mut rows = Vec::new();
+                    for index in (thread..games).step_by(threads) {
+                        let seed = first_seed.wrapping_add(index as u64);
+                        let row = match catch_unwind(AssertUnwindSafe(|| play(pool, index, seed))) {
+                            Ok(row) => row,
+                            Err(payload) => stopped(
+                                index,
+                                seed,
+                                index % 2,
+                                "panic",
+                                0,
+                                None,
+                                "panic",
+                                panic_message(&*payload),
+                            ),
+                        };
+                        rows.push((index, row));
+                    }
+                    rows
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap())
+            .collect()
+    });
+    results.sort_by_key(|(index, _)| *index);
+    assert_eq!(results.len(), games, "every game reports");
+    let mut counts_by_result = BTreeMap::<String, u64>::new();
+    let mut counts_by_starter = BTreeMap::<String, u64>::new();
+    let mut total_decisions_compared = 0u64;
+    let mut non_matching = Vec::new();
+    for (index, row) in &results {
+        *counts_by_result
+            .entry(row["result"].as_str().unwrap().to_owned())
+            .or_default() += 1;
+        *counts_by_starter
+            .entry((index % 2).to_string())
+            .or_default() += 1;
+        total_decisions_compared += row["decisions_compared"].as_u64().unwrap();
+        if row["result"] != "match" {
+            println!("{row}");
+            non_matching.push(row.clone());
+        }
+    }
+    let non_matching_count = non_matching.len();
+    let summary = json!({
+        "schema": "cube_limited_fast_parity/v1",
+        "games": games,
+        "first_seed": first_seed,
+        "threads": threads,
+        "counts_by_result": counts_by_result,
+        "counts_by_starter": counts_by_starter,
+        "total_decisions_compared": total_decisions_compared,
+        "non_matching_games": non_matching,
+    });
+    if let Ok(path) = std::env::var("MTG_KERNEL_CUBE_PARITY_OUT") {
+        write_census_v1(std::path::Path::new(&path), &summary).expect("write the parity summary");
+    }
+    println!("{summary}");
+    assert_eq!(
+        non_matching_count, 0,
+        "{non_matching_count} of {games} Cube parity games did not match"
+    );
+}
+
+#[test]
+#[cfg(feature = "eternal-fixtures")]
 fn cube_coverage_census_v1() {
     let env_u64 = |name: &str| {
         std::env::var(name).ok().map(|v| {
