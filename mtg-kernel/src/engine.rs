@@ -3662,7 +3662,14 @@ fn validate_physical_spell_cast_origin(
         SpellCastRouteV4::GraveyardEscape => {
             origin.origin_zone == Zone::Graveyard
                 && source.owner == caster
-                && cast_method == CastMethodV4::Escape
+                && (cast_method == CastMethodV4::Escape
+                    || (cast_method == CastMethodV4::Omen
+                        && escape_supports_second_form_v1(def)
+                        && crate::eternal_lurrus_v1::escape_granted(
+                            state,
+                            item.source,
+                            origin.origin_zone_change_count,
+                        )))
                 && has_escape_v1(
                     state,
                     item.source,
@@ -4425,7 +4432,9 @@ fn storm_source_contract_is_structurally_valid(
         SpellCastRouteV4::GraveyardEscape if cfg!(feature = "eternal-fixtures") => {
             origin.origin_zone == Zone::Graveyard
                 && contract.owner == contract.controller
-                && contract.cast_method == CastMethodV4::Escape
+                && (contract.cast_method == CastMethodV4::Escape
+                    || (contract.cast_method == CastMethodV4::Omen
+                        && escape_supports_second_form_v1(definition)))
         }
         SpellCastRouteV4::SnapcasterFlashbackV1 if cfg!(feature = "eternal-fixtures") => {
             origin.origin_zone == Zone::Graveyard
@@ -12758,13 +12767,42 @@ fn pending_cast_form_timing_ok(
         || sorcery_timing
 }
 
+/// Whether `def` has a second spell form (Adventure, Split right half, or Omen;
+/// never Bestow or Overload, which are alternative costs that cannot combine
+/// with escape per CR 118.9a) that Underworld Breach can escape.
+pub(crate) fn escape_supports_second_form_v1(def: &card_def::CardDef) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && (supported_omen(def).is_some()
+            || (supported_adventure(def).is_some()
+                && !crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)))
+}
+
+fn pending_escape_allows_second_form(
+    state: &GameState,
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+) -> bool {
+    escape_supports_second_form_v1(def)
+        && state.public_shroud_v1
+        && pending.source_contract.cast_method == CastMethodV4::Escape
+        && pending
+            .source_contract
+            .spell_cast_origin
+            .is_some_and(|origin| {
+                crate::eternal_lurrus_v1::escape_granted(
+                    state,
+                    pending.spell,
+                    origin.origin_zone_change_count,
+                )
+            })
+}
+
 /// Whether this staged Escape cast is restricted to its first (base) form:
-/// under the public shroud contract (`state.public_shroud_v1`), a bestow,
-/// Adventure, split, overload, or Omen card cast with escape uses only form 0
-/// for the escape cost. Bestow and overload are alternative costs, which
-/// cannot combine with escape (CR 118.9a); escaping an Adventure or a split
-/// card's other half is a recorded follow-up. Legacy sessions
-/// (`!state.public_shroud_v1`) keep the parent's form rules unchanged.
+/// under the public shroud contract (`state.public_shroud_v1`), Bestow and
+/// Overload are alternative costs that cannot combine with escape (CR 118.9a),
+/// while Breach-escaped non-overload Adventure, Split, and Omen cards may use
+/// either form 0 or form 1. Legacy sessions (`!state.public_shroud_v1`) keep
+/// the parent's form rules unchanged.
 fn escape_restricted_to_first_form(
     state: &GameState,
     pending: &PendingCast,
@@ -12776,6 +12814,7 @@ fn escape_restricted_to_first_form(
         && (supported_bestow(def).is_some()
             || supported_adventure(def).is_some()
             || supported_omen(def).is_some())
+        && !pending_escape_allows_second_form(state, pending, def)
 }
 
 /// Spell forms that remain both target-completable and payable after the
@@ -12816,6 +12855,9 @@ fn viable_pending_spell_forms(
         };
     }
     let free = resolution_cast_v1::free_cast(state, pending.spell);
+    let escaped_form = escape_restricted_to_first_form(state, pending, def);
+    let escape_second_form = pending_escape_allows_second_form(state, pending, def);
+    let public_escape_form = escaped_form || escape_second_form;
     let library_bestow_ok = pending.origin_zone != Zone::Library
         || (cfg!(feature = "eternal-fixtures")
             && crate::eternal_e5a_v1::permissions::library_bestow_allowed(
@@ -12828,6 +12870,7 @@ fn viable_pending_spell_forms(
     } else if let Some(adventure) = supported_adventure(def) {
         (pending.origin_zone == Zone::Hand
             || free
+            || escape_second_form
             || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
                 && (pending_has_graveyard_overload_permission(pending, state)
                     || (pending.origin_zone == Zone::Library
@@ -12850,7 +12893,6 @@ fn viable_pending_spell_forms(
     } else {
         supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
     };
-    let escaped_form = escape_restricted_to_first_form(state, pending, def);
     let alternative = alternative.filter(|_| !escaped_form);
     if supported_bestow(def).is_some()
         || supported_adventure(def).is_some()
@@ -12858,7 +12900,7 @@ fn viable_pending_spell_forms(
     {
         let mut forms = Vec::with_capacity(2);
         let source = targeting_source_for_object(state, pending.spell);
-        let creature_method = if escaped_form {
+        let creature_method = if public_escape_form {
             CastMethodV4::Escape
         } else {
             CastMethodV4::Normal
@@ -12868,7 +12910,7 @@ fn viable_pending_spell_forms(
                 .chain(alternative.map(|(method, types)| (1, method, types, Keywords::NONE)))
         {
             if form == 0
-                && !escaped_form
+                && !public_escape_form
                 && pending.origin_zone == Zone::Graveyard
                 && (supported_adventure(def).is_some() || supported_bestow(def).is_some())
                 && !pending_has_graveyard_creature_permission(pending, state)
@@ -12894,6 +12936,8 @@ fn viable_pending_spell_forms(
                     crate::source_type_hexproof_v1::spell_types(def, method).ok();
                 source
             });
+            let mut selected = pending.clone();
+            selected.mode_chosen = Some(form);
             if target_prefix_can_complete_for_controller_and_source(
                 spec,
                 &pending.targets_chosen,
@@ -12905,7 +12949,7 @@ fn viable_pending_spell_forms(
                 && pending_cast_form_timing_ok(types, keywords, pending, state)
                 && pending_cast_quote_v1(
                     def,
-                    pending,
+                    &selected,
                     method,
                     pending.kicked == Some(true),
                     0,
@@ -13112,9 +13156,11 @@ fn pending_cast_quote_v1(
 ) -> Option<spell_costs_v1::SpellManaPaymentV1> {
     // Target and kicker previews use the base form. An announced escape still
     // owes its escape payment, including the selected graveyard cards.
-    let method = if method == CastMethodV4::Normal
+    let method = if (method == CastMethodV4::Normal
         && (pending.sphinx_lore_v1.is_some()
-            || pending.source_contract.cast_method == CastMethodV4::Escape)
+            || pending.source_contract.cast_method == CastMethodV4::Escape))
+        || (method == CastMethodV4::Omen
+            && pending.source_contract.cast_method == CastMethodV4::Escape)
     {
         pending.source_contract.cast_method
     } else {
@@ -13803,9 +13849,52 @@ fn is_castable_with_cost_grant(
     };
     let viable_modes = || viable_printed_spell_modes(def, id, player, state, (cast_method, grant));
     let granted_flashback = cast_method == CastMethodV4::Flashback && grant.is_some();
+    let escape_second_form_ok = || {
+        state.public_shroud_v1
+            && cast_method == CastMethodV4::Escape
+            && escape_supports_second_form_v1(def)
+            && crate::eternal_lurrus_v1::escape_granted(
+                state,
+                id,
+                state.objects.get(id).zone_change_count,
+            )
+            && {
+                let Some((types, target_spec)) = supported_adventure(def)
+                    .map(|adventure| (adventure.types, adventure.target_spec))
+                    .or_else(|| supported_omen(def).map(|omen| (omen.types, omen.target_spec)))
+                else {
+                    return false;
+                };
+                cast_form_timing_ok(types, Keywords::NONE, player, state)
+                    && target_prefix_can_complete_for_controller_and_source(
+                        target_spec,
+                        &[],
+                        player,
+                        targeting_source_for_spell_form(state, id, def, CastMethodV4::Omen),
+                        state,
+                    )
+                    && spell_costs_v1::selected_spell_quote_with_grant_v1(
+                        def,
+                        id,
+                        state.objects.get(id).zone,
+                        CastMethodV4::Escape,
+                        false,
+                        1,
+                        0,
+                        &[],
+                        &[],
+                        player,
+                        state,
+                        &[],
+                        grant,
+                    )
+                    .is_some()
+            }
+    };
     if cast_method != CastMethodV4::Normal
         && viable_modes().is_empty()
         && !((cast_method == CastMethodV4::Escape || granted_flashback) && kicked_ok())
+        && !escape_second_form_ok()
     {
         return false;
     }
@@ -13837,7 +13926,7 @@ fn is_castable_with_cost_grant(
     {
         return false;
     }
-    if cast_method != CastMethodV4::Normal && !main_timing_ok {
+    if cast_method != CastMethodV4::Normal && !main_timing_ok && !escape_second_form_ok() {
         return false;
     }
     if main_timing_ok
@@ -13928,12 +14017,27 @@ fn is_castable_with_cost_grant(
             graveyard_payable()
         }
         CastMethodV4::Escape => {
-            (def.escape.is_some() || crate::eternal_lurrus_v1::granted_escape_cost(def).is_some())
+            let form0_ok = main_timing_ok
+                && (!viable_modes().is_empty() || kicked_ok())
+                && (def.escape.is_some()
+                    || crate::eternal_lurrus_v1::granted_escape_cost(def).is_some())
                 && (spell_costs_v1::additional_cost_for_method_v1(def, CastMethodV4::Escape, 0)
                     .is_none()
                     || compound_cast_cost_v1::supports_escape(def))
-                && def.generic_cost_reduction.is_none()
-                && graveyard_payable()
+                && if normal_cast_cost_depends_on_targets(def) {
+                    cast_target_prefix_is_payable(
+                        def,
+                        id,
+                        def.target_spec,
+                        player,
+                        &[],
+                        state,
+                        (cast_method, grant),
+                    )
+                } else {
+                    graveyard_payable()
+                };
+            form0_ok || escape_second_form_ok()
         }
         CastMethodV4::Normal => {
             // Every check below is a pure read of `state`, so they are
@@ -17637,6 +17741,11 @@ pub(crate) fn finalized_cast_method(
         } else {
             CastMethodV4::Normal
         }
+    } else if staged_method == CastMethodV4::Escape
+        && pending.mode_chosen == Some(1)
+        && escape_supports_second_form_v1(def)
+    {
+        CastMethodV4::Omen
     } else {
         staged_method
     }
@@ -19215,7 +19324,6 @@ pub(crate) fn validate_pending_cast(
                 || (spell_costs_v1::additional_cost_for_method_v1(def, CastMethodV4::Escape, 0)
                     .is_some()
                     && !compound_cast_cost_v1::supports_escape(def))
-                || def.generic_cost_reduction.is_some()
                 || (pending.cast_mode != Some(CastMode::Normal) && !graveyard_choice)
             {
                 return Err("escape cast has a noncanonical origin or definition".to_string());
@@ -19255,6 +19363,7 @@ pub(crate) fn validate_pending_cast(
         }
     };
     let escape_first_form = escape_restricted_to_first_form(state, pending, def);
+    let escape_second_form = pending_escape_allows_second_form(state, pending, def);
     if escape_first_form && pending.mode_chosen.is_some_and(|mode| mode != 0) {
         return Err("escape cast can only use its first form".to_string());
     }
@@ -19265,6 +19374,7 @@ pub(crate) fn validate_pending_cast(
             && !pending_has_graveyard_creature_permission(pending, state)
             && !malcolm_free
             && !escape_first_form
+            && !escape_second_form
         {
             return Err(
                 "graveyard Adventure permission cannot cast the permanent form".to_string(),
@@ -19278,6 +19388,7 @@ pub(crate) fn validate_pending_cast(
                     matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })
                 })
                 || malcolm_free
+                || escape_second_form
                 || (cfg!(feature = "eternal-fixtures")
                     && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell))
                 || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)

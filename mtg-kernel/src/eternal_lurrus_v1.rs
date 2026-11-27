@@ -533,23 +533,46 @@ pub(crate) fn note_graveyard_permission_cast(
 
 // ---- Granted flashback and escape -------------------------------------------------
 
+struct GrantedCosts {
+    flashback: [CostComponent; 1],
+    escape: [CostComponent; 2],
+    escape_form1: Option<[CostComponent; 2]>,
+}
+
 /// Index-aligned with `CARD_DEFS`: the flashback cost "equal to its mana
 /// cost" and Underworld Breach's escape cost "equal to the card's mana cost
 /// plus exile three other cards from your graveyard".
-fn granted_costs() -> &'static [([CostComponent; 1], [CostComponent; 2])] {
-    static TABLE: std::sync::OnceLock<Vec<([CostComponent; 1], [CostComponent; 2])>> =
-        std::sync::OnceLock::new();
+fn granted_costs() -> &'static [GrantedCosts] {
+    static TABLE: std::sync::OnceLock<Vec<GrantedCosts>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
         CARD_DEFS
             .iter()
             .map(|def| {
-                (
-                    [CostComponent::Mana(def.cost)],
-                    [
+                let escape_form1 = if !def.is_land
+                    && !def.is_token
+                    && !crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
+                {
+                    def.adventure
+                        .as_ref()
+                        .map(|adventure| adventure.cost)
+                        .or_else(|| def.omen.as_ref().map(|omen| omen.cost))
+                        .map(|cost| {
+                            [
+                                CostComponent::Mana(cost),
+                                CostComponent::ExileOtherCardsFromOwnGraveyard(3),
+                            ]
+                        })
+                } else {
+                    None
+                };
+                GrantedCosts {
+                    flashback: [CostComponent::Mana(def.cost)],
+                    escape: [
                         CostComponent::Mana(def.cost),
                         CostComponent::ExileOtherCardsFromOwnGraveyard(3),
                     ],
-                )
+                    escape_form1,
+                }
             })
             .collect()
     })
@@ -569,7 +592,7 @@ pub(crate) fn granted_flashback_cost(definition: &CardDef) -> Option<&'static [C
         return None;
     }
     let index = definition_index(definition)?;
-    Some(granted_costs()[index].0.as_slice())
+    Some(granted_costs()[index].flashback.as_slice())
 }
 
 /// The escape cost Underworld Breach gives a nonland card.
@@ -578,7 +601,20 @@ pub(crate) fn granted_escape_cost(definition: &CardDef) -> Option<&'static [Cost
         return None;
     }
     let index = definition_index(definition)?;
-    Some(granted_costs()[index].1.as_slice())
+    Some(granted_costs()[index].escape.as_slice())
+}
+
+/// The escape cost Underworld Breach gives a nonland card's second spell form
+/// (Adventure, Split right half, or Omen; never Overload or Bestow).
+pub(crate) fn granted_escape_cost_form1(definition: &CardDef) -> Option<&'static [CostComponent]> {
+    if !cfg!(feature = "eternal-fixtures") || definition.is_land || definition.is_token {
+        return None;
+    }
+    let index = definition_index(definition)?;
+    granted_costs()[index]
+        .escape_form1
+        .as_ref()
+        .map(|cost| cost.as_slice())
 }
 
 fn turn_grant_active(state: &GameState, grant: &TurnGrantV1) -> bool {
