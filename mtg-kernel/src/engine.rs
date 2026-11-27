@@ -2517,6 +2517,27 @@ fn validate_cast_life_x(
         let active = state.active_player;
         let live_bloodletters = crate::standard_statics_v1::active_bloodletter_links(state, player);
         let after = history.range_v2((at + 1)..);
+        let is_bloodletter_def = |id: ObjectId| {
+            state
+                .objects
+                .try_get(id)
+                .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                .is_some_and(|d| d.name == "Bloodletter of Aclazotz")
+        };
+        let is_ability_remover_def = |id: ObjectId| {
+            state
+                .objects
+                .try_get(id)
+                .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                .is_some_and(|d| {
+                    d.name == "Dress Down"
+                        || matches!(
+                            d.attachment,
+                            Some(crate::card_def::AttachmentDef::AuraCreatureOverride(c))
+                                if c.loses_abilities
+                        )
+                })
+        };
         let has_post_cast_other_spell = after.iter().any(|event| {
             matches!(
                 event,
@@ -2532,15 +2553,51 @@ fn validate_cast_life_x(
                 }
             )
         });
-        let has_post_cast_bf_departure = after.iter().any(|event| {
+        let has_ability_remover_departure = after.iter().any(|event| {
             matches!(
                 event,
                 CommittedEvent::ZoneChange {
+                    object,
                     from: Zone::Battlefield,
                     ..
-                }
+                } if is_ability_remover_def(*object)
             )
         });
+        let has_aegis_departure = after.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Battlefield,
+                    ..
+                } if state
+                    .objects
+                    .try_get(*object)
+                    .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                    .is_some_and(|d| d.name == "Assimilation Aegis")
+            )
+        });
+        let has_pre_existing_ability_remover = state
+            .players
+            .iter()
+            .flat_map(|p| p.battlefield.iter().copied())
+            .any(|id| {
+                state
+                    .objects
+                    .try_get(id)
+                    .is_some_and(|o| o.v4.face_down_v1.is_none())
+                    && is_ability_remover_def(id)
+                    && !after.iter().any(|event| {
+                        matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                object,
+                                to: Zone::Battlefield,
+                                ..
+                            } if *object == id
+                        )
+                    })
+            });
         // Every listed Bloodletter no longer in the live active set must be
         // explained by a post-payment departure, control change, ability loss,
         // or copy change.
@@ -2565,22 +2622,27 @@ fn validate_cast_life_x(
                 )
             });
             if obj.zone == Zone::Battlefield && obj.zone_change_count == link.zone_change_count {
-                let explained = if obj.controller != active {
-                    has_post_cast_other_spell || targeted_after
-                } else if !crate::continuous_characteristics_v1::printed_abilities_active(
-                    state,
-                    link.object,
-                ) {
-                    has_post_cast_bf_entry || has_post_cast_other_spell || targeted_after
-                } else {
-                    has_post_cast_bf_departure || targeted_after
-                };
+                let is_bl_or_copy_ended =
+                    is_bloodletter_def(link.object) || has_aegis_departure || targeted_after;
+                let explained = is_bl_or_copy_ended
+                    && if obj.controller != active {
+                        has_post_cast_other_spell || targeted_after
+                    } else if !crate::continuous_characteristics_v1::printed_abilities_active(
+                        state,
+                        link.object,
+                    ) {
+                        has_post_cast_bf_entry || has_post_cast_other_spell || targeted_after
+                    } else {
+                        has_aegis_departure || targeted_after
+                    };
                 if !explained {
                     return Err(
                         "listed Bloodletter is not active and has no post-payment change".into(),
                     );
                 }
             } else {
+                // Accept any post-payment departure of that incarnation so a
+                // Bloodletter stolen and then killed/sacrificed remains valid.
                 let departed_after = link.zone_change_count < obj.zone_change_count
                     && after.iter().any(|event| {
                         matches!(
@@ -2588,14 +2650,13 @@ fn validate_cast_life_x(
                             CommittedEvent::ZoneChange {
                                 object,
                                 from: Zone::Battlefield,
-                                controller_before,
                                 ..
-                            } if *object == link.object && *controller_before == active
+                            } if *object == link.object
                         )
                     });
                 if !departed_after {
                     return Err(
-                        "listed departed Bloodletter did not leave active battlefield after payment"
+                        "listed departed Bloodletter did not leave battlefield after payment"
                             .into(),
                     );
                 }
@@ -2608,7 +2669,7 @@ fn validate_cast_life_x(
             if bloodletters.contains(&live_link) {
                 continue;
             }
-            let explained = has_post_cast_bf_departure
+            let explained = has_ability_remover_departure
                 || after.iter().any(|event| {
                     matches!(
                         event,
@@ -2646,6 +2707,119 @@ fn validate_cast_life_x(
                 );
             }
         }
+        // An active-controlled Bloodletter that departed the battlefield after
+        // payment without entering, flipping face up, or losing abilities first
+        // cannot be omitted from the receipt.
+        if !has_pre_existing_ability_remover && !has_ability_remover_departure {
+            let mut seen_departed = Vec::new();
+            for (ev_idx, event) in after.iter().enumerate() {
+                let CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Battlefield,
+                    controller_before,
+                    ..
+                } = event
+                else {
+                    continue;
+                };
+                if *controller_before != active
+                    || !is_bloodletter_def(*object)
+                    || seen_departed.contains(object)
+                {
+                    continue;
+                }
+                seen_departed.push(*object);
+                if bloodletters.iter().any(|link| link.object == *object) {
+                    continue;
+                }
+                let changed_before_departure = after.iter().take(ev_idx).any(|ev| {
+                    matches!(
+                        ev,
+                        CommittedEvent::ZoneChange {
+                            object: o,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *o == *object
+                    ) || matches!(
+                        ev,
+                        CommittedEvent::TurnedFaceUp { object: o, .. } if *o == *object
+                    ) || matches!(
+                        ev,
+                        CommittedEvent::Transformed { object: o, .. } if *o == *object
+                    ) || matches!(
+                        ev,
+                        CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                            object: o,
+                            ..
+                        } if *o == *object
+                    )
+                });
+                if !changed_before_departure {
+                    return Err("departed active Bloodletter omitted from payment receipt".into());
+                }
+            }
+        }
+        // A face-up active-owned Bloodletter currently controlled by the
+        // opponent that was targeted after payment (e.g. stolen by Dominate)
+        // and not suppressed or previously targeted cannot be omitted.
+        if !has_pre_existing_ability_remover && !has_ability_remover_departure {
+            for &id in &state.players[player.index()].battlefield {
+                let obj = state.objects.get(id);
+                if obj.v4.face_down_v1.is_some()
+                    || obj.owner != active
+                    || !is_bloodletter_def(id)
+                    || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                    || bloodletters.iter().any(|link| link.object == id)
+                {
+                    continue;
+                }
+                let entered_or_flipped_after = after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == id
+                    ) || matches!(
+                        event,
+                        CommittedEvent::TurnedFaceUp {
+                            object,
+                            zone_change_count,
+                        } if *object == id && *zone_change_count == obj.zone_change_count
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Transformed { object, .. } if *object == id
+                    )
+                });
+                let targeted_after = after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::Targeted {
+                            target,
+                            target_zone_change_count,
+                            targeting_stack_item,
+                            ..
+                        } if *target == id
+                            && *target_zone_change_count == obj.zone_change_count
+                            && *targeting_stack_item != item.v4.stack_item_id
+                    )
+                });
+                let targeted_before = history.range_v2(..at).iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::Targeted {
+                            target,
+                            target_zone_change_count,
+                            ..
+                        } if *target == id && *target_zone_change_count == obj.zone_change_count
+                    )
+                });
+                if !entered_or_flipped_after && targeted_after && !targeted_before {
+                    return Err("stolen active Bloodletter omitted from payment receipt".into());
+                }
+            }
+        }
         // A face-up Bloodletter still on the active player's battlefield whose
         // abilities are only suppressed by a Dress Down that entered after
         // payment cannot be omitted from the receipt.
@@ -2662,7 +2836,8 @@ fn validate_cast_life_x(
                 })
             })
             .collect();
-        if !dress_downs_on_bf.is_empty()
+        if !has_ability_remover_departure
+            && !dress_downs_on_bf.is_empty()
             && dress_downs_on_bf.iter().all(|&dd| {
                 after.iter().any(|event| {
                     matches!(
@@ -2685,9 +2860,10 @@ fn validate_cast_life_x(
                 if bloodletters.contains(&link)
                     || obj.controller != active
                     || obj.v4.face_down_v1.is_some()
-                    || !crate::card_def::CARD_DEFS
-                        .get(usize::from(obj.card_def))
-                        .is_some_and(|d| d.name == "Bloodletter of Aclazotz")
+                    || !is_bloodletter_def(id)
+                    || crate::continuous_characteristics_v1::has_non_dress_down_ability_removal(
+                        state, id,
+                    )
                 {
                     continue;
                 }
@@ -31824,6 +32000,41 @@ pub(crate) fn copy_spell_for(
     Some((copy_source, copy_stack_item))
 }
 
+/// Whether `slot` of `spell` (with target `spec`) is an X-bounded creature
+/// target ("mana value X or less": Blue Sun's Twilight, Dominate, and
+/// Kozilek's Command creature modes).
+pub(crate) fn is_x_bounded_creature_slot(
+    state: &GameState,
+    spell: ObjectId,
+    spec: TargetSpec,
+    slot: usize,
+) -> bool {
+    state.objects.try_get(spell).is_some_and(|obj| {
+        let def = &crate::card_def::CARD_DEFS[usize::from(obj.card_def)];
+        if slot == 0 && crate::standard_cards_v1::x_bounded_creature_target(def) {
+            return true;
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        if def.name == "Kozilek's Command" {
+            return matches!(
+                (spec, slot),
+                (
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1,
+                    ),
+                    1
+                ) | (
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+                    ),
+                    0
+                )
+            );
+        }
+        false
+    })
+}
+
 /// The targets a spell copy's controller may choose instead of its
 /// inherited one: every legal target for its single-target spec. Empty for
 /// an untargeted or multi-target copy, which keeps its targets.
@@ -31844,6 +32055,7 @@ pub(crate) fn spell_copy_retarget_candidates(
     if copy.targets.len() != 1 || target_count(spec) != 1 {
         return Vec::new();
     }
+    let x_bounded = is_x_bounded_creature_slot(state, copy.source, spec, 0);
     legal_targets_for_controller_from_source(
         spec,
         &[],
@@ -31851,6 +32063,15 @@ pub(crate) fn spell_copy_retarget_candidates(
         targeting_source_for_object(state, copy.source),
         state,
     )
+    .into_iter()
+    .filter(|target| {
+        !x_bounded
+            || !matches!(
+                target,
+                Target::Object(o) if object_mana_value(state, *o) > copy.v4.x_value
+            )
+    })
+    .collect()
 }
 
 /// The new targets a spell with a single target may be changed to
@@ -31874,6 +32095,7 @@ pub(crate) fn spell_retarget_candidates_v1(
     let [current] = item.targets.as_slice() else {
         return Vec::new();
     };
+    let x_bounded = is_x_bounded_creature_slot(state, item.source, spec, 0);
     legal_targets_for_controller_from_source(
         spec,
         &[],
@@ -31882,7 +32104,15 @@ pub(crate) fn spell_retarget_candidates_v1(
         state,
     )
     .into_iter()
-    .filter(|target| target != current && *target != Target::Object(item.source))
+    .filter(|target| {
+        target != current
+            && *target != Target::Object(item.source)
+            && (!x_bounded
+                || !matches!(
+                    target,
+                    Target::Object(o) if object_mana_value(state, *o) > item.v4.x_value
+                ))
+    })
     .collect()
 }
 
@@ -31938,30 +32168,7 @@ pub(crate) fn spell_slot_retarget_candidates_v1(
     let spec = item.v4.target_spec?;
     let slot = chosen.len();
     let current = *item.targets.get(slot)?;
-    let is_x_bounded_creature_slot = state.objects.try_get(item.source).is_some_and(|obj| {
-        let def = &crate::card_def::CARD_DEFS[usize::from(obj.card_def)];
-        if slot == 0 && crate::standard_cards_v1::x_bounded_creature_target(def) {
-            return true;
-        }
-        #[cfg(feature = "eternal-fixtures")]
-        if def.name == "Kozilek's Command" {
-            return matches!(
-                (spec, slot),
-                (
-                    TargetSpec::StandardV1(
-                        crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1,
-                    ),
-                    1
-                ) | (
-                    TargetSpec::StandardV1(
-                        crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
-                    ),
-                    0
-                )
-            );
-        }
-        false
-    });
+    let x_bounded = is_x_bounded_creature_slot(state, item.source, spec, slot);
     let legal = legal_targets_for_controller_from_source(
         spec,
         chosen,
@@ -31972,7 +32179,7 @@ pub(crate) fn spell_slot_retarget_candidates_v1(
     .into_iter()
     .filter(|target| {
         *target != Target::Object(item.source)
-            && (!is_x_bounded_creature_slot
+            && (!x_bounded
                 || !matches!(
                     target,
                     Target::Object(o) if object_mana_value(state, *o) > item.v4.x_value

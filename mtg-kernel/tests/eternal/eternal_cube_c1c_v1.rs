@@ -3831,6 +3831,60 @@ mod cast_x_routes {
         settled(&mut restored_flame);
         assert!(restored_flame.engine.halted.is_none());
         assert_eq!(zone(&restored_flame, fleshraker), Zone::Graveyard);
+
+        // Copy retargeting (Chandra, Hope's Beacon copying Blue Sun's Twilight
+        // at X = 2) must filter out MV > 2 creatures so legal games never halt.
+        let mut state = plains();
+        put(&mut state, P0, "Chandra, Hope's Beacon", Zone::Battlefield);
+        let wall = put(&mut state, P1, "Wall of Roots", Zone::Battlefield);
+        let big = put(&mut state, P1, "Bloodletter of Aclazotz", Zone::Battlefield);
+        let bst = put(&mut state, P0, "Blue Sun's Twilight", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 2);
+        cast(&mut state, bst, &[Target::Object(wall)]);
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets { legal_targets, .. } => {
+                assert!(
+                    !legal_targets.contains(&Target::Object(big)),
+                    "MV 4 Bloodletter must not be offered for X = 2 copy retarget: {legal_targets:?}"
+                );
+                Action::ChooseEffectTarget(legal_targets[0])
+            }
+            other => first_answer(other),
+        });
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.objects.get(big).controller, P1);
+
+        // Single-target retargeting (Misdirection on Dominate at X = 1) must
+        // filter out MV > 1 creatures rather than offering them and halting.
+        let mut state = plains();
+        let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+        let big = put(&mut state, P1, "Glaring Fleshraker", Zone::Battlefield);
+        let dominate = put(&mut state, P0, "Dominate", Zone::Hand);
+        let misdir = put(&mut state, P1, "Misdirection", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 2);
+        cast(&mut state, dominate, &[Target::Object(elves)]);
+        cast_finished(&mut state);
+        let _ = next(&mut state);
+        act(&mut state, Action::Pass);
+        let _ = next(&mut state);
+        pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 3);
+        act(&mut state, Action::CastSpell(misdir));
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseCastMode { .. } => {
+                Action::ChooseCastMode(mtg_kernel::engine::CastMode::Normal)
+            }
+            Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(dominate)),
+            Decision::ChooseEffectTargets { legal_targets, .. } => {
+                assert!(
+                    !legal_targets.contains(&Target::Object(big)),
+                    "MV 3 Fleshraker must not be offered for Dominate X = 1 retarget: {legal_targets:?}"
+                );
+                Action::ChooseEffectTarget(legal_targets[0])
+            }
+            other => first_answer(other),
+        });
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.objects.get(big).controller, P1);
     }
 
     #[test]
@@ -3894,7 +3948,9 @@ mod cast_x_routes {
         assert_refused(&forged_six, covenant);
 
         // If Bloodletter is exiled in response while Fire Covenant is still on
-        // the stack, payment_world still accepts X = 3 / lost = 6.
+        // the stack, genuine restore still accepts X = 3 / lost = 6, while
+        // forging X = 3 -> X = 6 and stripping the departed Bloodletter link
+        // is refused.
         let mut after_removal = restore(&state);
         pool(&mut after_removal, P0, &[ManaColor::W], 0);
         cast(&mut after_removal, swords, &[Target::Object(bloodletter)]);
@@ -3907,6 +3963,34 @@ mod cast_x_routes {
         let _ = next(&mut after_removal);
         assert_eq!(zone(&after_removal, bloodletter), Zone::Exile);
         assert_eq!(after_removal.stack.len(), 1);
+        let mut forged_after_removal = restore(&after_removal);
+        set_final_x(&mut forged_after_removal, covenant, 6);
+        let wall_contract = mtg_kernel::state::StackTargetContractV4::capture(
+            &forged_after_removal,
+            Target::Object(target_creature),
+        );
+        let top = forged_after_removal.stack.last_mut().unwrap();
+        top.targets = vec![Target::Object(target_creature); 6];
+        top.v4.target_contracts = vec![wall_contract; 6];
+        for event in forged_after_removal.engine.event_history.iter_mut() {
+            match event {
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    amount,
+                    bloodletters,
+                    ..
+                } => {
+                    *amount = 6;
+                    bloodletters.clear();
+                }
+                event::CommittedEvent::PublishedCastIdentityV1 { receipt }
+                    if receipt.spell == covenant =>
+                {
+                    receipt.life_x_paid_v1 = Some(6);
+                }
+                _ => {}
+            }
+        }
+        assert_refused(&forged_after_removal, covenant);
         let mut after_removal = restore(&after_removal);
         settled(&mut after_removal);
         assert!(after_removal.engine.halted.is_none());
@@ -4054,7 +4138,14 @@ mod cast_x_routes {
         top.v4.target_contracts = vec![wall_contract; 6];
         for event in forged_stolen.engine.event_history.iter_mut() {
             match event {
-                event::CommittedEvent::CastLifeXPaidV1 { amount, .. } => *amount = 6,
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    amount,
+                    bloodletters,
+                    ..
+                } => {
+                    *amount = 6;
+                    bloodletters.clear();
+                }
                 event::CommittedEvent::PublishedCastIdentityV1 { receipt }
                     if receipt.spell == covenant =>
                 {
