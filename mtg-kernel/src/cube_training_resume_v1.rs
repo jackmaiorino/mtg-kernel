@@ -1,8 +1,8 @@
 use super::{
     check_stop_ledger, index_from_update_path, invalid, json_bytes, publish_bytes,
     publish_fresh_bytes, published_update_indices, read_commit, read_json, record_process_death,
-    replace_bytes, sha256_hex, stop_paths, sync_directory, update_directories, RunConfig,
-    StopRecord, TrainingDriverError,
+    replace_bytes, sha256_hex, stop_paths, sync_directory, update_directories, HostLossPolicy,
+    RunConfig, StopRecord, TrainingDriverError,
 };
 #[path = "cube_training_manifest_v1.rs"]
 mod manifest;
@@ -71,7 +71,7 @@ pub struct ResumeAuthorization {
 #[serde(deny_unknown_fields)]
 pub(super) struct ResumeReceipt {
     entry_seq: u64,
-    batch_index: u64,
+    pub(super) batch_index: u64,
     manifest_len: usize,
     manifest_sha256: String,
 }
@@ -149,11 +149,16 @@ pub(super) fn check_resume(
         }
         completed.insert(batch);
     }
-    let mut abandoned = None;
+    let mut abandoned: Option<(u64, PathBuf)> = None;
+    let mut multiple_abandoned = false;
     for path in pending {
         let batch = index_from_update_path(&path)?;
         let Some(commit) = read_commit(&path, batch, false)? else {
-            abandoned.get_or_insert((batch, path));
+            if abandoned.is_some() {
+                multiple_abandoned = true;
+            } else {
+                abandoned = Some((batch, path));
+            }
             continue;
         };
         if commit.files.contains_key("stop.json") {
@@ -177,14 +182,30 @@ pub(super) fn check_resume(
         record_process_death(config, completed.last().copied(), abandoned)?;
         return check_stop_ledger(root).map(|()| None);
     };
-    if abandoned.is_some() {
-        return Err(invalid(
-            "host-loss resume cannot replay a batch that was touched",
-        ));
-    }
     let next = completed.len() as u64;
     if completed.into_iter().ne(0..next) || next > config.update_range[1] {
         return Err(invalid("resume has no contiguous committed batch prefix"));
+    }
+    if let Some((abandoned_batch, _)) = &abandoned {
+        match config.host_loss_policy {
+            HostLossPolicy::AbandonTouchedBatch => {
+                return Err(invalid(
+                    "host-loss resume cannot replay a batch that was touched",
+                ));
+            }
+            HostLossPolicy::ReplayInterruptedBatch => {
+                if multiple_abandoned {
+                    return Err(invalid(
+                        "host-loss resume found multiple unfinished pending batches",
+                    ));
+                }
+                if *abandoned_batch != next {
+                    return Err(invalid(
+                        "interrupted uncommitted batch does not match the next batch index",
+                    ));
+                }
+            }
+        }
     }
     if receipt_path(root, proof.entry_seq).try_exists()? {
         return Err(invalid("resume entry was already used"));

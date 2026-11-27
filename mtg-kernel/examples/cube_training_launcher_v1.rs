@@ -25,13 +25,13 @@ use mtg_kernel::cube_draft_build_v1::card_index::{CardIndexV1, CubeTableSourceV1
 use mtg_kernel::cube_draft_build_v1::model::ModelCardRowsV1;
 use mtg_kernel::cube_draft_v1::{basic_land_ids, CubePool};
 use mtg_kernel::cube_owner_view_v1::cube_pool_from_ordered_ids;
-use mtg_kernel::cube_pod_runner_v1::{seed, PodPins, SeedPart};
+use mtg_kernel::cube_pod_runner_v1::{seed, PodPins, PodRecordVersion, SeedPart};
 use mtg_kernel::cube_read_plan_v1::{sha256_hex, shakedown_entry_values};
 use mtg_kernel::cube_seat_v1::GamePilot;
 use mtg_kernel::cube_training_driver_v1::{
-    load_checkpoint_read_only_bytes_v1, CensusBaselineFiles, CensusBaselinePin, OpenIntent,
-    PilotPin, PilotProvider, ResumeAuthorization, RunConfig, RunOutcome, Segment, TrainingDriver,
-    TrainingDriverError, TripwireMode, UniformOnlyPilotProvider,
+    load_checkpoint_read_only_bytes_v1, CensusBaselineFiles, CensusBaselinePin, HostLossPolicy,
+    OpenIntent, PilotPin, PilotProvider, ResumeAuthorization, RunConfig, RunOutcome, Segment,
+    TrainingDriver, TrainingDriverError, TripwireMode, UniformOnlyPilotProvider,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -124,6 +124,12 @@ struct Inputs {
     initial_checkpoint: Option<Pinned>,
     baseline: Option<Baseline>,
     builder_baseline: Option<Baseline>,
+    #[serde(default)]
+    host_loss_policy: Option<HostLossPolicy>,
+    #[serde(default)]
+    pod_record_version: Option<PodRecordVersion>,
+    #[serde(default)]
+    pilot_sample_denom: Option<u64>,
 }
 
 struct Data {
@@ -254,6 +260,16 @@ impl Inputs {
         let mut cfg = RunConfig::shakedown(args.root.join(&args.run), &args.run, segment);
         cfg.workers = args.threads;
         cfg.fill_pod_tails = args.fill_pod_tails;
+        if let Some(policy) = self.host_loss_policy {
+            cfg.host_loss_policy = policy;
+        }
+        if let Some(version) = self.pod_record_version {
+            cfg.pod_record_version = version;
+            cfg.interfaces = version.interfaces_str().to_owned();
+        }
+        if let Some(denom) = self.pilot_sample_denom {
+            cfg.pilot_sample_denom = denom;
+        }
         if self.host.trim().is_empty() || self.build_profile.trim().is_empty() {
             return Err("host and build_profile must be supplied".into());
         }
@@ -420,6 +436,9 @@ fn verify_run(config: &RunConfig, entry: &Value) -> ResultBox<RunConfig> {
         || saved.platform != config.platform
         || saved.build_profile != config.build_profile
         || saved.tripwire != config.tripwire
+        || saved.host_loss_policy != config.host_loss_policy
+        || saved.pod_record_version != config.pod_record_version
+        || saved.pilot_sample_denom != config.pilot_sample_denom
         || (config.open_intent != OpenIntent::ReadCompletedBuilder
             && (saved.host != config.host || saved.workers != config.workers))
     {

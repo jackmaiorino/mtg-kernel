@@ -6,18 +6,20 @@
 //! baselines only, never teachers or opponents in training.
 
 use crate::cube_draft_v1::{
-    basic_land_ids, drive_uniform_attempt_with_transport, generate_packs, picker_seed,
+    basic_land_ids, drive_uniform_attempt_with_options, generate_packs, picker_seed,
     receiving_seat, uniform_index, CubeDraftError, CubePool, Deck, DraftRecord, GameCaps, GameEnd,
     PickRecord, StatedRuleDeckBuilder, DECK_CARDS, DRAFTED_CARDS, DRAFT_RECORD_SCHEMA, PACK_SIZE,
     POOL_CARDS, SEATS,
 };
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 /// Frozen interface contract version implemented by this module.
 pub const M4_INTERFACES_VERSION: &str = "m4-interfaces/v2";
+/// Additive M5 interface contract version (`M4-INTERFACES-v3.md`).
+pub const M4_INTERFACES_VERSION_V3: &str = "m4-interfaces/v3";
 /// Sampler identifier recorded by learned pickers and builders (D2a exact
 /// integer apportionment).
 pub const LEARNED_SAMPLER_ID: &str = "softmax-cdf-splitmix64-v2";
@@ -447,6 +449,33 @@ pub struct AttemptSpec<'a> {
     pub action_seed: u64,
 }
 
+/// Per-source-card offered and chosen counts gathered on a preselected
+/// logical-ID sample of games (`m4-interfaces/v3` section 4).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PilotSampleCounts {
+    pub decisions: u64,
+    pub offered_decisions_by_card: BTreeMap<u16, u64>,
+    pub offered_actions_by_card: BTreeMap<u16, u64>,
+    pub chosen_by_card: BTreeMap<u16, u64>,
+}
+
+impl PilotSampleCounts {
+    /// Adds `other`'s counts into `self`.
+    pub fn merge_from(&mut self, other: &Self) {
+        self.decisions = self.decisions.saturating_add(other.decisions);
+        for (&card_id, &count) in &other.offered_decisions_by_card {
+            *self.offered_decisions_by_card.entry(card_id).or_insert(0) += count;
+        }
+        for (&card_id, &count) in &other.offered_actions_by_card {
+            *self.offered_actions_by_card.entry(card_id).or_insert(0) += count;
+        }
+        for (&card_id, &count) in &other.chosen_by_card {
+            *self.chosen_by_card.entry(card_id).or_insert(0) += count;
+        }
+    }
+}
+
 /// Result of one game attempt returned by a [`GamePilot`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttemptOutcome {
@@ -455,11 +484,26 @@ pub struct AttemptOutcome {
     pub policy_steps: Option<u64>,
     pub end: GameEnd,
     pub last_action_source: Option<u16>,
+    /// Actual starting seat in `AttemptSpec::seats` coordinates (`None` if the
+    /// session errored before starting).
+    pub first_player_seat: Option<usize>,
+    /// Actual seat in `AttemptSpec::seats` coordinates that submitted the final
+    /// decision (`None` when nobody acted, i.e., `decisions == 0`).
+    pub last_acting_seat: Option<usize>,
+    /// Optional pilot-path offered/chosen counts when sampled.
+    pub pilot_sample: Option<PilotSampleCounts>,
 }
 
 /// Plays one game attempt under explicit caps.
 pub trait GamePilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome;
+
+    /// Plays one game attempt while optionally recording per-source-card
+    /// offered and chosen counts for a preselected logical-ID sample.
+    /// Defaults to [`GamePilot::play`].
+    fn play_sampled(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        self.play(spec, caps)
+    }
 }
 
 /// Test fixture and reference baseline only: plays uniform-random legal
@@ -469,7 +513,11 @@ pub struct UniformPilot;
 
 impl GamePilot for UniformPilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
-        uniform_attempt(spec, caps, false)
+        uniform_attempt(spec, caps, false, false)
+    }
+
+    fn play_sampled(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        uniform_attempt(spec, caps, false, true)
     }
 }
 
@@ -479,12 +527,21 @@ pub struct TypedUniformPilot;
 
 impl GamePilot for TypedUniformPilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
-        uniform_attempt(spec, caps, true)
+        uniform_attempt(spec, caps, true, false)
+    }
+
+    fn play_sampled(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        uniform_attempt(spec, caps, true, true)
     }
 }
 
-fn uniform_attempt(spec: &AttemptSpec<'_>, caps: &GameCaps, typed: bool) -> AttemptOutcome {
-    let (decisions, end, tally) = drive_uniform_attempt_with_transport(
+fn uniform_attempt(
+    spec: &AttemptSpec<'_>,
+    caps: &GameCaps,
+    typed: bool,
+    sample_pilot_path: bool,
+) -> AttemptOutcome {
+    let (decisions, end, tally) = drive_uniform_attempt_with_options(
         spec.decks,
         spec.seats,
         spec.episode,
@@ -492,6 +549,7 @@ fn uniform_attempt(spec: &AttemptSpec<'_>, caps: &GameCaps, typed: bool) -> Atte
         spec.action_seed,
         caps,
         typed,
+        sample_pilot_path,
     );
     AttemptOutcome {
         decisions,
@@ -499,5 +557,12 @@ fn uniform_attempt(spec: &AttemptSpec<'_>, caps: &GameCaps, typed: bool) -> Atte
         policy_steps: tally.policy_steps,
         end,
         last_action_source: tally.last_action_source,
+        first_player_seat: tally.first_player_seat,
+        last_acting_seat: if decisions == 0 {
+            None
+        } else {
+            tally.last_acting_seat
+        },
+        pilot_sample: tally.pilot_sample,
     }
 }

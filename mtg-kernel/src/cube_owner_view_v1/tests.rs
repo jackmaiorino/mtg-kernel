@@ -1287,6 +1287,9 @@ impl GamePilot for FastDeterministicPilot {
                 reason: "fixture".to_owned(),
             },
             last_action_source: None,
+            first_player_seat: Some(spec.seats[0]),
+            last_acting_seat: Some(spec.seats[0]),
+            pilot_sample: None,
         }
     }
 }

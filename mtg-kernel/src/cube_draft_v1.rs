@@ -1169,6 +1169,15 @@ pub struct GameTally {
     /// Registry id of the source card (`semantic.source.card_db_id`) of the
     /// last action chosen, if it had one.
     pub last_action_source: Option<u16>,
+    /// Actual starting seat (in the attempt's `seats` coordinates) once the
+    /// session opened; `None` if reset errored before starting.
+    pub first_player_seat: Option<usize>,
+    /// Actual seat (in the attempt's `seats` coordinates) that submitted the
+    /// last decision; `None` when nobody acted (`decisions == 0`).
+    pub last_acting_seat: Option<usize>,
+    /// Per-source-card offered and chosen counts when pilot-path sampling was
+    /// enabled for this attempt.
+    pub pilot_sample: Option<crate::cube_seat_v1::PilotSampleCounts>,
     /// The source card of the latest chosen action that had one.
     latest_source: Option<u16>,
     /// Actions chosen after that one.
@@ -1201,6 +1210,29 @@ impl GameTally {
             self.actions_after_latest_source = 0;
         } else {
             self.actions_after_latest_source += 1;
+        }
+    }
+
+    fn record_sampled_decision(
+        &mut self,
+        offered_sources: impl Iterator<Item = Option<u16>>,
+        chosen_source: Option<u16>,
+    ) {
+        let Some(sample) = self.pilot_sample.as_mut() else {
+            return;
+        };
+        sample.decisions += 1;
+        let mut seen_in_decision = std::collections::BTreeSet::new();
+        for raw_source in offered_sources {
+            if let Some(card_id) = raw_source.filter(|&id| usize::from(id) < CARD_DEFS.len()) {
+                *sample.offered_actions_by_card.entry(card_id).or_insert(0) += 1;
+                if seen_in_decision.insert(card_id) {
+                    *sample.offered_decisions_by_card.entry(card_id).or_insert(0) += 1;
+                }
+            }
+        }
+        if let Some(card_id) = chosen_source.filter(|&id| usize::from(id) < CARD_DEFS.len()) {
+            *sample.chosen_by_card.entry(card_id).or_insert(0) += 1;
         }
     }
 
@@ -1366,6 +1398,29 @@ pub(crate) fn drive_uniform_attempt_with_transport(
     caps: &GameCaps,
     typed: bool,
 ) -> (u64, GameEnd, GameTally) {
+    drive_uniform_attempt_with_options(
+        decks,
+        seats,
+        episode,
+        env_seed,
+        action_seed,
+        caps,
+        typed,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drive_uniform_attempt_with_options(
+    decks: [&Deck; 2],
+    seats: [usize; 2],
+    episode: u64,
+    env_seed: u64,
+    action_seed: u64,
+    caps: &GameCaps,
+    typed: bool,
+    sample_pilot_path: bool,
+) -> (u64, GameEnd, GameTally) {
     let setup = GameSetup {
         decks,
         seats,
@@ -1374,6 +1429,9 @@ pub(crate) fn drive_uniform_attempt_with_transport(
         action_seed,
     };
     let mut tally = GameTally::default();
+    if sample_pilot_path {
+        tally.pilot_sample = Some(crate::cube_seat_v1::PilotSampleCounts::default());
+    }
     let drive = if typed { drive_game_typed } else { drive_game };
     let (decisions, end) = catch_game_panic(|decisions| drive(&setup, caps, decisions, &mut tally));
     (decisions, end, tally)
@@ -1529,12 +1587,19 @@ fn drive_game(
                 tally.record_stack(terminal);
                 tally.policy_steps = terminal["policy_step_count"].as_u64();
                 tally.physical_decisions = terminal["physical_decision_count"].as_u64();
+                if tally.first_player_seat.is_none() {
+                    tally.first_player_seat = Some(setup.seats[0]);
+                }
                 return terminal_end(terminal, setup.seats);
             }
             _ => {}
         }
         let decision = &reply["decision"];
         tally.record_stack(decision);
+        let acting_seat = winner_index(&decision["acting_player"]).map(|idx| setup.seats[idx]);
+        if tally.first_player_seat.is_none() {
+            tally.first_player_seat = acting_seat.or(Some(setup.seats[0]));
+        }
         if let Some(step) = decision["step"].as_u64() {
             tally.last_step = Some(step);
         }
@@ -1556,6 +1621,20 @@ fn drive_game(
         let action = &actions[uniform_index(&mut rng, actions.len())];
         *decisions += 1;
         observed.store(*decisions, Ordering::Relaxed);
+        tally.last_acting_seat = acting_seat;
+        let chosen_source = action["semantic"]["source"]["card_db_id"]
+            .as_u64()
+            .and_then(|id| u16::try_from(id).ok());
+        if tally.pilot_sample.is_some() {
+            tally.record_sampled_decision(
+                actions.iter().map(|candidate| {
+                    candidate["semantic"]["source"]["card_db_id"]
+                        .as_u64()
+                        .and_then(|id| u16::try_from(id).ok())
+                }),
+                chosen_source,
+            );
+        }
         tally.record_action(action);
         let step = *decisions;
         request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "step",
@@ -1695,10 +1774,20 @@ fn drive_game_typed(
             LimitedReplyBodyV1::Terminal { terminal } => {
                 tally.policy_steps = Some(terminal.policy_step_count);
                 tally.physical_decisions = Some(terminal.physical_decision_count);
+                if tally.first_player_seat.is_none() {
+                    tally.first_player_seat = Some(setup.seats[0]);
+                }
                 return typed_terminal_end(terminal, setup.seats);
             }
         };
         tally.record_stack_len(decision.observation.projection.surface.stack.len());
+        let acting_seat = match decision.acting_player {
+            crate::rl::PlayerSeatV1::P0 => setup.seats[0],
+            crate::rl::PlayerSeatV1::P1 => setup.seats[1],
+        };
+        if tally.first_player_seat.is_none() {
+            tally.first_player_seat = Some(acting_seat);
+        }
         tally.last_step = Some(decision.step);
         tally.last_physical_decision_id = Some(decision.physical_decision_id);
         let actions = &decision.legal_actions;
@@ -1714,7 +1803,17 @@ fn drive_game_typed(
         let action = &actions[uniform_index(&mut rng, actions.len())];
         *decisions += 1;
         observed.store(*decisions, Ordering::Relaxed);
-        tally.record_source(action_source(&action.semantic));
+        tally.last_acting_seat = Some(acting_seat);
+        let chosen_source = action_source(&action.semantic);
+        if tally.pilot_sample.is_some() {
+            tally.record_sampled_decision(
+                actions
+                    .iter()
+                    .map(|candidate| action_source(&candidate.semantic)),
+                chosen_source,
+            );
+        }
+        tally.record_source(chosen_source);
         request = LimitedRequestV1::Step {
             schema_version: SESSION_SCHEMA_VERSION,
             request_id: format!("step-{decisions}"),
@@ -1751,10 +1850,42 @@ mod tests {
             ([&deck, &deck], session_cap),
             ([&invalid, &deck], caps),
         ] {
-            let jsonl =
-                drive_uniform_attempt_with_transport(decks, [1, 0], 2, 42, 18, &caps, false);
-            let typed = drive_uniform_attempt_with_transport(decks, [1, 0], 2, 42, 18, &caps, true);
-            assert_eq!(typed, jsonl, "decks {decks:?}, caps {caps:?}");
+            for sample_pilot_path in [false, true] {
+                let jsonl = drive_uniform_attempt_with_options(
+                    decks,
+                    [1, 0],
+                    2,
+                    42,
+                    18,
+                    &caps,
+                    false,
+                    sample_pilot_path,
+                );
+                let typed = drive_uniform_attempt_with_options(
+                    decks,
+                    [1, 0],
+                    2,
+                    42,
+                    18,
+                    &caps,
+                    true,
+                    sample_pilot_path,
+                );
+                assert_eq!(
+                    typed, jsonl,
+                    "decks {decks:?}, caps {caps:?}, sample {sample_pilot_path}"
+                );
+                if jsonl.0 == 0 {
+                    assert_eq!(jsonl.2.last_acting_seat, None);
+                } else {
+                    assert_eq!(jsonl.2.first_player_seat, Some(1));
+                    assert!(matches!(jsonl.2.last_acting_seat, Some(0 | 1)));
+                    if sample_pilot_path {
+                        let sample = jsonl.2.pilot_sample.as_ref().expect("pilot sample present");
+                        assert_eq!(sample.decisions, jsonl.0);
+                    }
+                }
+            }
         }
     }
 

@@ -39,9 +39,9 @@ use crate::cube_pod_runner_v1::{
     AttemptTiming, BuilderKind, BuilderPin, BuilderRef, ChairRecord, ChairRole, DealtOrigin,
     DeckRecord, DeckSource, ExecOptions, GameCompleteHook, GameRole, GameTask, JsonParser,
     OrderedJson, PairedBuildKind, PairedBuildRecord, PilotInfo, PilotKind, PodCaps, PodGameRecord,
-    PodPins, PodRecord, PodRunnerError, PodSeeds, PodStatus, PodUse, SeatKind, SeatRef, SeatRule,
-    SeedPart, StopAttemptReport, StopReport, A2_GAME_CAPS, A2_MAX_STACK_OBJECTS,
-    DEFAULT_WATCHDOG_SECONDS, POD_RECORD_SCHEMA, READ_MAX_REPLAYS, WATCHDOG_STOP_KIND,
+    PodPilotSample, PodPins, PodRecord, PodRecordVersion, PodRunnerError, PodSeeds, PodStatus,
+    PodUse, SeatKind, SeatRef, SeatRule, SeedPart, StopAttemptReport, StopReport, A2_GAME_CAPS,
+    A2_MAX_STACK_OBJECTS, DEFAULT_WATCHDOG_SECONDS, READ_MAX_REPLAYS, WATCHDOG_STOP_KIND,
 };
 use crate::cube_seat_v1::{
     canonical_deck, run_seat_draft, BuildRows, DecisionKind, DecisionRow, GamePilot, SeatBuilder,
@@ -545,6 +545,18 @@ impl DeckRow {
             "k1_last" => Some(DeckRow::K1Last),
             "opponent" => Some(DeckRow::Opponent),
             _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            DeckRow::Candidate => "candidate",
+            DeckRow::Stated => "stated",
+            DeckRow::Current => "current",
+            DeckRow::Initial => "initial",
+            DeckRow::B1Last => "b1_last",
+            DeckRow::K1Last => "k1_last",
+            DeckRow::Opponent => "opponent",
         }
     }
 
@@ -1899,26 +1911,63 @@ fn parse_pod_game_record(value: &OrderedJson, path: &str) -> Result<PodGameRecor
     let mut attempts = Vec::with_capacity(attempts_arr.len());
     for (idx, a_val) in attempts_arr.iter().enumerate() {
         let ap = format!("{path}.attempts[{idx}]");
-        let a = expect_object_keys(
-            a_val,
-            &ap,
-            &[
-                "attempt",
-                "deal_seed",
-                "env_seed",
-                "action_seed",
-                "decisions",
-                "physical_decisions",
-                "policy_steps",
-                "end",
-                "halted",
-                "stop_kind",
-                "last_action_source",
-            ],
-        )?;
+        let a_is_v3 = matches!(a_val, OrderedJson::Object(entries) if entries.len() == 14);
+        let a = if a_is_v3 {
+            expect_object_keys(
+                a_val,
+                &ap,
+                &[
+                    "attempt",
+                    "deal_seed",
+                    "env_seed",
+                    "action_seed",
+                    "decisions",
+                    "physical_decisions",
+                    "policy_steps",
+                    "end",
+                    "halted",
+                    "stop_kind",
+                    "last_action_source",
+                    "first_player_seat",
+                    "last_acting_seat",
+                    "last_acting_arm",
+                ],
+            )?
+        } else {
+            expect_object_keys(
+                a_val,
+                &ap,
+                &[
+                    "attempt",
+                    "deal_seed",
+                    "env_seed",
+                    "action_seed",
+                    "decisions",
+                    "physical_decisions",
+                    "policy_steps",
+                    "end",
+                    "halted",
+                    "stop_kind",
+                    "last_action_source",
+                ],
+            )?
+        };
         let last_action_source = expect_opt_u64(&a[10].1, &format!("{ap}.last_action_source"))?
             .map(|n| u16::try_from(n).map_err(|_| format!("{ap}.last_action_source exceeds u16")))
             .transpose()?;
+        let (first_player_seat, last_acting_seat, last_acting_arm) = if a_is_v3 {
+            let first = expect_opt_u64(&a[11].1, &format!("{ap}.first_player_seat"))?
+                .map(|n| u8::try_from(n).map_err(|_| format!("{ap}.first_player_seat exceeds u8")))
+                .transpose()?;
+            let last = expect_opt_u64(&a[12].1, &format!("{ap}.last_acting_seat"))?
+                .map(|n| u8::try_from(n).map_err(|_| format!("{ap}.last_acting_seat exceeds u8")))
+                .transpose()?;
+            let arm =
+                expect_opt_str(&a[13].1, &format!("{ap}.last_acting_arm"))?.map(str::to_owned);
+            (first, last, arm)
+        } else {
+            (None, None, None)
+        };
         attempts.push(AttemptRecord {
             attempt: expect_u8(&a[0].1, &format!("{ap}.attempt"))?,
             deal_seed: expect_u64(&a[1].1, &format!("{ap}.deal_seed"))?,
@@ -1931,6 +1980,10 @@ fn parse_pod_game_record(value: &OrderedJson, path: &str) -> Result<PodGameRecor
             halted: expect_bool(&a[8].1, &format!("{ap}.halted"))?,
             stop_kind: expect_opt_str(&a[9].1, &format!("{ap}.stop_kind"))?.map(str::to_owned),
             last_action_source,
+            first_player_seat,
+            last_acting_seat,
+            last_acting_arm,
+            v3: a_is_v3,
         });
     }
     let scores = match &g[10].1 {
@@ -5344,6 +5397,8 @@ pub struct ReadPlanRunOptions<'a> {
     pub host: &'a str,
     pub watchdog_override: Option<Duration>,
     pub journal: Option<&'a PodProgressJournal>,
+    pub record_version: PodRecordVersion,
+    pub pilot_sample_denom: u64,
 }
 
 /// Result of executing a single [`ReadPlanV1`] pod.
@@ -5352,6 +5407,7 @@ pub struct ReadPlanPodOutput {
     pub record: PodRecord,
     pub timings: Vec<AttemptTiming>,
     pub watchdog_stopped: bool,
+    pub pilot_sample: Option<PodPilotSample>,
 }
 
 /// Executes one validated [`ReadPlanV1`] pod: redrafts and rebuilds (refusing
@@ -5376,6 +5432,19 @@ pub fn execute_read_plan_v1(
         journal.record_header(&header).map_err(PodRunnerError::Io)?;
     }
 
+    let is_a_family =
+        plan.family.is_a_mirror() || plan.family.is_one_seat() || plan.family.is_all_learned();
+    let deck_arm = |deck_id: u32, chair: Option<u8>| -> String {
+        let row = plan.decks[deck_id as usize].row.as_str();
+        if is_a_family {
+            let role = chair
+                .and_then(|c| plan.chairs.get(usize::from(c)))
+                .map_or("fixture", |ch| ch.role.as_str());
+            format!("{role}:{row}")
+        } else {
+            row.to_owned()
+        }
+    };
     let tasks: Vec<GameTask> = plan
         .games
         .iter()
@@ -5392,6 +5461,10 @@ pub fn execute_read_plan_v1(
                 decks: g.decks,
                 chairs: g.chairs,
                 seats,
+                arms: [
+                    deck_arm(g.decks[0], g.chairs[0]),
+                    deck_arm(g.decks[1], g.chairs[1]),
+                ],
                 seat_rule: SeatRule::Schedule,
                 game_seed: g.game_seed,
                 episode: g.episode,
@@ -5415,12 +5488,16 @@ pub fn execute_read_plan_v1(
 
     let stop_on_watchdog = options.execution == 1;
     let exec_opts = ExecOptions {
+        namespace: &plan.namespace,
+        run: &plan.run,
         pod_index: plan.pod_index,
         caps: plan.caps,
         watchdog_override: options.watchdog_override,
         workers: options.workers,
         host: options.host,
         stop_on_watchdog,
+        record_version: options.record_version,
+        pilot_sample_denom: options.pilot_sample_denom,
         on_game_complete,
     };
     let exec_out = execute_game_tasks_with_options(&tasks, &built_decks, pilot, &exec_opts)?;
@@ -5447,8 +5524,8 @@ pub fn execute_read_plan_v1(
         };
 
     let record = PodRecord {
-        schema: POD_RECORD_SCHEMA,
-        interfaces: M4_INTERFACES_VERSION,
+        schema: options.record_version.schema_str(),
+        interfaces: options.record_version.interfaces_str(),
         pod_use: plan.pod_use,
         namespace: plan.namespace.clone(),
         run: plan.run.clone(),
@@ -5471,6 +5548,7 @@ pub fn execute_read_plan_v1(
         record,
         timings: exec_out.timings,
         watchdog_stopped,
+        pilot_sample: exec_out.pilot_sample,
     })
 }
 
@@ -5621,9 +5699,14 @@ pub fn finalize_stopped_record_from_journal(
         }
     };
 
+    let version = if prefix_games.iter().any(|g| g.attempts.iter().any(|a| a.v3)) {
+        PodRecordVersion::V3
+    } else {
+        PodRecordVersion::V2
+    };
     let record = PodRecord {
-        schema: POD_RECORD_SCHEMA,
-        interfaces: M4_INTERFACES_VERSION,
+        schema: version.schema_str(),
+        interfaces: version.interfaces_str(),
         pod_use: plan.pod_use,
         namespace: plan.namespace.clone(),
         run: plan.run.clone(),
@@ -5839,6 +5922,8 @@ pub fn run_plan_set_execution(
             host: &verification.host,
             watchdog_override,
             journal: None,
+            record_version: PodRecordVersion::V2,
+            pilot_sample_denom: 0,
         };
         let out = execute_read_plan_v1(pool, plan, seats, pilot, &run_opts)?;
         let record_text = to_canonical_pretty_json(&out.record)?;

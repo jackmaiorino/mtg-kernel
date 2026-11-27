@@ -1,7 +1,8 @@
 use mtg_kernel::cube_draft_v1::{game_decision_counter, GameCaps, GameEnd};
 use mtg_kernel::cube_pod_runner_v1::watchdog_game_end;
 use mtg_kernel::cube_seat_v1::{
-    canonical_deck, AttemptOutcome, AttemptSpec, GamePilot, TypedUniformPilot, UniformPilot,
+    canonical_deck, AttemptOutcome, AttemptSpec, GamePilot, PilotSampleCounts, TypedUniformPilot,
+    UniformPilot,
 };
 use mtg_kernel::cube_worker_liveness_v1::{
     check_watchdog, with_heartbeat, WorkerProgress, HEARTBEAT_INTERVAL,
@@ -32,6 +33,8 @@ struct Request {
     env_seed: u64,
     action_seed: u64,
     caps: GameCaps,
+    #[serde(default)]
+    sample_pilot_path: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -42,6 +45,12 @@ struct Reply {
     policy_steps: Option<u64>,
     end: GameEnd,
     last_action_source: Option<u16>,
+    #[serde(default)]
+    first_player_seat: Option<usize>,
+    #[serde(default)]
+    last_acting_seat: Option<usize>,
+    #[serde(default)]
+    pilot_sample: Option<PilotSampleCounts>,
 }
 
 impl Reply {
@@ -52,6 +61,9 @@ impl Reply {
             policy_steps: self.policy_steps,
             end: self.end,
             last_action_source: self.last_action_source,
+            first_player_seat: self.first_player_seat,
+            last_acting_seat: self.last_acting_seat,
+            pilot_sample: self.pilot_sample,
         }
     }
 }
@@ -82,16 +94,18 @@ fn worker_loop(progress_path: &Path, interval: Duration, typed: bool) -> Fallibl
                 serde_json::from_str(&line).map_err(|error| error.to_string())?;
             progress.begin(request.id);
             let decks = request.cards.each_ref().map(|cards| canonical_deck(cards));
-            let outcome = pilot.play(
-                &AttemptSpec {
-                    decks: [&decks[0], &decks[1]],
-                    seats: request.seats,
-                    episode: request.episode,
-                    env_seed: request.env_seed,
-                    action_seed: request.action_seed,
-                },
-                &request.caps,
-            );
+            let spec = AttemptSpec {
+                decks: [&decks[0], &decks[1]],
+                seats: request.seats,
+                episode: request.episode,
+                env_seed: request.env_seed,
+                action_seed: request.action_seed,
+            };
+            let outcome = if request.sample_pilot_path {
+                pilot.play_sampled(&spec, &request.caps)
+            } else {
+                pilot.play(&spec, &request.caps)
+            };
             let reply = Reply {
                 id: request.id,
                 decisions: outcome.decisions,
@@ -99,6 +113,9 @@ fn worker_loop(progress_path: &Path, interval: Duration, typed: bool) -> Fallibl
                 policy_steps: outcome.policy_steps,
                 end: outcome.end,
                 last_action_source: outcome.last_action_source,
+                first_player_seat: outcome.first_player_seat,
+                last_acting_seat: outcome.last_acting_seat,
+                pilot_sample: outcome.pilot_sample,
             };
             serde_json::to_writer(&mut stdout, &reply).map_err(|error| error.to_string())?;
             writeln!(stdout).map_err(|error| error.to_string())?;
@@ -186,6 +203,7 @@ impl AttemptWorker {
         spec: &AttemptSpec<'_>,
         caps: &GameCaps,
         limit: Duration,
+        sample_pilot_path: bool,
     ) -> io::Result<AttemptOutcome> {
         let id = self.next_id;
         self.next_id += 1;
@@ -197,6 +215,7 @@ impl AttemptWorker {
             env_seed: spec.env_seed,
             action_seed: spec.action_seed,
             caps: *caps,
+            sample_pilot_path,
         };
         serde_json::to_writer(&mut self.input, &request)?;
         writeln!(self.input)?;
@@ -242,6 +261,9 @@ impl AttemptWorker {
                     policy_steps: None,
                     end: watchdog_game_end(),
                     last_action_source: None,
+                    first_player_seat: (last_count > 0).then_some(spec.seats[0]),
+                    last_acting_seat: None,
+                    pilot_sample: None,
                 });
             };
             seen_at = next_seen_at;
@@ -293,8 +315,13 @@ impl SupervisedUniformPilot {
     }
 }
 
-impl GamePilot for SupervisedUniformPilot {
-    fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+impl SupervisedUniformPilot {
+    fn play_inner(
+        &self,
+        spec: &AttemptSpec<'_>,
+        caps: &GameCaps,
+        sample_pilot_path: bool,
+    ) -> AttemptOutcome {
         WORKER.with_borrow_mut(|slot| {
             if slot
                 .as_ref()
@@ -313,10 +340,12 @@ impl GamePilot for SupervisedUniformPilot {
                     }
                 }
             }
-            let result = slot
-                .as_mut()
-                .expect("started attempt worker")
-                .play(spec, caps, self.limit);
+            let result = slot.as_mut().expect("started attempt worker").play(
+                spec,
+                caps,
+                self.limit,
+                sample_pilot_path,
+            );
             match result {
                 Ok(outcome) => {
                     if mtg_kernel::cube_pod_runner_v1::is_watchdog_end(&outcome.end) {
@@ -362,6 +391,16 @@ impl GamePilot for SupervisedUniformPilot {
     }
 }
 
+impl GamePilot for SupervisedUniformPilot {
+    fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        self.play_inner(spec, caps, false)
+    }
+
+    fn play_sampled(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        self.play_inner(spec, caps, true)
+    }
+}
+
 fn worker_failure(code: &str, message: String) -> AttemptOutcome {
     AttemptOutcome {
         decisions: 0,
@@ -372,6 +411,9 @@ fn worker_failure(code: &str, message: String) -> AttemptOutcome {
             message,
         },
         last_action_source: None,
+        first_player_seat: None,
+        last_acting_seat: None,
+        pilot_sample: None,
     }
 }
 

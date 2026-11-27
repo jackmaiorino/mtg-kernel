@@ -114,6 +114,9 @@ impl GamePilot for ScriptedPilot {
                 policy_steps: Some(23),
                 end: end.clone(),
                 last_action_source: *src,
+                first_player_seat: None,
+                last_acting_seat: None,
+                pilot_sample: None,
             };
         }
         let d0 = spec.decks[0].card_ids();
@@ -128,6 +131,9 @@ impl GamePilot for ScriptedPilot {
                     policy_steps: None,
                     end: end.clone(),
                     last_action_source: *src,
+                    first_player_seat: None,
+                    last_acting_seat: None,
+                    pilot_sample: None,
                 };
             }
         }
@@ -158,6 +164,9 @@ impl GamePilot for ScriptedPilot {
                 },
             },
             last_action_source: Some(d0[0]),
+            first_player_seat: None,
+            last_acting_seat: None,
+            pilot_sample: None,
         }
     }
 }
@@ -777,6 +786,9 @@ fn acceptance_6_synthetic_halt() {
                         reason: "synthetic test halt".to_owned(),
                     },
                     last_action_source: Some(77),
+                    first_player_seat: None,
+                    last_acting_seat: None,
+                    pilot_sample: None,
                 };
             }
             self.inner.play(spec, caps)
@@ -1022,6 +1034,9 @@ fn acceptance_7_exhausted_retries() {
                         policy_steps: None,
                         end: end.clone(),
                         last_action_source: *src,
+                        first_player_seat: None,
+                        last_acting_seat: None,
+                        pilot_sample: None,
                     };
                 }
             }
@@ -1568,6 +1583,9 @@ fn watchdog_expiry_recorded_as_terminal_watchdog() {
                     reason: "life_zero".to_owned(),
                 },
                 last_action_source: Some(42),
+                first_player_seat: None,
+                last_acting_seat: None,
+                pilot_sample: None,
             }
         }
     }
@@ -2298,6 +2316,9 @@ fn round2_v2_record_client_d13_dealt_and_read_halts() {
                 policy_steps: None,
                 end,
                 last_action_source: Some(9),
+                first_player_seat: None,
+                last_acting_seat: None,
+                pilot_sample: None,
             }
         }
     }
@@ -3067,6 +3088,8 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
         host: "test-host",
         watchdog_override: None,
         journal: None,
+        record_version: mtg_kernel::cube_pod_runner_v1::PodRecordVersion::V2,
+        pilot_sample_denom: 0,
     };
     let d13_out = execute_read_plan_v1(
         &pool,
@@ -3228,6 +3251,9 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
                         reason: "life_zero".to_owned(),
                     },
                     last_action_source: Some(99),
+                    first_player_seat: None,
+                    last_acting_seat: None,
+                    pilot_sample: None,
                 };
             }
             self.inner.play(spec, caps)
@@ -3388,6 +3414,8 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
                 host: "test-host",
                 watchdog_override: None,
                 journal: None,
+                record_version: mtg_kernel::cube_pod_runner_v1::PodRecordVersion::V2,
+                pilot_sample_denom: 0,
             };
             let out = execute_read_plan_v1(self.pool, plan, &UniformSeatFactory, &pilot, &opts)?;
             if plan.pod_index == 0 {
@@ -3528,4 +3556,100 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     assert_eq!(os_receipt.records.len(), 1);
     assert_eq!(os_receipt.records[0].status, PodStatus::Stopped);
     accept_plan_execution(&os_dir, 0).expect("OS child death execution accepted");
+}
+
+#[test]
+fn read_plan_v3_records_first_player_last_acting_arm_null_and_pilot_sample() {
+    use mtg_kernel::cube_pod_runner_v1::{PodRecordVersion, POD_RECORD_SCHEMA_V3};
+    use mtg_kernel::cube_seat_v1::{PilotSampleCounts, M4_INTERFACES_VERSION_V3};
+
+    struct V3ReadPilot;
+    impl GamePilot for V3ReadPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, _caps: &GameCaps) -> AttemptOutcome {
+            if spec.episode == 0 {
+                // Zero-decision halt: explicit null last_acting_seat & last_acting_arm.
+                return AttemptOutcome {
+                    decisions: 0,
+                    physical_decisions: Some(0),
+                    policy_steps: Some(0),
+                    end: GameEnd::SessionError {
+                        code: "reset_error".to_owned(),
+                        message: "no decision taken".to_owned(),
+                    },
+                    last_action_source: None,
+                    first_player_seat: None,
+                    last_acting_seat: None,
+                    pilot_sample: None,
+                };
+            }
+            let card = spec.decks[0].card_ids()[0];
+            let mut counts = PilotSampleCounts {
+                decisions: 3,
+                ..PilotSampleCounts::default()
+            };
+            counts.offered_decisions_by_card.insert(card, 2);
+            counts.offered_actions_by_card.insert(card, 4);
+            counts.chosen_by_card.insert(card, 1);
+            let last_actor = spec.seats[(spec.episode % 2) as usize];
+            AttemptOutcome {
+                decisions: 3,
+                physical_decisions: Some(3),
+                policy_steps: Some(3),
+                end: GameEnd::Natural {
+                    winner_seat: Some(spec.seats[0]),
+                    reason: "v3-read".to_owned(),
+                },
+                last_action_source: Some(card),
+                first_player_seat: Some(spec.seats[0]),
+                last_acting_seat: Some(last_actor),
+                pilot_sample: Some(counts),
+            }
+        }
+    }
+
+    let pool = CubePool::from_json_texts(
+        &std::fs::read_to_string(CUBE_LIST).unwrap(),
+        &std::fs::read_to_string(GAP_RECORD).unwrap(),
+        None,
+    )
+    .unwrap();
+    let plan = build_test_aa_plan(0, 0, &PodPins::default());
+    let opts = ReadPlanRunOptions {
+        execution: 0,
+        workers: 2,
+        host: "v3-read-host",
+        watchdog_override: None,
+        journal: None,
+        record_version: PodRecordVersion::V3,
+        pilot_sample_denom: 1,
+    };
+    let out = execute_read_plan_v1(&pool, &plan, &UniformSeatFactory, &V3ReadPilot, &opts).unwrap();
+    assert_eq!(out.record.schema, POD_RECORD_SCHEMA_V3);
+    assert_eq!(out.record.interfaces, M4_INTERFACES_VERSION_V3);
+    let json = to_canonical_pretty_json(&out.record).unwrap();
+    validate_pod_record_json(&json).expect("v3 read pod passes strict schema validator");
+
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let g0_a0 = &parsed["games"][0]["attempts"][0];
+    assert_eq!(g0_a0["decisions"], 0);
+    assert!(g0_a0["first_player_seat"].is_null());
+    assert!(g0_a0["last_acting_seat"].is_null());
+    assert!(g0_a0["last_acting_arm"].is_null());
+
+    // Episode > 0 games have non-null first_player_seat, last_acting_seat, and
+    // "{chair_role}:{deck_row}" arm labels for (a) layout.
+    let g2_a0 = &parsed["games"][2]["attempts"][0];
+    assert!(g2_a0["first_player_seat"].is_u64());
+    assert!(g2_a0["last_acting_seat"].is_u64());
+    assert!(matches!(
+        g2_a0["last_acting_arm"].as_str(),
+        Some("learning:candidate" | "fixture:candidate" | "learning:stated" | "fixture:stated")
+    ));
+
+    let sample = out
+        .pilot_sample
+        .expect("pilot_sample present when denom == 1");
+    assert_eq!(sample.total_games, out.record.games.len() as u64);
+    assert_eq!(sample.sampled_games, out.record.games.len() as u64);
+    assert!(sample.counts.decisions > 0);
 }
