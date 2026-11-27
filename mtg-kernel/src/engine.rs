@@ -2555,15 +2555,7 @@ fn validate_cast_life_x(
                             .objects
                             .try_get(receipt.spell)
                             .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
-                            .is_some_and(|d| {
-                                matches!(
-                                    d.name,
-                                    "Dominate"
-                                        | "Blue Sun's Twilight"
-                                        | "Act of Treason"
-                                        | "Claim the Firstborn"
-                                )
-                            })
+                            .is_some_and(|d| matches!(d.name, "Dominate" | "Blue Sun's Twilight"))
                     }
                     _ => false,
                 })
@@ -2808,27 +2800,14 @@ fn validate_cast_life_x(
             });
             reanimated_by_opponent || stolen_by_opponent
         };
-        let is_spell_stack_item = |stack_item_id: StackItemId| {
-            history
-                .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
-                .any(|(_, ev)| {
-                    matches!(
-                        ev,
-                        CommittedEvent::PublishedCastIdentityV1 { receipt }
-                            if receipt.stack_item_id == stack_item_id
-                    )
-                })
-        };
         // Every currently active Bloodletter omitted from the receipt must be
         // explained by a post-payment entry, face-up flip, transform, pre-existing
-        // ability suppressor departure for that permanent, active-player
-        // control-regain targeting of an opponent-acquired incarnation, or a
-        // post-payment Assimilation Aegis equip.
+        // ability suppressor departure for that permanent, or active-player
+        // control-regain targeting of an opponent-acquired incarnation.
         for &live_link in &live_bloodletters {
             if bloodletters.contains(&live_link) {
                 continue;
             }
-            let aegis_copy = crate::standard_cards_v1::active_aegis_copy(state, live_link.object);
             let acquired_by_opponent =
                 opponent_acquired_before(live_link.object, live_link.zone_change_count);
             let explained = has_pre_existing_dress_down_departure
@@ -2862,10 +2841,9 @@ fn validate_cast_life_x(
                         } if *target == live_link.object
                             && *target_zone_change_count == live_link.zone_change_count
                             && *targeting_stack_item != item.v4.stack_item_id
-                            && ((aegis_copy && !is_spell_stack_item(*targeting_stack_item))
-                                || (*targeting_controller == active
-                                    && acquired_by_opponent
-                                    && is_control_steal_stack_item(*targeting_stack_item)))
+                            && *targeting_controller == active
+                            && acquired_by_opponent
+                            && is_control_steal_stack_item(*targeting_stack_item)
                     )
                 });
             if !explained {
