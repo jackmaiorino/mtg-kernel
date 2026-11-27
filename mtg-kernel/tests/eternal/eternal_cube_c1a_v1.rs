@@ -2261,6 +2261,56 @@ fn occult_epiphany_pauses_for_miracle_before_its_second_draw() {
 }
 
 #[test]
+fn occult_epiphany_fixes_riddler_attempts_before_dredge_and_miracle() {
+    let mut state = game(&[
+        "Shenanigans",
+        "Island",
+        "Island",
+        "Island",
+        "Island",
+        "Metamorphosis Fanatic",
+        "Sol Ring",
+        "Island",
+    ]);
+    let shenanigans = state.players[0].library[0];
+    let miracle = state.players[0].library[5];
+    let later = state.players[0].library[6];
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    let epiphany = put(&mut state, P0, "Occult Epiphany", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    cast_with_x(&mut state, epiphany, 2, &[]);
+
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets == [Target::Object(imp)]
+    ));
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { legal_targets, can_finish: true, .. })
+            if legal_targets == [Target::Object(shenanigans)]
+    ));
+    act(&mut state, Action::FinishEffectSelection);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption { player: P0, source, option_count: 2 })
+            if source == miracle
+    ));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(zone(&state, later), Zone::Library);
+
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut restored, Action::ChooseEffectOption(0));
+    settle_with(&mut restored, choose_cards(vec![imp, miracle]));
+    assert_eq!(restored.players[0].draws_this_turn, 2);
+    assert_eq!(restored.players[0].hand, [later]);
+    assert_eq!(restored.players[0].library.len(), 1);
+}
+
+#[test]
 fn occult_epiphany_draws_offer_competing_draw_replacements() {
     // The X draws are staged by the Epiphany's own leaf as it resolves. Its
     // controller draws from an empty library with Jace, Wielder of Mysteries
