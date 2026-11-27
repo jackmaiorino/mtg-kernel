@@ -381,12 +381,12 @@ pub enum EventKindV1 {
     ResolutionDiscardWaitsV1,
     ResolutionDrawChoiceOfferedV1,
     ResolutionDrawChoiceAnsweredV1,
+    CastLifeXPaidV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 338;
-const _: () =
-    assert!(EventKindV1::ResolutionDrawChoiceAnsweredV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 339;
+const _: () = assert!(EventKindV1::CastLifeXPaidV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -834,6 +834,7 @@ impl CommittedEvent {
             Self::ResolutionDrawChoiceAnsweredV1 { .. } => {
                 EventKindV1::ResolutionDrawChoiceAnsweredV1
             }
+            Self::CastLifeXPaidV1 { .. } => EventKindV1::CastLifeXPaidV1,
         }
     }
 }

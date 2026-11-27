@@ -318,6 +318,35 @@ pub(crate) fn modified_life_loss(
         .fold(amount, |lost, _| lost.saturating_mul(2))
 }
 
+/// Active Bloodletter of Aclazotz battlefield links controlled by the active
+/// player that double `player`'s life loss right now (CR 118.11), sorted and
+/// deduplicated for deterministic recording on `CastLifeXPaidV1`.
+pub(crate) fn active_bloodletter_links(
+    state: &GameState,
+    player: crate::ids::PlayerId,
+) -> Vec<crate::state::ObjectLinkV4> {
+    let active = state.active_player;
+    if player == active {
+        return Vec::new();
+    }
+    let mut links: Vec<crate::state::ObjectLinkV4> = state.players[active.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&source| {
+            battlefield_definition_name(state, source) == Some("Bloodletter of Aclazotz")
+                && state.objects.get(source).controller == active
+        })
+        .map(|object| crate::state::ObjectLinkV4 {
+            object,
+            zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect();
+    links.sort_by_key(|link| (link.object.0, link.zone_change_count));
+    links.dedup();
+    links
+}
+
 /// Exact quote for new unbounded soul-count loss. Legacy callers retain
 /// their existing saturating calculation; this path refuses an inexact quote.
 pub(crate) fn modified_soul_life_loss_checked_v1(

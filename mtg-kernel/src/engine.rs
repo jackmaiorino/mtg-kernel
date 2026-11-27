@@ -2452,6 +2452,739 @@ fn spell_copy_origin_chain(
     Ok(())
 }
 
+/// Computes the exact expected life loss for `nominal` under `bloodletter_count`
+/// active opponent-turn Bloodletter of Aclazotz replacements (CR 118.11).
+fn expected_cast_life_loss(nominal: i32, bloodletter_count: usize) -> Result<i32, String> {
+    if nominal <= 0 {
+        return Err("non-positive nominal life payment".into());
+    }
+    let mut total = nominal;
+    for _ in 0..bloodletter_count {
+        total = total.saturating_mul(2);
+    }
+    Ok(total)
+}
+
+/// The receipt identifies the nominal cost and the committed loss after
+/// replacements (CR 118.11, 601.2h). It must sit immediately after its own
+/// life-loss event (when positive), immediately before any Bolas's Citadel
+/// life-loss event, and strictly inside this stack item's cast-publication
+/// window so unrelated, earlier, or Citadel life losses cannot authenticate X.
+fn validate_cast_life_x(
+    state: &GameState,
+    item: &StackItem,
+    caster: PlayerId,
+    require_publication: bool,
+) -> Result<(), String> {
+    let history = &state.engine.event_history;
+    let mut payments = history
+        .of_kinds_v2(&[EventKindV1::CastLifeXPaidV1])
+        .filter_map(|(at, event)| match event {
+            CommittedEvent::CastLifeXPaidV1 {
+                spell,
+                stack_item,
+                player,
+                amount,
+                loss,
+                bloodletters,
+            } if *stack_item == item.v4.stack_item_id => {
+                Some((at, *spell, *player, *amount, *loss, bloodletters.as_slice()))
+            }
+            _ => None,
+        });
+    let Some((at, spell, player, amount, loss, bloodletters)) = payments.next() else {
+        return Err("spell lost its additional life payment".into());
+    };
+    #[cfg(feature = "eternal-fixtures")]
+    let citadel_mv = if crate::eternal_e5a_v1::permissions::citadel_cast(state, item.source, caster)
+    {
+        i32::from(object_mana_value(state, item.source))
+    } else {
+        0
+    };
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let citadel_mv = 0;
+
+    if bloodletters
+        .windows(2)
+        .any(|pair| pair[0].object.0 >= pair[1].object.0)
+    {
+        return Err("Bloodletter payment links must be strictly sorted and unique".into());
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if (amount > 0 || citadel_mv > 0) && player != state.active_player {
+        let active = state.active_player;
+        let live_bloodletters = crate::standard_statics_v1::active_bloodletter_links(state, player);
+        let after = history.range_v2((at + 1)..);
+        let is_bloodletter_def = |id: ObjectId| {
+            state
+                .objects
+                .try_get(id)
+                .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                .is_some_and(|d| d.name == "Bloodletter of Aclazotz")
+        };
+        let is_dress_down_def = |id: ObjectId| {
+            state
+                .objects
+                .try_get(id)
+                .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                .is_some_and(|d| d.name == "Dress Down")
+        };
+        let is_loses_abilities_aura_def = |id: ObjectId| {
+            state
+                .objects
+                .try_get(id)
+                .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                .is_some_and(|d| {
+                    matches!(
+                        d.attachment,
+                        Some(crate::card_def::AttachmentDef::AuraCreatureOverride(c))
+                            if c.loses_abilities
+                    )
+                })
+        };
+        let is_control_steal_stack_item = |stack_item_id: StackItemId| {
+            history
+                .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
+                .any(|(_, ev)| match ev {
+                    CommittedEvent::PublishedCastIdentityV1 { receipt }
+                        if receipt.stack_item_id == stack_item_id =>
+                    {
+                        state
+                            .objects
+                            .try_get(receipt.spell)
+                            .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                            .is_some_and(|d| matches!(d.name, "Dominate" | "Blue Sun's Twilight"))
+                    }
+                    _ => false,
+                })
+        };
+        let has_post_cast_other_spell = after.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::SpellCast { spell: s, .. } if *s != item.source
+            )
+        });
+        let has_post_cast_bf_entry = after.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::ZoneChange {
+                    to: Zone::Battlefield,
+                    ..
+                }
+            )
+        });
+        let has_pre_existing_dress_down_departure = after.iter().enumerate().any(|(idx, event)| {
+            matches!(
+                event,
+                CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Battlefield,
+                    ..
+                } if is_dress_down_def(*object)
+                    && !after.iter().take(idx).any(|prev| {
+                        matches!(
+                            prev,
+                            CommittedEvent::ZoneChange {
+                                object: entered,
+                                to: Zone::Battlefield,
+                                ..
+                            } if *entered == *object
+                        )
+                    })
+            )
+        });
+        let pre_existing_aura_remover_departed_for = |target_link: crate::state::ObjectLinkV4| {
+            after.iter().enumerate().any(|(idx, event)| {
+                let CommittedEvent::ZoneChange {
+                    object: aura,
+                    from: Zone::Battlefield,
+                    ..
+                } = event
+                else {
+                    return false;
+                };
+                if !is_loses_abilities_aura_def(*aura)
+                    || after.iter().take(idx).any(|prev| {
+                        matches!(
+                            prev,
+                            CommittedEvent::ZoneChange {
+                                object: entered,
+                                to: Zone::Battlefield,
+                                ..
+                            } if *entered == *aura
+                        )
+                    })
+                {
+                    return false;
+                }
+                // Only excuse `target_link` if this departing Aura's latest
+                // pre-payment cast actually targeted `target_link`.
+                let latest_aura_stack_id =
+                    history.range_v2(..at).iter().rev().find_map(|ev| match ev {
+                        CommittedEvent::PublishedCastIdentityV1 { receipt }
+                            if receipt.spell == *aura =>
+                        {
+                            Some(receipt.stack_item_id)
+                        }
+                        _ => None,
+                    });
+                latest_aura_stack_id.is_some_and(|aura_stack_id| {
+                    history.range_v2(..at).iter().any(|ev| {
+                        matches!(
+                            ev,
+                            CommittedEvent::Targeted {
+                                target,
+                                target_zone_change_count,
+                                targeting_stack_item,
+                                ..
+                            } if *target == target_link.object
+                                && *target_zone_change_count == target_link.zone_change_count
+                                && *targeting_stack_item == aura_stack_id
+                        )
+                    })
+                })
+            })
+        };
+        let has_aegis_departure = after.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Battlefield,
+                    ..
+                } if state
+                    .objects
+                    .try_get(*object)
+                    .and_then(|o| crate::card_def::CARD_DEFS.get(usize::from(o.card_def)))
+                    .is_some_and(|d| d.name == "Assimilation Aegis")
+            )
+        });
+        let has_pre_existing_dress_down = state
+            .players
+            .iter()
+            .flat_map(|p| p.battlefield.iter().copied())
+            .any(|id| {
+                state
+                    .objects
+                    .try_get(id)
+                    .is_some_and(|o| o.v4.face_down_v1.is_none())
+                    && is_dress_down_def(id)
+                    && !after.iter().any(|event| {
+                        matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                object,
+                                to: Zone::Battlefield,
+                                ..
+                            } if *object == id
+                        )
+                    })
+            });
+        // Every listed Bloodletter no longer in the live active set must be
+        // explained by a post-payment departure, control change, ability loss,
+        // or copy change.
+        for &link in bloodletters {
+            if live_bloodletters.contains(&link) {
+                continue;
+            }
+            let Some(obj) = state.objects.try_get(link.object) else {
+                return Err("listed Bloodletter link does not exist".into());
+            };
+            let targeted_after = after.iter().any(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::Targeted {
+                        target,
+                        target_zone_change_count,
+                        targeting_stack_item,
+                        ..
+                    } if *target == link.object
+                        && *target_zone_change_count == link.zone_change_count
+                        && *targeting_stack_item != item.v4.stack_item_id
+                )
+            });
+            if obj.zone == Zone::Battlefield && obj.zone_change_count == link.zone_change_count {
+                let is_bl_or_copy_ended =
+                    is_bloodletter_def(link.object) || has_aegis_departure || targeted_after;
+                let explained = is_bl_or_copy_ended
+                    && if obj.controller != active {
+                        has_post_cast_other_spell || targeted_after
+                    } else if !crate::continuous_characteristics_v1::printed_abilities_active(
+                        state,
+                        link.object,
+                    ) {
+                        has_post_cast_bf_entry || has_post_cast_other_spell || targeted_after
+                    } else {
+                        has_aegis_departure || targeted_after
+                    };
+                if !explained {
+                    return Err(
+                        "listed Bloodletter is not active and has no post-payment change".into(),
+                    );
+                }
+            } else {
+                // Accept any post-payment departure of that incarnation so a
+                // Bloodletter stolen and then killed/sacrificed remains valid.
+                let departed_after = link.zone_change_count < obj.zone_change_count
+                    && after.iter().any(|event| {
+                        matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                object,
+                                from: Zone::Battlefield,
+                                ..
+                            } if *object == link.object
+                        )
+                    });
+                if !departed_after {
+                    return Err(
+                        "listed departed Bloodletter did not leave battlefield after payment"
+                            .into(),
+                    );
+                }
+            }
+        }
+        // Helper: whether `id`'s exact pre-payment battlefield incarnation
+        // (`zcc`) was reanimated by `player` or stolen by `player` before `at`.
+        let opponent_acquired_before = |id: ObjectId, zcc: u32| {
+            let last_entry_before = history.range_v2(..at).iter().enumerate().rev().find_map(
+                |(entry_idx, ev)| match ev {
+                    CommittedEvent::ZoneChange {
+                        object,
+                        from,
+                        to: Zone::Battlefield,
+                        ..
+                    } if *object == id => Some((entry_idx, *from)),
+                    _ => None,
+                },
+            );
+            let reanimated_by_opponent = last_entry_before.is_some_and(|(entry_idx, from)| {
+                matches!(from, Zone::Graveyard | Zone::Exile | Zone::Library)
+                    && history
+                        .range_v2(..entry_idx)
+                        .iter()
+                        .rev()
+                        .take_while(|ev| {
+                            !matches!(
+                                ev,
+                                CommittedEvent::ZoneChange { object, .. } if *object == id
+                            )
+                        })
+                        .any(|ev| {
+                            matches!(
+                                ev,
+                                CommittedEvent::Targeted {
+                                    target,
+                                    targeting_controller,
+                                    ..
+                                } if *target == id && *targeting_controller == player
+                            )
+                        })
+            });
+            let stolen_by_opponent = history.range_v2(..at).iter().any(|ev| {
+                matches!(
+                    ev,
+                    CommittedEvent::Targeted {
+                        target,
+                        target_zone_change_count,
+                        targeting_stack_item,
+                        targeting_controller,
+                        ..
+                    } if *target == id
+                        && *targeting_controller == player
+                        && *target_zone_change_count == zcc
+                        && is_control_steal_stack_item(*targeting_stack_item)
+                )
+            });
+            reanimated_by_opponent || stolen_by_opponent
+        };
+        // Every currently active Bloodletter omitted from the receipt must be
+        // explained by a post-payment entry, face-up flip, transform, pre-existing
+        // ability suppressor departure for that permanent, or active-player
+        // control-regain targeting of an opponent-acquired incarnation.
+        for &live_link in &live_bloodletters {
+            if bloodletters.contains(&live_link) {
+                continue;
+            }
+            let acquired_by_opponent =
+                opponent_acquired_before(live_link.object, live_link.zone_change_count);
+            let explained = has_pre_existing_dress_down_departure
+                || pre_existing_aura_remover_departed_for(live_link)
+                || after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == live_link.object
+                    ) || matches!(
+                        event,
+                        CommittedEvent::TurnedFaceUp {
+                            object,
+                            zone_change_count,
+                        } if *object == live_link.object
+                            && *zone_change_count == live_link.zone_change_count
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Transformed { object, .. } if *object == live_link.object
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Targeted {
+                            target,
+                            target_zone_change_count,
+                            targeting_stack_item,
+                            targeting_controller,
+                            ..
+                        } if *target == live_link.object
+                            && *target_zone_change_count == live_link.zone_change_count
+                            && *targeting_stack_item != item.v4.stack_item_id
+                            && *targeting_controller == active
+                            && acquired_by_opponent
+                            && is_control_steal_stack_item(*targeting_stack_item)
+                    )
+                });
+            if !explained {
+                return Err(
+                    "live active Bloodletter omitted from payment without post-payment change"
+                        .into(),
+                );
+            }
+        }
+        // An active-controlled Bloodletter that departed the battlefield after
+        // payment (including after being stolen in the same window) without
+        // entering, flipping face up, or losing abilities first cannot be
+        // omitted from the receipt.
+        if !has_pre_existing_dress_down && !has_pre_existing_dress_down_departure {
+            let mut seen_departed = Vec::new();
+            for (ev_idx, event) in after.iter().enumerate() {
+                let CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Battlefield,
+                    controller_before,
+                    ..
+                } = event
+                else {
+                    continue;
+                };
+                if !is_bloodletter_def(*object) || seen_departed.contains(object) {
+                    continue;
+                }
+                seen_departed.push(*object);
+                if bloodletters.iter().any(|link| link.object == *object) {
+                    continue;
+                }
+                let stolen_before_departure = *controller_before == player
+                    && after
+                        .iter()
+                        .take(ev_idx)
+                        .find_map(|ev| match ev {
+                            CommittedEvent::Targeted {
+                                target,
+                                target_zone_change_count,
+                                targeting_stack_item,
+                                ..
+                            } if *target == *object
+                                && *targeting_stack_item != item.v4.stack_item_id
+                                && is_control_steal_stack_item(*targeting_stack_item) =>
+                            {
+                                Some(*target_zone_change_count)
+                            }
+                            _ => None,
+                        })
+                        .is_some_and(|stolen_zcc| !opponent_acquired_before(*object, stolen_zcc));
+                if *controller_before != active && !stolen_before_departure {
+                    continue;
+                }
+                let changed_before_departure = after.iter().take(ev_idx).any(|ev| {
+                    matches!(
+                        ev,
+                        CommittedEvent::ZoneChange {
+                            object: o,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *o == *object
+                    ) || matches!(
+                        ev,
+                        CommittedEvent::TurnedFaceUp { object: o, .. } if *o == *object
+                    ) || matches!(
+                        ev,
+                        CommittedEvent::Transformed { object: o, .. } if *o == *object
+                    ) || matches!(
+                        ev,
+                        CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                            object: o,
+                            ..
+                        } if *o == *object
+                    )
+                });
+                if !changed_before_departure {
+                    return Err("departed active Bloodletter omitted from payment receipt".into());
+                }
+            }
+        }
+        // A face-up active-owned Bloodletter currently controlled by the
+        // opponent that was targeted by a control-stealing spell after payment
+        // (and not reanimated, previously stolen by opponent, or suppressed)
+        // cannot be omitted.
+        if !has_pre_existing_dress_down && !has_pre_existing_dress_down_departure {
+            for &id in &state.players[player.index()].battlefield {
+                let obj = state.objects.get(id);
+                if obj.v4.face_down_v1.is_some()
+                    || obj.owner != active
+                    || !is_bloodletter_def(id)
+                    || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                    || crate::continuous_characteristics_v1::has_non_dress_down_ability_removal(
+                        state, id,
+                    )
+                    || bloodletters.iter().any(|link| link.object == id)
+                {
+                    continue;
+                }
+                let entered_or_flipped_after = after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == id
+                    ) || matches!(
+                        event,
+                        CommittedEvent::TurnedFaceUp {
+                            object,
+                            zone_change_count,
+                        } if *object == id && *zone_change_count == obj.zone_change_count
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Transformed { object, .. } if *object == id
+                    )
+                });
+                let stolen_after = after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::Targeted {
+                            target,
+                            target_zone_change_count,
+                            targeting_stack_item,
+                            ..
+                        } if *target == id
+                            && *target_zone_change_count == obj.zone_change_count
+                            && *targeting_stack_item != item.v4.stack_item_id
+                            && is_control_steal_stack_item(*targeting_stack_item)
+                    )
+                });
+                if !entered_or_flipped_after
+                    && stolen_after
+                    && !opponent_acquired_before(id, obj.zone_change_count)
+                {
+                    return Err("stolen active Bloodletter omitted from payment receipt".into());
+                }
+            }
+        }
+        // A face-up Bloodletter still on the active player's battlefield whose
+        // abilities are only suppressed by a Dress Down that entered after
+        // payment cannot be omitted from the receipt.
+        let dress_downs_on_bf: Vec<ObjectId> = state
+            .players
+            .iter()
+            .flat_map(|p| p.battlefield.iter().copied())
+            .filter(|&id| {
+                state
+                    .objects
+                    .try_get(id)
+                    .is_some_and(|o| o.v4.face_down_v1.is_none() && is_dress_down_def(id))
+            })
+            .collect();
+        if !has_pre_existing_dress_down_departure
+            && !dress_downs_on_bf.is_empty()
+            && dress_downs_on_bf.iter().all(|&dd| {
+                after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == dd
+                    )
+                })
+            })
+        {
+            for &id in &state.players[active.index()].battlefield {
+                let obj = state.objects.get(id);
+                let link = crate::state::ObjectLinkV4 {
+                    object: id,
+                    zone_change_count: obj.zone_change_count,
+                };
+                if bloodletters.contains(&link)
+                    || obj.controller != active
+                    || obj.v4.face_down_v1.is_some()
+                    || !is_bloodletter_def(id)
+                    || crate::continuous_characteristics_v1::has_non_dress_down_ability_removal(
+                        state, id,
+                    )
+                {
+                    continue;
+                }
+                let acquired_by_opponent = opponent_acquired_before(id, obj.zone_change_count);
+                let changed_after = after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == id
+                    ) || matches!(
+                        event,
+                        CommittedEvent::TurnedFaceUp {
+                            object,
+                            zone_change_count,
+                        } if *object == id && *zone_change_count == obj.zone_change_count
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Transformed { object, .. } if *object == id
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Targeted {
+                            target,
+                            target_zone_change_count,
+                            targeting_stack_item,
+                            targeting_controller,
+                            ..
+                        } if *target == id
+                            && *target_zone_change_count == obj.zone_change_count
+                            && *targeting_stack_item != item.v4.stack_item_id
+                            && *targeting_controller == active
+                            && acquired_by_opponent
+                            && is_control_steal_stack_item(*targeting_stack_item)
+                    )
+                });
+                if !changed_after {
+                    return Err(
+                        "pre-Dress-Down active Bloodletter omitted from payment receipt".into(),
+                    );
+                }
+            }
+        }
+    } else if !bloodletters.is_empty() {
+        return Err("unexpected Bloodletter links on non-opponent-turn life payment".into());
+    }
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    if !bloodletters.is_empty() {
+        return Err("unexpected Bloodletter links without Standard fixtures".into());
+    }
+
+    let loss_matches = match loss {
+        None => amount == 0,
+        Some((index, lost)) => {
+            let expected = expected_cast_life_loss(i32::from(amount), bloodletters.len())?;
+            amount > 0
+                && lost > 0
+                && lost == expected
+                && at > 0
+                && u64::try_from(at - 1).ok() == Some(index)
+                && history.get(at - 1)
+                    == Some(&CommittedEvent::LifeLoss {
+                        player,
+                        amount: lost,
+                    })
+                && !history
+                    .of_kinds_v2(&[EventKindV1::CastLifeXPaidV1])
+                    .any(|(other_at, event)| {
+                        other_at != at
+                            && matches!(
+                                event,
+                                CommittedEvent::CastLifeXPaidV1 {
+                                    loss: Some((other_index, _)),
+                                    ..
+                                } if *other_index == index
+                            )
+                    })
+        }
+    };
+    if !loss_matches
+        || (spell, player, amount) != (item.source, caster, item.v4.x_value)
+        || payments.next().is_some()
+    {
+        return Err("spell X disagrees with its additional life payment".into());
+    }
+    let tail_start = if citadel_mv > 0 {
+        let Some(CommittedEvent::LifeLoss {
+            player: citadel_player,
+            amount: citadel_lost,
+        }) = history.get(at + 1)
+        else {
+            return Err("Citadel life payment missing after additional life X receipt".into());
+        };
+        let expected_citadel = expected_cast_life_loss(citadel_mv, bloodletters.len())?;
+        if *citadel_player != caster || *citadel_lost != expected_citadel {
+            return Err("Citadel life payment disagrees with spell mana value".into());
+        }
+        at + 2
+    } else {
+        at + 1
+    };
+    let mut publications = history
+        .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
+        .filter_map(|(pub_at, event)| match event {
+            CommittedEvent::PublishedCastIdentityV1 { receipt }
+                if receipt.stack_item_id == item.v4.stack_item_id =>
+            {
+                Some((pub_at, receipt))
+            }
+            _ => None,
+        });
+    let tail_end = match publications.next() {
+        Some((pub_at, receipt)) => {
+            if publications.next().is_some()
+                || receipt.spell != item.source
+                || receipt.controller != caster
+                || receipt.life_x_paid_v1 != Some(item.v4.x_value)
+                || history.get(pub_at + 1)
+                    != Some(&CommittedEvent::SpellCast {
+                        spell: item.source,
+                        controller: caster,
+                    })
+                || tail_start > pub_at
+            {
+                return Err("additional life payment lies outside this spell's cast window".into());
+            }
+            pub_at
+        }
+        None if !require_publication && tail_start <= history.len() => history.len(),
+        None => return Err("spell lost its cast publication identity".into()),
+    };
+    for event in history.range_v2(tail_start..tail_end) {
+        let own_publication_event = match event {
+            CommittedEvent::Targeted {
+                targeting_stack_item,
+                ..
+            }
+            | CommittedEvent::CrimeCommitted {
+                targeting_stack_item,
+                ..
+            } => *targeting_stack_item == item.v4.stack_item_id,
+            CommittedEvent::TinybonesV72 { journal } => matches!(
+                journal.as_ref(),
+                tinybones_v72::JournalV72::Paid { stack_item_id, .. }
+                    if *stack_item_id == item.v4.stack_item_id
+            ),
+            CommittedEvent::MandatoryCastPaymentV1 { item: paid, .. } => {
+                paid.v4.stack_item_id == item.v4.stack_item_id
+            }
+            _ => false,
+        };
+        if !own_publication_event {
+            return Err("unrelated event separates life X payment from cast publication".into());
+        }
+    }
+    Ok(())
+}
+
 /// Binds a physical spell's mutable stack metadata to independently frozen
 /// evidence on the source object's current Stack incarnation. The route is
 /// captured before 601.2a moves the card, while `finalized_method` is only
@@ -2461,6 +3194,7 @@ fn validate_physical_spell_cast_origin(
     item: &StackItem,
     contract: StackSourceContractV4,
     cast_method: CastMethodV4,
+    require_publication: bool,
 ) -> Result<(), String> {
     // Commandeer (eternal wave E7b) changes a spell's controller; its cast
     // route still belongs to the player who cast it.
@@ -2604,6 +3338,34 @@ fn validate_physical_spell_cast_origin(
         }
         (false, None) => {}
     }
+    let x_cost = CastXCost::of(def, item.kicked);
+    let free_x_valid = item.v4.x_value == 0 || x_cost != CastXCost::Mana;
+    // Both routes replace the printed mana cost (CR 107.3b), even though
+    // the spell's cast method is Normal and the caster still pays a cost.
+    if !free_x_valid
+        && (crate::eternal_e5a_v1::permissions::citadel_cast(state, item.source, caster)
+            || crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, item.source, caster))
+    {
+        return Err("spell claims mana X under a fixed alternative cost".into());
+    }
+    if !is_pending_placeholder && x_cost == CastXCost::Life {
+        validate_cast_life_x(state, item, caster, require_publication)?;
+    } else if !is_pending_placeholder
+        && state
+            .engine
+            .event_history
+            .of_kinds_v2(&[EventKindV1::PublishedCastIdentityV1])
+            .any(|(_, event)| {
+                matches!(
+                    event,
+                    CommittedEvent::PublishedCastIdentityV1 { receipt }
+                        if receipt.stack_item_id == item.v4.stack_item_id
+                            && receipt.life_x_paid_v1.is_some()
+                )
+            })
+    {
+        return Err("non-life-X cast carries a life-X publication binding".into());
+    }
     let route_supports_method = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
             // A resolving instruction casts from exile for free (or paying its
@@ -2621,15 +3383,9 @@ fn validate_physical_spell_cast_origin(
                 && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, item.source);
             let free_graveyard = from_graveyard
                 && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, item.source);
-            // A free cast's X is 0, but a replicate, multikicker or splice
-            // count in the X slot counts additional costs paid.
             (origin.origin_zone == Zone::Exile || from_graveyard || from_hand)
                 && holder == caster
-                && ((from_graveyard && !free_graveyard)
-                    || paid_exile
-                    || item.v4.x_value == 0
-                    || announces_additional_cost_count(def)
-                    || (item.kicked && kicker_has_x(def)))
+                && ((from_graveyard && !free_graveyard) || paid_exile || free_x_valid)
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
                     || (is_pending_placeholder
                         && resolution_cast_v1::form_allowed(
@@ -2711,7 +3467,7 @@ fn validate_physical_spell_cast_origin(
                 && holder == item.controller
                 && source.owner == holder
                 && hand_generation == origin.origin_zone_change_count
-                && item.v4.x_value == 0
+                && free_x_valid
                 && omniscience_cast_v1::free_cast_for(state, item.source, holder)
                 && resolution_cast_v1::form_allowed(state, item.source, cast_method)
         }
@@ -2833,9 +3589,7 @@ fn validate_physical_spell_cast_origin(
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (!matches!(origin.route, SpellCastRouteV4::ExileFreePermission { .. })
-                    || ((item.v4.x_value == 0
-                        || announces_additional_cost_count(def)
-                        || (item.kicked && kicker_has_x(def)))
+                    || (free_x_valid
                         && !(cast_method == CastMethodV4::Omen
                             && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
                         && (matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Omen)
@@ -2868,6 +3622,7 @@ fn validate_physical_spell_cast_origin(
             origin.origin_zone == Zone::Exile
                 && source.owner == caster
                 && cast_method == CastMethodV4::Plotted
+                && free_x_valid
                 && def.plot_cost.is_some()
                 && source.plotted_turn == Some(plotted_turn)
                 && plotted_turn < state.turn_key_v1()
@@ -2916,6 +3671,14 @@ fn validate_physical_spell_cast_origin(
 fn validate_spell_source_contract_fields(
     state: &GameState,
     item: &StackItem,
+) -> Result<(), String> {
+    validate_spell_source_contract_fields_inner(state, item, true)
+}
+
+fn validate_spell_source_contract_fields_inner(
+    state: &GameState,
+    item: &StackItem,
+    require_publication: bool,
 ) -> Result<(), String> {
     if item.kind != StackItemKind::Spell {
         if let Some(contract) = item.v4.source_contract {
@@ -3094,7 +3857,13 @@ fn validate_spell_source_contract_fields(
         if item.is_flashback != (cast_method == CastMethodV4::Flashback) {
             return Err("physical spell flashback flag disagrees with its cast method".to_string());
         }
-        validate_physical_spell_cast_origin(state, item, contract, cast_method)?;
+        validate_physical_spell_cast_origin(
+            state,
+            item,
+            contract,
+            cast_method,
+            require_publication,
+        )?;
     }
     Ok(())
 }
@@ -4094,7 +4863,15 @@ pub(crate) fn validate_spell_stack_source(
     state: &GameState,
     item: &StackItem,
 ) -> Result<(), String> {
-    validate_spell_source_contract_fields(state, item)?;
+    validate_spell_stack_source_inner(state, item, true)
+}
+
+fn validate_spell_stack_source_inner(
+    state: &GameState,
+    item: &StackItem,
+    require_publication: bool,
+) -> Result<(), String> {
+    validate_spell_source_contract_fields_inner(state, item, require_publication)?;
     if item.kind != StackItemKind::Spell {
         return Ok(());
     }
@@ -7215,9 +7992,6 @@ pub(crate) fn x_target_is_payable(
     let Ok(x) = u8::try_from(minimum) else {
         return false;
     };
-    if resolution_cast_v1::free_cast(state, source) && x != 0 {
-        return false;
-    }
     if let Some(pending) = state
         .engine
         .pending_cast
@@ -11497,6 +12271,21 @@ fn ordinary_next_cast_targets(
     } else {
         candidates
     };
+    // CR 107.3b, 601.2c: when mana X is already fixed (e.g., Bolas's Citadel
+    // or a free-cast route), reject any target whose minimum X exceeds it.
+    let candidates =
+        if let Some(fixed_x) = pending.selected_x_v59().filter(|_| def.cost.x_count > 0) {
+            candidates
+                .into_iter()
+                .filter(|&target| {
+                    let mut extended = chosen.to_vec();
+                    extended.push(target);
+                    u16::from(crate::standard_cards_v1::minimum_x(def, &extended, state)) <= fixed_x
+                })
+                .collect()
+        } else {
+            candidates
+        };
     if !normal_cast_cost_depends_on_targets(def) {
         return candidates;
     }
@@ -11516,6 +12305,39 @@ fn ordinary_next_cast_targets(
             )
         })
         .collect()
+}
+
+/// Whether `chosen` can reach `spec`'s minimum target count while keeping
+/// every step's `minimum_x` within a pre-fixed mana X (CR 107.3b, 601.2b-c).
+fn fixed_x_target_prefix_can_complete(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    spec: TargetSpec,
+    chosen: &[Target],
+    state: &GameState,
+) -> bool {
+    if def.cost.x_count == 0 {
+        return true;
+    }
+    let Some(fixed_x) = pending.selected_x_v59() else {
+        return true;
+    };
+    if u16::from(crate::standard_cards_v1::minimum_x(def, chosen, state)) > fixed_x {
+        return false;
+    }
+    let (min_targets, _) = cast_target_bounds(spec, pending.kicked == Some(true));
+    if chosen.len() >= min_targets {
+        return true;
+    }
+    let mut prefix = chosen.to_vec();
+    for target in ordinary_next_cast_targets(def, pending, spec, &prefix, state) {
+        prefix.push(target);
+        if fixed_x_target_prefix_can_complete(def, pending, spec, &prefix, state) {
+            return true;
+        }
+        prefix.pop();
+    }
+    false
 }
 
 /// Kaervek's Torch (Pauper field wave Pf1c): whether `pending` stays payable
@@ -12060,15 +12882,20 @@ fn viable_pending_spell_forms(
         modes.retain(|&mode| {
             let mut selected = pending.clone();
             selected.mode_chosen = Some(mode);
-            pending_cast_quote_v1(
-                def,
-                &selected,
-                CastMethodV4::Normal,
-                pending.kicked == Some(true),
-                0,
-                state,
-            )
-            .is_some()
+            let fixed_x_targets_ok =
+                selected_spell_target_spec(def, mode, pending.kicked == Some(true)).is_some_and(
+                    |spec| fixed_x_target_prefix_can_complete(def, &selected, spec, &[], state),
+                );
+            fixed_x_targets_ok
+                && pending_cast_quote_v1(
+                    def,
+                    &selected,
+                    CastMethodV4::Normal,
+                    pending.kicked == Some(true),
+                    0,
+                    state,
+                )
+                .is_some()
         });
     }
     modes.retain(|_| resolution_cast_v1::form_allowed(state, pending.spell, CastMethodV4::Normal));
@@ -12331,13 +13158,39 @@ fn thornscape_white_kicker_payable(
     .is_some()
 }
 
-/// Whether the cast announces a count of additional cost payments in the X
-/// slot (replicate, multikicker, splice onto Arcane). The count is announced
-/// whether or not the mana cost is paid.
-fn announces_additional_cost_count(def: &card_def::CardDef) -> bool {
-    crate::eternal_cards_v1::replicate_cost(def.name).is_some()
-        || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
-        || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()
+/// CR 107.3b, 118.9d: replacing a mana cost fixes its mana X at zero,
+/// but leaves additional costs payable. The serialized X slot represents
+/// one of these costs, as determined by the spell definition and kicker.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CastXCost {
+    Mana,
+    Additional,
+    Life,
+}
+
+impl CastXCost {
+    fn of(def: &card_def::CardDef, kicker: bool) -> Self {
+        if crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
+            Self::Life
+        } else if crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+            || crate::eternal_cards_v1::replicate_cost(def.name).is_some()
+            || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
+            || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()
+            || (kicker && kicker_has_x(def))
+        {
+            Self::Additional
+        } else {
+            Self::Mana
+        }
+    }
+
+    fn seed(self, def: &card_def::CardDef, mana_replaced: bool) -> Option<u8> {
+        (self == Self::Mana
+            && (mana_replaced
+                || (def.cost.x_count == 0
+                    && supported_bestow(def).is_none_or(|b| b.cost.x_count == 0))))
+        .then_some(0)
+    }
 }
 
 /// Whether `def` has an X kicker cost ("Kicker {X}. X can't be 0." --
@@ -12350,17 +13203,11 @@ fn kicker_min_x(def: &card_def::CardDef, kicked: bool) -> u16 {
     u16::from(kicked && kicker_has_x(def))
 }
 
-/// Records the pay-or-skip answer of a hand cast under a free-cast
-/// permission. Skipping the mana cost makes X zero, except Sickening
-/// Dreams' X, which counts an additional cost's discards, a replicate,
-/// multikicker or splice count, which counts additional cost payments, and
-/// an X kicker cost (Thieving Skydiver, wave C8c).
+/// Records a hand cast's pay-or-skip answer, fixing mana X when waived.
 fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
-    let discard_x = state.engine.pending_cast.as_ref().is_some_and(|pending| {
+    let additional_x = state.engine.pending_cast.as_ref().is_some_and(|pending| {
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
-            || announces_additional_cost_count(def)
-            || kicker_has_x(def)
+        CastXCost::of(def, true) != CastXCost::Mana
     });
     let pending = state
         .engine
@@ -12368,7 +13215,7 @@ fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
         .as_mut()
         .expect("a pending cast is choosing its free cast");
     pending.hand_free_cast_v1 = Some(choice);
-    if choice == HandFreeCastV1::WithoutManaCost && pending.x_value.is_none() && !discard_x {
+    if choice == HandFreeCastV1::WithoutManaCost && pending.x_value.is_none() && !additional_x {
         pending.x_value = Some(0);
     }
 }
@@ -12382,15 +13229,12 @@ fn free_cast_projection_quote(
 ) -> bool {
     let mut projected = state.clone();
     projected.engine.pending_cast = Some(pending.clone());
-    let x = if cfg!(feature = "eternal-fixtures")
-        && def.target_spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
-    {
-        u16::from(
-            crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&pending.targets_chosen),
-        )
-    } else {
-        kicker_min_x(def, kicked)
-    };
+    let x = u16::from(crate::standard_cards_v1::minimum_x(
+        def,
+        &pending.targets_chosen,
+        &projected,
+    ))
+    .max(kicker_min_x(def, kicked));
     pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, x, &projected).is_some()
 }
 
@@ -12539,9 +13383,21 @@ fn maximum_payable_x(
                     state,
                 )
             })
-            // Toxic Deluge: at most the life its caster has (wave S1b).
-            .or_else(|| crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.controller, state))
-            .unwrap_or(u8::MAX);
+            // Toxic Deluge / Fire Covenant / Vicious Rivalry: at most the life
+            // remaining after the route's own life payment (CR 118.9d, 119.4).
+            .or_else(|| {
+                crate::eternal_sideboard_s1b_v1::life_x_cap(
+                    def,
+                    pending.spell,
+                    pending.controller,
+                    state,
+                )
+            });
+    let cap = if crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
+        cap?
+    } else {
+        cap.unwrap_or(u8::MAX)
+    };
     // Serra Paragon: X-cost permanent spells cast from graveyard via Serra
     // Paragon must keep spell mana value <= 3 (Vintage Cube wave C9b).
     #[cfg(feature = "eternal-fixtures")]
@@ -18361,6 +19217,28 @@ pub(crate) fn validate_pending_cast(
                     return Err("pending cast carries an illegal target prefix".to_string());
                 }
                 prefix.push(target);
+                if let Some(x_value) = pending.selected_x_v59() {
+                    if u16::from(crate::standard_cards_v1::minimum_x(def, &prefix, state)) > x_value
+                    {
+                        return Err(
+                            "pending cast target requires a larger X than selected".to_string()
+                        );
+                    }
+                }
+            }
+            if def.cost.x_count > 0
+                && pending.selected_x_v59().is_some()
+                && !fixed_x_target_prefix_can_complete(
+                    def,
+                    pending,
+                    spec,
+                    &pending.targets_chosen,
+                    state,
+                )
+            {
+                return Err(
+                    "pending cast target selection cannot complete with its fixed X".to_string(),
+                );
             }
         }
         #[cfg(feature = "eternal-fixtures")]
@@ -18523,12 +19401,7 @@ pub(crate) fn validate_pending_cast(
 
     let selected_cost =
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
-    // Replicate's, multikicker's and splice's payment counts are announced
-    // and validated like X, and so is Sickening Dreams' "discard X cards",
-    // even for a free cast. Thieving Skydiver's "Kicker {X}. X can't be 0."
-    // likewise announces X unless kicker was declined.
-    let replicate = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
-        || announces_additional_cost_count(def);
+    let additional_x = CastXCost::of(def, false) != CastXCost::Mana;
     let kicker_x_active = kicker_has_x(def) && pending.kicked != Some(false);
     let airbent_cast = cfg!(feature = "eternal-fixtures")
         && pending.origin_zone == Zone::Exile
@@ -18537,24 +19410,31 @@ pub(crate) fn validate_pending_cast(
             pending.spell,
             pending.controller,
         );
-    let expected_seed_x: Option<u8> = if !replicate
-        && !kicker_x_active
-        && (resolution_cast_v1::free_cast(state, pending.spell)
-            || airbent_cast
-            || (def.cost.x_count == 0
-                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
-    {
-        Some(0)
-    } else {
-        None
-    };
+    let citadel_cast = cfg!(feature = "eternal-fixtures")
+        && pending.origin_zone == Zone::Library
+        && crate::eternal_e5a_v1::permissions::citadel_cast(
+            state,
+            pending.spell,
+            pending.controller,
+        );
+    let route_fixes_x = resolution_cast_v1::free_cast(state, pending.spell)
+        || airbent_cast
+        || citadel_cast
+        || pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost);
+    let expected_seed_x =
+        CastXCost::of(def, pending.kicked != Some(false)).seed(def, route_fixes_x);
     if let Some(cost) = selected_cost {
-        if cost.x_count == 0 && !replicate && !kicker_x_active {
+        // A route-fixed X is known during announcement, before targets
+        // (CR 601.2b-d). Only a player-selected X advances the X menu.
+        if (cost.x_count == 0 || route_fixes_x) && !additional_x && !kicker_x_active {
             if pending.selected_x_v59() != Some(0) {
                 return Err("non-X cast carries a noncanonical X stage".to_string());
             }
+            if crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state) > 0 {
+                return Err("pending cast targets require X greater than zero".to_string());
+            }
         } else if cost.x_count > max_supported_x_symbols()
-            || ((replicate || kicker_x_active) && cost.x_count != 0)
+            || ((additional_x || kicker_x_active) && cost.x_count != 0)
         {
             return Err("pending cast has an unsupported number of X symbols".to_string());
         } else if kicker_x_active && pending.kicked.is_none() {
@@ -18562,6 +19442,19 @@ pub(crate) fn validate_pending_cast(
                 return Err("pending cast chose X before choosing kicker".to_string());
             }
         } else if let Some(x_value) = pending.selected_x_v59() {
+            if u16::from(crate::standard_cards_v1::minimum_x(
+                def,
+                &pending.targets_chosen,
+                state,
+            )) > x_value
+            {
+                return Err("pending cast chose X below its targets' minimum".to_string());
+            }
+            if additional_x
+                && forced_cast_x(pending, def, state).is_some_and(|forced| forced != x_value)
+            {
+                return Err("announced X disagrees with its defining cost".into());
+            }
             if !crate::eternal_pauper_e8b_v1::splice_code_valid_for_hand(
                 def,
                 pending.spell,
@@ -18686,16 +19579,6 @@ pub(crate) fn validate_pending_cast(
     } else {
         Some(0)
     };
-    // Bolas's Citadel: a spell cast from the library this way pays life
-    // rather than its mana cost, so its own alternative cost (Force of Will's)
-    // is no choice; `begin_cast_ex` seeds the normal mode for it.
-    let citadel_cast = cfg!(feature = "eternal-fixtures")
-        && pending.origin_zone == Zone::Library
-        && crate::eternal_e5a_v1::permissions::citadel_cast(
-            state,
-            pending.spell,
-            pending.controller,
-        );
     let has_cast_mode_choice = def.alt_cost.is_some()
         && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none()
         && !citadel_cast
@@ -19051,6 +19934,13 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     state,
                 );
                 legal_completion
+                    && fixed_x_target_prefix_can_complete(
+                        def,
+                        &pending,
+                        spec,
+                        &pending.targets_chosen,
+                        state,
+                    )
                     && (!normal_cast_cost_depends_on_targets(def)
                         || cast_target_prefix_is_payable(
                             def,
@@ -19235,6 +20125,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             free_cast_projection_quote(def, &paying, kicked, state)
         };
         let free = !overload
+            && (CastXCost::of(def, kicked) != CastXCost::Mana
+                || crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state) == 0)
             && pending_cast_quote_v1(
                 def,
                 &pending,
@@ -21099,7 +21991,7 @@ fn log_final_targeting_events(
             matches.len()
         ));
     };
-    validated_stack_item_target_spec(item, state)?;
+    validated_stack_item_target_spec_inner(item, state, false)?;
     if item.targets.len() != item.v4.target_contracts.len() {
         return Err("final targeting vectors no longer have parallel contracts".to_string());
     }
@@ -21376,7 +22268,7 @@ fn validate_pending_trigger_for_stack(
     // producer/source/target metadata is still fully definition-validated.
     // Only this private placement probe uses the metadata path.
     validate_spell_stack_source(state, &candidate)?;
-    validated_stack_item_target_metadata(&candidate, state, false)?;
+    validated_stack_item_target_metadata(&candidate, state, false, false)?;
     Ok(())
 }
 
@@ -22584,7 +23476,15 @@ pub(crate) fn validated_stack_item_target_spec(
     item: &StackItem,
     state: &GameState,
 ) -> Result<Option<TargetSpec>, String> {
-    validate_spell_stack_source(state, item)?;
+    validated_stack_item_target_spec_inner(item, state, true)
+}
+
+fn validated_stack_item_target_spec_inner(
+    item: &StackItem,
+    state: &GameState,
+    require_publication: bool,
+) -> Result<Option<TargetSpec>, String> {
+    validate_spell_stack_source_inner(state, item, require_publication)?;
     crate::lathril_receipts_v1::validate_live(state, item)?;
     if crate::event::lathril_item_selected_v1(state, item) {
         crate::event::validate_published_lathril_v1(state, item)?;
@@ -22596,7 +23496,7 @@ pub(crate) fn validated_stack_item_target_spec(
     crate::ajani_full_v42::lifecycle::validate_item(state, item)?;
     crate::krenko_v1::validate_item(state, item)?;
     crate::fishing_pole_v39::lifecycle::validate_item(state, item)?;
-    validated_stack_item_target_metadata(item, state, true)
+    validated_stack_item_target_metadata(item, state, true, require_publication)
 }
 
 /// Pure metadata portion shared by the private prospective placement probe.
@@ -22605,6 +23505,7 @@ fn validated_stack_item_target_metadata(
     item: &StackItem,
     state: &GameState,
     require_publication: bool,
+    require_targeting_events: bool,
 ) -> Result<Option<TargetSpec>, String> {
     if !item.v4.full_text_activation_v1.is_empty() && item.kind != StackItemKind::ActivatedAbility {
         return Err("full-text producer belongs only to an activated ability".into());
@@ -22826,6 +23727,178 @@ fn validated_stack_item_target_metadata(
     };
     if !cardinality_complete || item.v4.target_contracts.len() != item.targets.len() {
         return Err("stack target and contract cardinalities are malformed".to_string());
+    }
+    if item.kind == StackItemKind::Spell {
+        // CR 107.3b, 601.2c, 608.2b: finalized X-bounded creature target spells
+        // (Blue Sun's Twilight, Dominate, and Kozilek's Command creature modes)
+        // must authenticate the targeted battlefield incarnation against
+        // announcement/retargeting (`CommittedEvent::Targeted`) and reject
+        // live same-incarnation targets whose MV exceeds X unless they were
+        // turned face up or transformed after targeting (CR 701.40b).
+        let validate_x_bounded_creature_slot = |slot: usize| -> Result<(), String> {
+            let Some(&Target::Object(target)) = item.targets.get(slot) else {
+                return Ok(());
+            };
+            let Some(&StackTargetContractV4::Object {
+                object: contract_object,
+                zone: Zone::Battlefield,
+                zone_change_count: contract_zcc,
+                ..
+            }) = item.v4.target_contracts.get(slot)
+            else {
+                return Ok(());
+            };
+            if contract_object != target {
+                return Err("stack target contract disagrees with target object".to_string());
+            }
+            let targeted_at = state
+                .engine
+                .event_history
+                .of_kinds_v2(&[EventKindV1::Targeted])
+                .filter_map(|(at, event)| match event {
+                    CommittedEvent::Targeted {
+                        target: targeted,
+                        target_zone_change_count,
+                        targeting_stack_item,
+                        ..
+                    } if (item.is_copy || *targeting_stack_item == item.v4.stack_item_id)
+                        && *targeted == target
+                        && *target_zone_change_count == contract_zcc =>
+                    {
+                        Some(at)
+                    }
+                    _ => None,
+                })
+                .next();
+            let live = state.objects.try_get(target);
+            let same_battlefield_incarnation = live.is_some_and(|obj| {
+                obj.zone == Zone::Battlefield && obj.zone_change_count == contract_zcc
+            });
+            if require_targeting_events && !item.is_copy {
+                let Some(t_at) = targeted_at else {
+                    return Err(
+                        "X-bounded creature target lacks announcement targeting event".to_string(),
+                    );
+                };
+                if !same_battlefield_incarnation {
+                    let departed_after = state
+                        .engine
+                        .event_history
+                        .range_v2((t_at + 1)..)
+                        .iter()
+                        .any(|event| {
+                            matches!(
+                                event,
+                                CommittedEvent::ZoneChange {
+                                    object,
+                                    from: Zone::Battlefield,
+                                    ..
+                                } if *object == target
+                            )
+                        });
+                    if !departed_after {
+                        return Err(
+                            "stale X-bounded creature target did not leave after targeting"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            if same_battlefield_incarnation && object_mana_value(state, target) > item.v4.x_value {
+                let mv_changed_after_targeting = targeted_at.is_some_and(|t_at| {
+                    state
+                        .engine
+                        .event_history
+                        .range_v2((t_at + 1)..)
+                        .iter()
+                        .any(|event| {
+                            matches!(
+                                event,
+                                CommittedEvent::TurnedFaceUp {
+                                    object,
+                                    zone_change_count,
+                                } if *object == target && *zone_change_count == contract_zcc
+                            ) || matches!(
+                                event,
+                                CommittedEvent::Transformed { object, .. } if *object == target
+                            ) || matches!(
+                                event,
+                                CommittedEvent::Targeted {
+                                    target: other_target,
+                                    target_zone_change_count,
+                                    targeting_stack_item,
+                                    ..
+                                } if *other_target == target
+                                    && *target_zone_change_count == contract_zcc
+                                    && *targeting_stack_item != item.v4.stack_item_id
+                            ) || matches!(
+                                event,
+                                CommittedEvent::ZoneChange {
+                                    object,
+                                    from: Zone::Battlefield,
+                                    ..
+                                } if state
+                                    .objects
+                                    .try_get(*object)
+                                    .and_then(|o| {
+                                        crate::card_def::CARD_DEFS.get(usize::from(o.card_def))
+                                    })
+                                    .is_some_and(|d| d.name == "Assimilation Aegis")
+                            )
+                        })
+                });
+                if !mv_changed_after_targeting {
+                    return Err("stack target mana value exceeds announced X".to_string());
+                }
+            }
+            Ok(())
+        };
+
+        if let Some(spell_obj) = state.objects.try_get(item.source) {
+            let def = &crate::card_def::CARD_DEFS[usize::from(spell_obj.card_def)];
+            if crate::standard_cards_v1::x_bounded_creature_target(def) {
+                validate_x_bounded_creature_slot(0)?;
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if def.name == "Kozilek's Command" {
+                match spec {
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1,
+                    ) => validate_x_bounded_creature_slot(1)?,
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+                    ) => validate_x_bounded_creature_slot(0)?,
+                    _ => {}
+                }
+            }
+        }
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if item.kind == StackItemKind::Spell {
+        // CR 107.3b, 601.2d, 601.2f: finalized X-bounded target counts cannot
+        // exceed (or, for Fire Covenant's life-per-damage division, differ from)
+        // the spell's announced X.
+        let x_cardinality_ok = match spec {
+            TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::C1cV1(
+                crate::eternal_cube_c1c_v1::targets::C1cTargetV1::CreaturePicksPerLifeV1,
+            )) => item.targets.len() == usize::from(item.v4.x_value),
+            TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::C1bV1(
+                crate::eternal_cube_c1b_v1::targets::C1bTargetV1::ArtifactsAndEnchantmentsV1,
+            )) => item.targets.len() <= usize::from(item.v4.x_value),
+            TargetSpec::StandardV1(
+                crate::standard_cards_v1::StandardTargetV1::PlayerThenGraveyardCardsV1
+                | crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+            ) => item.targets.len().saturating_sub(1) <= usize::from(item.v4.x_value),
+            spec if spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC => {
+                u16::from(
+                    crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&item.targets),
+                ) <= item.v4.x_value
+            }
+            _ => true,
+        };
+        if !x_cardinality_ok {
+            return Err("stack target count disagrees with announced X".to_string());
+        }
     }
     for (target_index, (&target, &contract)) in item
         .targets
@@ -31094,6 +32167,43 @@ pub(crate) fn copy_spell_for(
     Some((copy_source, copy_stack_item))
 }
 
+/// Whether `slot` of `spell` (with target `spec`) is an X-bounded creature
+/// target ("mana value X or less": Blue Sun's Twilight, Dominate, and
+/// Kozilek's Command creature modes).
+pub(crate) fn is_x_bounded_creature_slot(
+    state: &GameState,
+    spell: ObjectId,
+    spec: TargetSpec,
+    slot: usize,
+) -> bool {
+    state.objects.try_get(spell).is_some_and(|obj| {
+        let def = &crate::card_def::CARD_DEFS[usize::from(obj.card_def)];
+        if slot == 0 && crate::standard_cards_v1::x_bounded_creature_target(def) {
+            return true;
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        if def.name == "Kozilek's Command" {
+            return matches!(
+                (spec, slot),
+                (
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1,
+                    ),
+                    1
+                ) | (
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+                    ),
+                    0
+                )
+            );
+        }
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let _ = spec;
+        false
+    })
+}
+
 /// The targets a spell copy's controller may choose instead of its
 /// inherited one: every legal target for its single-target spec. Empty for
 /// an untargeted or multi-target copy, which keeps its targets.
@@ -31114,6 +32224,7 @@ pub(crate) fn spell_copy_retarget_candidates(
     if copy.targets.len() != 1 || target_count(spec) != 1 {
         return Vec::new();
     }
+    let x_bounded = is_x_bounded_creature_slot(state, copy.source, spec, 0);
     legal_targets_for_controller_from_source(
         spec,
         &[],
@@ -31121,6 +32232,15 @@ pub(crate) fn spell_copy_retarget_candidates(
         targeting_source_for_object(state, copy.source),
         state,
     )
+    .into_iter()
+    .filter(|target| {
+        !x_bounded
+            || !matches!(
+                target,
+                Target::Object(o) if object_mana_value(state, *o) > copy.v4.x_value
+            )
+    })
+    .collect()
 }
 
 /// The new targets a spell with a single target may be changed to
@@ -31144,6 +32264,7 @@ pub(crate) fn spell_retarget_candidates_v1(
     let [current] = item.targets.as_slice() else {
         return Vec::new();
     };
+    let x_bounded = is_x_bounded_creature_slot(state, item.source, spec, 0);
     legal_targets_for_controller_from_source(
         spec,
         &[],
@@ -31152,7 +32273,15 @@ pub(crate) fn spell_retarget_candidates_v1(
         state,
     )
     .into_iter()
-    .filter(|target| target != current && *target != Target::Object(item.source))
+    .filter(|target| {
+        target != current
+            && *target != Target::Object(item.source)
+            && (!x_bounded
+                || !matches!(
+                    target,
+                    Target::Object(o) if object_mana_value(state, *o) > item.v4.x_value
+                ))
+    })
     .collect()
 }
 
@@ -31206,7 +32335,9 @@ pub(crate) fn spell_slot_retarget_candidates_v1(
         .iter()
         .find(|item| item.v4.stack_item_id == stack_item && item.kind == StackItemKind::Spell)?;
     let spec = item.v4.target_spec?;
-    let current = *item.targets.get(chosen.len())?;
+    let slot = chosen.len();
+    let current = *item.targets.get(slot)?;
+    let x_bounded = is_x_bounded_creature_slot(state, item.source, spec, slot);
     let legal = legal_targets_for_controller_from_source(
         spec,
         chosen,
@@ -31215,7 +32346,14 @@ pub(crate) fn spell_slot_retarget_candidates_v1(
         state,
     )
     .into_iter()
-    .filter(|target| *target != Target::Object(item.source))
+    .filter(|target| {
+        *target != Target::Object(item.source)
+            && (!x_bounded
+                || !matches!(
+                    target,
+                    Target::Object(o) if object_mana_value(state, *o) > item.v4.x_value
+                ))
+    })
     .collect::<Vec<_>>();
     Some(if legal.is_empty() {
         vec![current]
@@ -33363,19 +34501,13 @@ fn materialize_begin_cast_with_quote_v1(
         // still paid when the spell is cast without paying its mana cost
         // (118.9d, 601.2f); only X in the mana cost is then 0 (107.3b).
         // Sickening Dreams' "discard X cards" likewise announces X.
-        x_value: if !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
-            && !announces_additional_cost_count(def)
-            && !kicker_has_x(def)
-            && (without_mana_cost
+        x_value: CastXCost::of(def, true).seed(
+            def,
+            without_mana_cost
                 || citadel_cast
                 || airbent_cast
-                || (def.cost.x_count == 0
-                    && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
-        {
-            Some(0)
-        } else {
-            None
-        },
+                || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost),
+        ),
         wide_x_value_v59: None,
         chosen_creature_cost_zone: None,
         chosen_creature_cost: None,
@@ -33785,6 +34917,79 @@ fn finalize_owned_cast(
         u16::try_from(mana_spent).unwrap_or(u16::MAX),
         colored_mana_spent,
     );
+    // CR 601.2f-h: pay the nominal additional life cost and record its receipt
+    // directly before any Bolas's Citadel life payment so the two LifeLoss
+    // events can never alias. Life-loss replacements may change the committed
+    // loss (CR 118.11).
+    let stack_item_id = state
+        .stack
+        .last()
+        .expect("begin_cast pushed this spell's StackItem and nothing can push another item while a cast is pending")
+        .v4
+        .stack_item_id;
+    let is_life_x_cast = CastXCost::of(def, was_kicked) == CastXCost::Life;
+    if is_life_x_cast {
+        #[cfg(feature = "eternal-fixtures")]
+        let citadel_mv = if crate::eternal_e5a_v1::permissions::citadel_cast(
+            state,
+            pending.spell,
+            pending.controller,
+        ) {
+            i32::from(object_mana_value(state, pending.spell))
+        } else {
+            0
+        };
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let citadel_mv = 0;
+        #[cfg(feature = "standard-magezero-fixtures")]
+        let bloodletters = if x_value > 0 || citadel_mv > 0 {
+            crate::standard_statics_v1::active_bloodletter_links(state, pending.controller)
+        } else {
+            Vec::new()
+        };
+        #[cfg(not(feature = "standard-magezero-fixtures"))]
+        let bloodletters = {
+            let _ = citadel_mv;
+            Vec::new()
+        };
+        let loss = if x_value > 0 {
+            let start = state.engine.event_history.len();
+            event::propose_and_commit(
+                state,
+                ProposedEvent::life_payment(pending.controller, i32::from(x_value)),
+            );
+            Some(
+                state
+                    .engine
+                    .event_history
+                    .range_v2(start..)
+                    .iter()
+                    .enumerate()
+                    .find_map(|(offset, event)| match event {
+                        CommittedEvent::LifeLoss { player, amount }
+                            if *player == pending.controller =>
+                        {
+                            Some(((start + offset) as u64, *amount))
+                        }
+                        _ => None,
+                    })
+                    .ok_or("additional life payment did not commit")?,
+            )
+        } else {
+            None
+        };
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::CastLifeXPaidV1 {
+                spell: pending.spell,
+                stack_item: stack_item_id,
+                player: pending.controller,
+                amount: x_value,
+                loss,
+                bloodletters,
+            });
+    }
     #[cfg(feature = "eternal-fixtures")]
     if cast_method != CastMethodV4::Omen
         || !crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
@@ -33920,7 +35125,7 @@ fn finalize_owned_cast(
     }
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);
-    let stack_item_id = item.v4.stack_item_id;
+    debug_assert_eq!(item.v4.stack_item_id, stack_item_id);
     mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
     tinybones_v72::paid(state, finalized_source_contract, stack_item_id);
     // Targeting validation re-authenticates a targeted spell's Storm
@@ -33936,6 +35141,7 @@ fn finalize_owned_cast(
         finalized_source_contract,
         stack_item_id,
         library_overload,
+        is_life_x_cast.then_some(x_value),
     );
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast_with_targets(state, pending.spell, pending.controller, storm_targets);
@@ -33973,14 +35179,6 @@ fn finalize_owned_cast(
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::note_cast(state, stack_item_id);
-    // Toxic Deluge: "As an additional cost to cast this spell, pay X life."
-    #[cfg(feature = "eternal-fixtures")]
-    if x_value > 0 && crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
-        event::propose_and_commit(
-            state,
-            ProposedEvent::life_loss(pending.controller, i32::from(x_value)),
-        );
-    }
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     crate::fake_your_own_death_v50::spell_custody::publish_spell(state, stack_item_id)?;
     if matches!(
