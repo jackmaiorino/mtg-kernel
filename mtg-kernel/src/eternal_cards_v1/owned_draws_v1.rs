@@ -464,6 +464,10 @@ pub enum JournalV1 {
         draw_at: usize,
         remaining: u32,
     },
+    DrawStepMiracleResumedV1 {
+        player: PlayerId,
+        draw_at: usize,
+    },
 }
 
 impl JournalV1 {

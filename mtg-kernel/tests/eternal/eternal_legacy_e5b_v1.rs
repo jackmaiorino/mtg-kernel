@@ -1338,25 +1338,101 @@ fn miracle_pauses_paradoxical_outcome_draws_without_a_dredger() {
     assert_eq!(state.players[0].draws_this_turn, 2);
 }
 
+fn draw_step_game(library: &[&str], riddlers: usize, hand: &[&str], dredgers: usize) -> GameState {
+    let mut state = game(library);
+    state.active_player = P1;
+    state.priority_player = P1;
+    for _ in 0..riddlers {
+        put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    }
+    for card in hand {
+        put(&mut state, P0, card, Zone::Hand);
+    }
+    for _ in 0..dredgers {
+        put(&mut state, P0, "Shambling Shell", Zone::Graveyard);
+    }
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Draw
+    });
+    state
+}
+
+fn restored(state: &GameState) -> GameState {
+    serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
+}
+
+fn with_miracle_remaining(mut state: GameState, remaining: Option<u32>) -> GameState {
+    state.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining =
+        mtg_kernel::eternal_vintage_e7b_v1::OptionalRemainingV1(remaining);
+    state
+}
+
+fn without_owned_draws(mut state: GameState) -> GameState {
+    state
+        .engine
+        .event_history
+        .retain(|entry| !matches!(entry, CommittedEvent::EternalOwnedDrawV1 { .. }));
+    state
+}
+
+fn draw_step_journals(state: &GameState, variant: &str) -> Vec<serde_json::Value> {
+    state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|entry| match entry {
+            CommittedEvent::EternalOwnedDrawV1 { journal } => {
+                Some(serde_json::to_value(journal).unwrap())
+            }
+            _ => None,
+        })
+        .filter(|journal| journal.get(variant).is_some())
+        .collect()
+}
+
+fn assert_unowned_draw_bytes_and_hash(state: &GameState) {
+    assert!(!state
+        .engine
+        .event_history
+        .iter()
+        .any(|entry| matches!(entry, CommittedEvent::EternalOwnedDrawV1 { .. })));
+    let bytes = serde_json::to_vec(state).unwrap();
+    let restored: GameState = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(restored.state_hash(), state.state_hash());
+    assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+}
+
+fn assert_miracle_wait_rejected(forged: &GameState) {
+    let mut stepping = restored(forged);
+    assert!(engine::step(&mut stepping, Action::ChooseEffectOption(0)).is_err());
+    let mut advancing = restored(forged);
+    assert!(matches!(
+        engine::advance_until_decision(&mut advancing),
+        Decision::Halted { .. }
+    ));
+}
+
+fn replay_miracle_wait(state: &GameState, card: ObjectId, remaining: u32) -> GameState {
+    let mut forged = state.clone();
+    let link = mtg_kernel::state::ObjectLinkV4 {
+        object: card,
+        zone_change_count: state.objects.get(card).zone_change_count,
+    };
+    forged.eternal_v1.as_mut().unwrap().e5b.miracle_offers = vec![link];
+    with_miracle_remaining(forged, Some(remaining))
+}
+
 #[test]
 fn a_restored_draw_step_wait_needs_its_reveal_and_the_riddler_draws_it_names() {
-    use mtg_kernel::eternal_vintage_e7b_v1::OptionalRemainingV1;
-
-    for riddlers in 1..=2 {
-        // With two cards in hand before the draw, neither Riddler adds a draw
-        // (121.2b): the draw step draws Terminus alone and nothing waits.
-        let mut state = game(&["Island"; 4]);
-        state.active_player = P1;
-        state.priority_player = P1;
-        let terminus = put(&mut state, P0, "Terminus", Zone::Library);
-        for _ in 0..riddlers {
-            put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
-        }
-        put(&mut state, P0, "Island", Zone::Hand);
-        put(&mut state, P0, "Island", Zone::Hand);
-        pass_until(&mut state, |state| {
-            state.active_player == P0 && state.step == Step::Draw
-        });
+    for riddlers in 0..=2 {
+        // Two cards in hand mean no Riddler adjustment and no new journal.
+        let mut state = draw_step_game(
+            &["Terminus", "Island", "Island"],
+            riddlers,
+            &["Island", "Island"],
+            0,
+        );
+        let terminus = state.players[0].library[0];
         assert!(matches!(
             next(&mut state),
             Decision::ChooseEffectOption {
@@ -1366,48 +1442,31 @@ fn a_restored_draw_step_wait_needs_its_reveal_and_the_riddler_draws_it_names() {
             } if source == terminus
         ));
         assert_eq!(state.players[0].draws_this_turn, 1);
-        let waiting = |state: &GameState| {
-            let mut forged = state.clone();
-            forged.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining =
-                OptionalRemainingV1(Some(1));
-            forged
-        };
-        // A restored wait for a draw the hand before the draw never earned.
-        let mut extra = waiting(&state);
-        assert!(engine::step(&mut extra.clone(), Action::ChooseEffectOption(0)).is_err());
-        assert!(matches!(
-            engine::advance_until_decision(&mut extra),
-            Decision::Halted { .. }
-        ));
+        assert_unowned_draw_bytes_and_hash(&state);
+
+        let extra = with_miracle_remaining(state.clone(), Some(1));
+        assert_miracle_wait_rejected(&extra);
         act(&mut state, Action::ChooseEffectOption(0));
         settled(&mut state);
         assert_eq!(state.players[0].hand.len(), 3);
-        // A restored wait with no reveal pending: `step` refuses it as
-        // `advance` does.
-        let mut unrevealed = waiting(&state);
-        assert!(engine::step(&mut unrevealed.clone(), Action::Pass).is_err());
-        assert!(matches!(
-            engine::advance_until_decision(&mut unrevealed),
-            Decision::Halted { .. }
-        ));
+
+        let unrevealed = with_miracle_remaining(state.clone(), Some(1));
+        assert!(engine::step(&mut restored(&unrevealed), Action::Pass).is_err());
+        assert_miracle_wait_rejected(&unrevealed);
     }
 }
 
 #[test]
 fn a_restored_miracle_wait_keeps_the_last_draw_after_dredge_with_two_riddlers() {
-    let mut state = game(&["Island", "Island", "Island", "Terminus", "Island", "Island"]);
-    state.active_player = P1;
-    state.priority_player = P1;
+    let mut state = draw_step_game(
+        &["Island", "Island", "Island", "Terminus", "Island", "Island"],
+        2,
+        &[],
+        1,
+    );
     let miracle = state.players[0].library[3];
     let later = state.players[0].library[4];
-    let dredger = put(&mut state, P0, "Shambling Shell", Zone::Graveyard);
-    put(&mut state, P0, "Island", Zone::Hand);
-    for _ in 0..2 {
-        put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
-    }
-    pass_until(&mut state, |state| {
-        state.active_player == P0 && state.step == Step::Draw
-    });
+    let dredger = state.players[0].graveyard[0];
     assert!(matches!(
         next(&mut state),
         Decision::ChooseEffectOption { player: P0, source, option_count: 2 } if source == dredger
@@ -1417,34 +1476,325 @@ fn a_restored_miracle_wait_keeps_the_last_draw_after_dredge_with_two_riddlers() 
         next(&mut state),
         Decision::ChooseEffectOption { player: P0, source, option_count: 2 } if source == miracle
     ));
-    assert_eq!(state.players[0].hand.len(), 3);
+    assert_eq!(state.players[0].hand.len(), 2);
     assert_eq!(state.players[0].draws_this_turn, 1);
     assert_eq!(zone(&state, later), Zone::Library);
-
-    let mut skipped = state.clone();
-    skipped.eternal_v1.as_mut().unwrap().e7b.draw_step_remaining =
-        mtg_kernel::eternal_vintage_e7b_v1::OptionalRemainingV1(None);
-    assert!(engine::step(&mut skipped, Action::ChooseEffectOption(0)).is_err());
-
-    // The saved layout predating exact draw-step receipts is still readable.
-    let mut legacy = state.clone();
-    legacy
-        .engine
-        .event_history
-        .retain(|entry| !matches!(entry, CommittedEvent::EternalOwnedDrawV1 { .. }));
+    let receipts = draw_step_journals(&state, "DrawStepMiracleV1");
+    assert_eq!(receipts.len(), 1);
     assert_eq!(
-        legacy.engine.event_history.len() + 1,
-        state.engine.event_history.len()
+        receipts[0]["DrawStepMiracleV1"]["remaining"].as_u64(),
+        Some(1)
     );
 
-    for saved in [&state, &legacy] {
-        let snapshot = serde_json::to_vec(saved).unwrap();
-        let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
-        act(&mut restored, Action::ChooseEffectOption(0));
-        settled(&mut restored);
-        assert_eq!(restored.players[0].draws_this_turn, 2);
-        assert_eq!(zone(&restored, later), Zone::Hand);
+    assert_miracle_wait_rejected(&with_miracle_remaining(state.clone(), Some(2)));
+    assert_miracle_wait_rejected(&with_miracle_remaining(state.clone(), None));
+
+    let legacy = without_owned_draws(state.clone());
+    assert_miracle_wait_rejected(&legacy);
+    let mut forged_legacy = with_miracle_remaining(legacy, Some(2));
+    forged_legacy
+        .eternal_v1
+        .as_mut()
+        .unwrap()
+        .e7b
+        .dredge_deferring = true;
+    assert_miracle_wait_rejected(&forged_legacy);
+
+    let mut current = restored(&state);
+    act(&mut current, Action::ChooseEffectOption(0));
+    settled(&mut current);
+    assert_eq!(current.players[0].draws_this_turn, 2);
+    assert_eq!(zone(&current, later), Zone::Hand);
+}
+
+#[test]
+fn miracle_draw_step_wait_cannot_be_replayed_after_resumption() {
+    let mut state = draw_step_game(
+        &["Terminus", "Island", "Island", "Island", "Island"],
+        2,
+        &["Island"],
+        0,
+    );
+    let terminus = state.players[0].library[0];
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. } if source == terminus
+    ));
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 3);
+    assert_eq!(state.players[0].hand.len(), 4);
+    assert_eq!(
+        draw_step_journals(&state, "DrawStepMiracleResumedV1").len(),
+        1
+    );
+
+    let replay = replay_miracle_wait(&state, terminus, 2);
+    assert_miracle_wait_rejected(&replay);
+}
+
+#[test]
+fn miracle_draw_step_wait_cannot_be_replayed_after_resumed_dredges() {
+    let mut state = draw_step_game(
+        &[
+            "Terminus", "Island", "Island", "Island", "Island", "Island", "Island", "Island",
+        ],
+        2,
+        &["Island"],
+        2,
+    );
+    let terminus = state.players[0].library[0];
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. }
+            if state.objects.get(source).name == "Shambling Shell"
+    ));
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. } if source == terminus
+    ));
+    act(&mut state, Action::ChooseEffectOption(0));
+    for _ in 0..2 {
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption { player: P0, source, .. }
+                if state.objects.get(source).name == "Shambling Shell"
+        ));
+        act(&mut state, Action::ChooseEffectOption(1));
     }
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(state.players[0].hand.len(), 4);
+    assert_eq!(
+        draw_step_journals(&state, "DrawStepMiracleResumedV1").len(),
+        1
+    );
+
+    let replay = replay_miracle_wait(&state, terminus, 2);
+    assert_miracle_wait_rejected(&replay);
+}
+
+#[test]
+fn miracle_draw_step_wait_rejects_a_simultaneous_dredge_choice() {
+    let mut state = draw_step_game(
+        &["Terminus", "Island", "Island"],
+        2,
+        &["Island", "Island"],
+        1,
+    );
+    let terminus = state.players[0].library[0];
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. }
+            if state.objects.get(source).name == "Shambling Shell"
+    ));
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. } if source == terminus
+    ));
+    assert_unowned_draw_bytes_and_hash(&state);
+
+    let mut forged = with_miracle_remaining(state, Some(5));
+    forged.eternal_v1.as_mut().unwrap().e7b.dredge_draw = Some(P0);
+    assert_miracle_wait_rejected(&forged);
+}
+
+#[test]
+fn single_riddler_miracle_receipt_rejects_a_forged_draw_after_dredge() {
+    let mut state = draw_step_game(
+        &["Island", "Island", "Island", "Terminus", "Island"],
+        1,
+        &[],
+        1,
+    );
+    let terminus = state.players[0].library[3];
+    let later = state.players[0].library[4];
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. }
+            if state.objects.get(source).name == "Shambling Shell"
+    ));
+    act(&mut state, Action::ChooseEffectOption(1));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. } if source == terminus
+    ));
+    assert_eq!(state.players[0].hand.len(), 2);
+    let receipts = draw_step_journals(&state, "DrawStepMiracleV1");
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0]["DrawStepMiracleV1"]["remaining"].as_u64(),
+        Some(0)
+    );
+
+    assert_miracle_wait_rejected(&with_miracle_remaining(state.clone(), Some(1)));
+    let mut current = restored(&state);
+    act(&mut current, Action::ChooseEffectOption(0));
+    settled(&mut current);
+    assert_eq!(current.players[0].draws_this_turn, 1);
+    assert_eq!(zone(&current, later), Zone::Library);
+}
+
+#[test]
+fn single_riddler_miracle_wait_restores_and_rejects_missing_or_changed_counts() {
+    let mut state = draw_step_game(&["Terminus", "Island", "Island"], 1, &[], 0);
+    let terminus = state.players[0].library[0];
+    let second = state.players[0].library[1];
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. } if source == terminus
+    ));
+    assert_eq!(state.players[0].hand, [terminus]);
+    assert_eq!(zone(&state, second), Zone::Library);
+    let receipts = draw_step_journals(&state, "DrawStepMiracleV1");
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0]["DrawStepMiracleV1"]["remaining"].as_u64(),
+        Some(1)
+    );
+
+    for remaining in [None, Some(0), Some(2)] {
+        assert_miracle_wait_rejected(&with_miracle_remaining(state.clone(), remaining));
+    }
+
+    let legacy = without_owned_draws(state.clone());
+    for saved in [&state, &legacy] {
+        let mut current = restored(saved);
+        act(&mut current, Action::ChooseEffectOption(0));
+        settled(&mut current);
+        assert_eq!(current.players[0].draws_this_turn, 2);
+        assert_eq!(zone(&current, second), Zone::Hand);
+        assert_eq!(
+            draw_step_journals(&current, "DrawStepMiracleResumedV1").len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn miracle_draw_step_zero_receipt_survives_two_dredges_and_rejects_legacy_inflation() {
+    let mut state = draw_step_game(
+        &[
+            "Island", "Island", "Island", "Island", "Island", "Island", "Terminus", "Island",
+        ],
+        2,
+        &[],
+        2,
+    );
+    let terminus = state.players[0].library[6];
+    let later = state.players[0].library[7];
+    for _ in 0..2 {
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption { player: P0, source, .. }
+                if state.objects.get(source).name == "Shambling Shell"
+        ));
+        act(&mut state, Action::ChooseEffectOption(1));
+    }
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. } if source == terminus
+    ));
+    assert_eq!(state.players[0].hand.len(), 3);
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    let receipts = draw_step_journals(&state, "DrawStepMiracleV1");
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0]["DrawStepMiracleV1"]["remaining"].as_u64(),
+        Some(0)
+    );
+    assert_miracle_wait_rejected(&with_miracle_remaining(state.clone(), Some(1)));
+
+    let mut legacy = with_miracle_remaining(without_owned_draws(state.clone()), Some(1));
+    legacy.eternal_v1.as_mut().unwrap().e7b.dredge_deferring = true;
+    assert_miracle_wait_rejected(&legacy);
+
+    let mut current = restored(&state);
+    act(&mut current, Action::ChooseEffectOption(0));
+    settled(&mut current);
+    assert_eq!(current.players[0].draws_this_turn, 1);
+    assert_eq!(zone(&current, later), Zone::Library);
+}
+
+#[test]
+fn legacy_miracle_wait_rejects_an_upkeep_graveyard_return() {
+    let mut state = game(&["Terminus", "Island", "Island"]);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let terminus = state.players[0].library[0];
+    let shell = put(&mut state, P0, "Shambling Shell", Zone::Graveyard);
+    put(&mut state, P0, "Island", Zone::Hand);
+    for _ in 0..2 {
+        put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    }
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Upkeep
+    });
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change_preserving_known_identity(shell, Zone::Hand),
+    );
+    assert_eq!(state.players[0].hand.len(), 2);
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Draw
+    });
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. } if source == terminus
+    ));
+    assert_eq!(state.players[0].hand.len(), 3);
+
+    let mut legacy = with_miracle_remaining(without_owned_draws(state), Some(1));
+    legacy.eternal_v1.as_mut().unwrap().e7b.dredge_deferring = true;
+    assert_miracle_wait_rejected(&legacy);
+}
+
+#[test]
+fn miracle_wait_rejects_a_cycling_draw_after_turn_based_dredge() {
+    let mut state = draw_step_game(
+        &["Island", "Island", "Island", "Terminus", "Island"],
+        2,
+        &["Island", "Street Wraith"],
+        1,
+    );
+    let terminus = state.players[0].library[3];
+    let wraith = state.players[0]
+        .hand
+        .iter()
+        .copied()
+        .find(|&card| state.objects.get(card).name == "Street Wraith")
+        .unwrap();
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, .. }
+            if state.objects.get(source).name == "Shambling Shell"
+    ));
+    act(&mut state, Action::ChooseEffectOption(1));
+    assert_eq!(state.players[0].draws_this_turn, 0);
+    assert_eq!(state.players[0].hand.len(), 3);
+    activate(&mut state, wraith, 0, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption { player: P0, source, .. }) if source == terminus
+    ));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(state.players[0].hand.len(), 3);
+    assert!(state.stack.is_empty());
+    assert!(state.engine.pending_effect.is_none());
+
+    let mut forged = with_miracle_remaining(without_owned_draws(state), Some(1));
+    forged.eternal_v1.as_mut().unwrap().e7b.dredge_deferring = true;
+    assert_miracle_wait_rejected(&forged);
+}
+
+#[test]
+fn non_miracle_riddler_draws_write_no_owned_draw_journal() {
+    let state = draw_step_game(&["Island", "Island", "Island"], 1, &[], 0);
+    assert_eq!(state.players[0].draws_this_turn, 2);
+    assert_eq!(state.players[0].hand.len(), 2);
+    assert_unowned_draw_bytes_and_hash(&state);
 }
 
 // ---- Leyline Binding and Static Prison ---------------------------------------------
