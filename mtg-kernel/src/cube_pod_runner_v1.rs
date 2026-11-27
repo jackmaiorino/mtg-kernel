@@ -1280,7 +1280,11 @@ fn play_game_task(
         let pilot_watchdog = is_watchdog_end(&outcome.end);
         let timed_out = pilot_watchdog || stalled;
         if sampled {
-            if !timed_out && outcome.decisions > 0 && outcome.pilot_sample.is_none() {
+            if !timed_out
+                && !matches!(outcome.end, GameEnd::Panic { .. })
+                && outcome.decisions > 0
+                && outcome.pilot_sample.is_none()
+            {
                 return Err(PodRunnerError::InvalidPlan(format!(
                     "sampled pilot did not report pilot_sample counts on pod {} game {} attempt {} after {} decisions",
                     ctx.pod_index, task.game, attempt, outcome.decisions
@@ -1317,7 +1321,7 @@ fn play_game_task(
                 } else {
                     None
                 },
-                outcome.first_player_seat.and_then(|s| u8::try_from(s).ok()),
+                None,
                 None,
             )
         } else {
@@ -3513,15 +3517,21 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
                     }
                 }
                 if sk == Some(WATCHDOG_STOP_KIND) {
-                    if last_seat.is_some() || last_arm.is_some() {
+                    if first_seat.is_some() || last_seat.is_some() || last_arm.is_some() {
                         return Err(format!(
-                            "{ap}: terminal:watchdog must leave last_acting_seat and last_acting_arm null"
+                            "{ap}: terminal:watchdog must leave first_player_seat, last_acting_seat, and last_acting_arm null"
                         ));
                     }
                 } else if decisions == 0 {
                     if last_seat.is_some() || last_arm.is_some() {
                         return Err(format!(
                             "{ap}: last_acting_seat and last_acting_arm must be null when decisions == 0"
+                        ));
+                    }
+                } else if sk == Some("panic") {
+                    if last_seat.is_some() && first_seat.is_none() {
+                        return Err(format!(
+                            "{ap}: panic with non-null last_acting_seat must also record first_player_seat"
                         ));
                     }
                 } else if first_seat.is_none() || last_seat.is_none() || last_arm.is_none() {

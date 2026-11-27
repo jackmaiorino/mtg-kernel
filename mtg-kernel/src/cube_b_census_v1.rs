@@ -172,7 +172,7 @@ pub fn stop_kind(end: &GameEnd) -> Option<String> {
             classification,
             reason,
         } => {
-            if classification == "encoder_refusal" {
+            if classification == "encoder_refusal" && code.starts_with("encoder_refusal:") {
                 Some(code.clone())
             } else {
                 Some(mask_source_numbers(reason))

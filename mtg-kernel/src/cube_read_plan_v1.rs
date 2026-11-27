@@ -5653,10 +5653,13 @@ pub fn finalize_stopped_record_from_journal_with_version(
                     else {
                         break;
                     };
-                    let Ok(game) = parse_pod_game_record(&g[1].1, "journal.game.game", expected_v3)
-                    else {
-                        break;
-                    };
+                    let game = parse_pod_game_record(&g[1].1, "journal.game.game", expected_v3)
+                        .map_err(|err| {
+                            plan_err(format!(
+                                "journal game record failed v{} validation: {err}",
+                                if expected_v3 { 3 } else { 2 }
+                            ))
+                        })?;
                     let Ok(t_arr) = expect_array(&g[2].1, "journal.game.timings") else {
                         break;
                     };
@@ -6307,6 +6310,12 @@ pub fn supervise_plan_set_execution_with_options(
                 }
                 if timing_path.exists() {
                     let _ = fs::remove_file(&timing_path);
+                }
+                let stale_pilot_path = exec_dir
+                    .join("pilot_path")
+                    .join(format!("pod-{:06}.json", pod_entry.pod_index));
+                if stale_pilot_path.exists() {
+                    let _ = fs::remove_file(&stale_pilot_path);
                 }
                 let fallback_header = prepare_read_plan_decks(pool, plan, seats)
                     .ok()

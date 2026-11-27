@@ -1092,4 +1092,73 @@ mod tests {
         validate_pod_record_json(&v3_json)
             .expect("stopped v3 refusal pod record passes schema check");
     }
+
+    #[test]
+    fn d9_collector_panic_after_progress_is_replayable_and_valid_in_v3_sampled_and_unsampled() {
+        struct PanickingCollector {
+            pin: PilotPin,
+        }
+        impl FastSessionCollector for PanickingCollector {
+            fn pin(&self) -> &PilotPin {
+                &self.pin
+            }
+
+            fn play_attempt(&self, req: &FastSessionRequest) -> FastSessionOutcome {
+                for step in 1..=3u64 {
+                    req.decision_counter.store(step, Ordering::Relaxed);
+                }
+                panic!("simulated collector panic after 3 decisions");
+            }
+        }
+
+        let pin = sample_pin();
+        let cfg =
+            D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, 0.0);
+        let pilot = D9GamePilot::new(cfg, PanickingCollector { pin: pin.clone() }).unwrap();
+
+        let cube = CubePool::from_json_texts(
+            include_str!("../../data/cube_v1/mtgo_vintage_cube_20261007.json"),
+            include_str!("../../data/cube_v1/mtgo_vintage_cube_20261007_gaps.json"),
+            None,
+        )
+        .unwrap();
+        let mut pod_cfg = TrainingPodConfig::uniform_a2(PodUse::Training, "m5-train", "b1", 0, 1);
+        pod_cfg.pilot_info = PilotInfo {
+            kind: PilotKind::Checkpoint,
+            pin: Some(pin.checkpoint_sha256),
+            decoding: M3_SAMPLE_TEMP1_WIDE_V1.to_owned(),
+        };
+        let roles = training_roles_with_older([6, 7]).unwrap();
+
+        // Both unsampled (denom=0) and sampled (denom=1) must treat collector panic identically
+        // as a replayable halt (stopping cleanly after 4 attempts, never aborting with InvalidPlan)
+        // and emit a valid v3 PodRecord per M4-INTERFACES-v3-r3 section 2 and 4.
+        for denom in [0u64, 1u64] {
+            let mut chairs = uniform_training_chairs(roles);
+            let opts = TrainingPodOptions {
+                record_version: PodRecordVersion::V3,
+                pilot_sample_denom: denom,
+                host: "test-host",
+            };
+            let err =
+                run_training_pod_with_options(&cube, &pod_cfg, &mut chairs, &pilot, &opts, None)
+                    .err()
+                    .expect("4 panics must stop the pod cleanly");
+            let PodRunnerError::Stopped(pod) = err else {
+                panic!("denom={denom}: expected Stopped pod, got {err:?}");
+            };
+            assert_eq!(pod.status, PodStatus::Stopped);
+            assert_eq!(pod.games[0].attempts.len(), 4);
+            let a0 = &pod.games[0].attempts[0];
+            assert_eq!(a0.decisions, 3);
+            assert_eq!(a0.stop_kind.as_deref(), Some("panic"));
+            assert_eq!(a0.first_player_seat, None);
+            assert_eq!(a0.last_acting_seat, None);
+            assert_eq!(a0.last_acting_arm, None);
+            assert_eq!(a0.last_action_source, None);
+            let json = serde_json::to_string(&*pod).unwrap();
+            validate_pod_record_json(&json)
+                .unwrap_or_else(|e| panic!("denom={denom}: invalid v3 panic pod record: {e}"));
+        }
+    }
 }

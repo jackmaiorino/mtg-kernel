@@ -134,6 +134,37 @@ class PodRecordV3Tests(unittest.TestCase):
         with self.assertRaises(pod_record.RecordError):
             pod_record.validate_record(wd_bad)
 
+        # Reject non-null first_player_seat on terminal:watchdog per M4-INTERFACES-v3-r3 section 2.
+        wd_bad_starter = copy.deepcopy(wd_ok)
+        wd_bad_starter["games"][1]["attempts"][0]["first_player_seat"] = wd_bad_starter["games"][1]["chairs"][0]
+        with self.assertRaises(pod_record.RecordError):
+            pod_record.validate_record(wd_bad_starter)
+
+        # Caught panic after progress allows all-null seats/arm, but rejects non-null last_acting_seat without starter.
+        panic_ok = copy.deepcopy(wd_ok)
+        pa = panic_ok["games"][1]["attempts"][0]
+        pa["end"] = {"kind": "panic", "message": "simulated"}
+        pa["stop_kind"] = "panic"
+        panic_ok["halts"] = [
+            {
+                "game": g["game"],
+                "attempt": a["attempt"],
+                "stop_kind": a["stop_kind"],
+                "last_action_source": a["last_action_source"],
+                "deal_seed": a["deal_seed"],
+            }
+            for g in panic_ok["games"]
+            for a in g["attempts"]
+            if a["halted"]
+        ]
+        pod_record.validate_record(panic_ok)
+
+        panic_bad = copy.deepcopy(panic_ok)
+        panic_bad["games"][1]["attempts"][0]["last_acting_seat"] = panic_bad["games"][1]["chairs"][0]
+        panic_bad["games"][1]["attempts"][0]["last_acting_arm"] = "learning:candidate"
+        with self.assertRaises(pod_record.RecordError):
+            pod_record.validate_record(panic_bad)
+
     def test_readers_halts_and_lengths_emits_v3_breakdowns_and_preserves_v2(self):
         plan = synth.plan("aa", 0, mirror=0)
         rec_v2 = synth.record(plan, lambda _p, _g, _f: "draw")

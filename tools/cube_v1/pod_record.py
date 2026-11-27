@@ -369,11 +369,17 @@ def _validate_attempt(
         if last_arm is not None:
             _enum(last_arm, f"{path}.last_acting_arm", VALID_LAST_ACTING_ARMS)
         if is_watchdog:
-            if last_seat is not None or last_arm is not None:
-                _fail(path, "terminal:watchdog must leave last_acting_seat and last_acting_arm null")
+            if first_seat is not None or last_seat is not None or last_arm is not None:
+                _fail(
+                    path,
+                    "terminal:watchdog must leave first_player_seat, last_acting_seat and last_acting_arm null",
+                )
         elif attempt["decisions"] == 0:
             if last_seat is not None or last_arm is not None:
                 _fail(path, "last_acting_seat and last_acting_arm must be null when decisions == 0")
+        elif attempt["stop_kind"] == "panic":
+            if last_seat is not None and first_seat is None:
+                _fail(path, "panic with non-null last_acting_seat must also record first_player_seat")
         else:
             if first_seat is None or last_seat is None or last_arm is None:
                 _fail(path, "first_player_seat, last_acting_seat and last_acting_arm must be non-null when decisions > 0")
@@ -453,7 +459,13 @@ def _validate_game(
             if deck["source"] == "dealt":
                 expected_arms.append("dealt")
             else:
-                expected_arms.append(chair_roles[deck["chair"]])
+                chair = deck["chair"]
+                if chair is None or chair not in chair_roles:
+                    _fail(
+                        f"{path}.decks[{pos}]",
+                        f"non-dealt deck {decks[pos]} has invalid or missing chair {chair!r}",
+                    )
+                expected_arms.append(chair_roles[chair])
     for k, attempt in enumerate(attempts):
         _validate_attempt(
             attempt,

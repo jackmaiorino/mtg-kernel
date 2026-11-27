@@ -75,7 +75,7 @@ def stop_kind(end: dict[str, Any]) -> str | None:
         return None
     if kind == "terminal" and end.get("classification") == "encoder_refusal":
         code = end.get("code")
-        if isinstance(code, str) and code:
+        if isinstance(code, str) and code.startswith("encoder_refusal:"):
             return code
     if kind == "process_died":
         code = end.get("exit_code")
