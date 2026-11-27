@@ -2682,18 +2682,22 @@ fn breach_and_retrace_rides_end_quotes_the_land_and_the_selected_targets_cost() 
             "Thraben Inspector",
             Zone::Battlefield,
         );
-        for (generic, route, breach) in [
-            (1, None, true),
-            (4, None, true),
-            (1, Some(RouteV1::Normal), false),
-            (1, Some(RouteV1::Retrace), false),
-            (1, Some(RouteV1::Retrace), true),
+        for (generic, route, breach, add_land) in [
+            (1, None, false, false),
+            (4, None, false, false),
+            (1, Some(RouteV1::Normal), true, false),
+            (4, Some(RouteV1::Normal), true, false),
+            (1, Some(RouteV1::Breach), true, false),
+            (4, Some(RouteV1::Breach), true, false),
+            (1, Some(RouteV1::Normal), false, true),
+            (1, Some(RouteV1::Retrace), false, true),
+            (1, Some(RouteV1::Retrace), true, true),
         ] {
             let mut state = base.clone();
             if breach {
                 put(&mut state, player, "Underworld Breach", Zone::Battlefield);
             }
-            let land = route.map(|_| put(&mut state, player, "Forest", Zone::Hand));
+            let land = add_land.then(|| put(&mut state, player, "Forest", Zone::Hand));
             pool(&mut state, player, &[ManaColor::W], generic);
             if let Some(route) = route {
                 choose_graveyard_route(&mut state, spell, route);
@@ -2718,6 +2722,20 @@ fn breach_and_retrace_rides_end_quotes_the_land_and_the_selected_targets_cost() 
             let target = if generic == 4 { untapped } else { tapped };
             act(&mut state, Action::ChooseTarget(Target::Object(target)));
             let retraced = route == Some(RouteV1::Retrace);
+            let breached = route == Some(RouteV1::Breach);
+            if breached {
+                for _ in 0..3 {
+                    let decision = next(&mut state);
+                    assert!(matches!(
+                        decision,
+                        Decision::ChooseCostTargets {
+                            cost_kind: CostKind::ExileFromGraveyard,
+                            ..
+                        }
+                    ));
+                    act(&mut state, first_answer(decision));
+                }
+            }
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for game in [&mut state, &mut restored] {
@@ -2726,6 +2744,11 @@ fn breach_and_retrace_rides_end_quotes_the_land_and_the_selected_targets_cost() 
                     game.objects.get(spell).v4.spell_cast_origin.unwrap().route
                         == SpellCastRouteV4::RetraceV1,
                     retraced
+                );
+                assert_eq!(
+                    game.objects.get(spell).v4.spell_cast_origin.unwrap().route
+                        == SpellCastRouteV4::GraveyardEscape,
+                    breached
                 );
                 if let Some(land) = land {
                     assert_eq!(
@@ -5952,9 +5975,11 @@ fn public_escape_casts_emry_with_artifact_cost_reduction() {
     pool(&mut state, P0, &[ManaColor::U], 0);
     // Without artifacts, {2}{U} is not payable with {U}.
     assert!(!castable(&mut state, emry));
-    // With two artifacts, Emry costs {U} + exile 3.
-    put(&mut state, P0, "Mox Pearl", Zone::Battlefield);
-    put(&mut state, P0, "Mox Sapphire", Zone::Battlefield);
+    // With two tapped artifacts (cannot tap for mana), Emry costs {U} + exile 3 (reduction is required).
+    let mox1 = put(&mut state, P0, "Mox Pearl", Zone::Battlefield);
+    let mox2 = put(&mut state, P0, "Mox Sapphire", Zone::Battlefield);
+    state.objects.get_mut(mox1).tapped = true;
+    state.objects.get_mut(mox2).tapped = true;
     assert!(castable(&mut state, emry));
     act(&mut state, Action::CastSpell(emry));
     let mut exiled = 0;
