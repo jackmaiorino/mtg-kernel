@@ -17125,12 +17125,28 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         }
 
         if state.step == Step::DeclareAttackers && !state.engine.combat.attackers_declared {
+            if let Some(source) = trigger::illegal_non_aura_attachment(state) {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+                return Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source,
+                };
+            }
             return Decision::DeclareAttackers {
                 player: state.active_player,
                 eligible: eligible_attackers(state),
             };
         }
         if state.step == Step::DeclareBlockers && !state.engine.combat.blockers_declared {
+            if let Some(source) = trigger::illegal_non_aura_attachment(state) {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+                return Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source,
+                };
+            }
             // `ComputerPlayerRL.selectBlockers` explicitly sorts attackers by
             // power descending ("so biggest threats are handled first")
             // before asking about blockers one attacker at a time --
@@ -17302,6 +17318,13 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             continue;
         }
 
+        if let Some(source) = trigger::illegal_non_aura_attachment(state) {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+            return Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            };
+        }
         // Mystic Forge and Bolas's Citadel: "You may look at the top card of
         // your library any time."
         #[cfg(feature = "eternal-fixtures")]
@@ -29077,6 +29100,77 @@ fn static_aura_multiplier(
         .count() as i128
 }
 
+/// CR 702.151a: whether `object` currently has an active Reconfigure ability.
+pub(crate) fn equipment_has_reconfigure(state: &GameState, object: ObjectId) -> bool {
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        crate::eternal_legacy_e8a_v1::statics::has_reconfigure(state, object)
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    {
+        let _ = (state, object);
+        false
+    }
+}
+
+/// CR 702.16d: whether `host`'s protection forbids attaching `equipment` to it.
+pub(crate) fn host_protection_forbids_equipment(
+    state: &GameState,
+    equipment: ObjectId,
+    host: ObjectId,
+) -> bool {
+    if crate::progenitus_v1::attachment_forbidden(state, equipment, host)
+        || damage_is_prevented_by_protection(state, equipment, Target::Object(host))
+    {
+        return true;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_e6b_v1::protection_removes_attachment(state, equipment, host)
+        || crate::eternal_cube_c9b_v1::protected_from_attachment(state, host, equipment)
+    {
+        return true;
+    }
+    false
+}
+
+/// CR 301.5c / 701.3b / 702.151b / 702.16d: whether `equipment` on the
+/// battlefield may currently be attached to `host` on the battlefield.
+///
+/// Requires distinct battlefield permanents (`equipment != host`), effective
+/// `Subtype::Equipment` on `equipment`, noncreature `equipment` unless it
+/// currently has Reconfigure (CR 702.151b), a battlefield creature `host`,
+/// and no protection forbidding the attachment.
+pub(crate) fn can_attach_equipment_to_host(
+    state: &GameState,
+    equipment: ObjectId,
+    host: ObjectId,
+) -> bool {
+    if equipment == host {
+        return false;
+    }
+    let (Some(eq_live), Some(host_live)) = (
+        state.objects.try_get(equipment),
+        state.objects.try_get(host),
+    ) else {
+        return false;
+    };
+    if eq_live.zone != Zone::Battlefield || host_live.zone != Zone::Battlefield {
+        return false;
+    }
+    if !has_effective_subtype(state, equipment, card_def::Subtype::Equipment) {
+        return false;
+    }
+    if object_has_type(state, equipment, CardType::Creature)
+        && !equipment_has_reconfigure(state, equipment)
+    {
+        return false;
+    }
+    if !object_has_type(state, host, CardType::Creature) {
+        return false;
+    }
+    !host_protection_forbids_equipment(state, equipment, host)
+}
+
 pub(crate) fn attached_equipment_profiles(
     state: &GameState,
     host: ObjectId,
@@ -29096,6 +29190,9 @@ pub(crate) fn attached_equipment_profiles(
         .filter(|host_object| host_object.zone == Zone::Battlefield)
         .flat_map(|host_object| host_object.attachments.iter().copied())
         .filter_map(move |equipment_id| {
+            if equipment_id == host {
+                return None;
+            }
             let equipment_object = state.objects.try_get(equipment_id)?;
             if equipment_object.zone != Zone::Battlefield
                 || equipment_object.v4.attached_to != host_link
@@ -29107,9 +29204,23 @@ pub(crate) fn attached_equipment_profiles(
                 return None;
             }
             let definition = card_def::CARD_DEFS.get(equipment_object.card_def as usize)?;
-            definition
-                .equipment
-                .map(|equipment| (equipment_id, equipment))
+            let equipment = definition.equipment?;
+            let is_aura_def =
+                definition.attachment.is_some() || crate::standard_cards_v1::is_aura(definition);
+            // CR 301.5c / 704.5p: a non-Aura Equipment that is no longer an
+            // Equipment or is a creature cannot equip a creature (defense in
+            // depth alongside SBAs). Auras that reuse `EquipmentDef`
+            // (Cartouche of Solidarity, Sheltered by Ghosts) are governed by
+            // Aura rules instead.
+            if !is_aura_def
+                && (object_has_type(state, equipment_id, CardType::Creature)
+                    || !card_def::Subtype::Equipment.is_in_subtype_ids(
+                        &effective_subtype_ids_inner(state, equipment_id, false),
+                    ))
+            {
+                return None;
+            }
+            Some((equipment_id, equipment))
         })
 }
 
@@ -29406,6 +29517,14 @@ fn resolved_stack_activated_ability(
 }
 
 pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
+    effective_subtype_ids_inner(state, id, true)
+}
+
+fn effective_subtype_ids_inner(
+    state: &GameState,
+    id: ObjectId,
+    include_equipment_grants: bool,
+) -> Vec<u16> {
     let Some(object) = state.objects.try_get(id) else {
         return Vec::new();
     };
@@ -29476,21 +29595,25 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
             subtype_ids.push(subtype.stable_id());
         }
     }
-    subtype_ids.extend(
-        attached_equipment_profiles(state, id)
-            .filter(|(equipment_id, _)| {
-                replacement_timestamp.is_none_or(|timestamp| {
-                    state
-                        .objects
-                        .get(*equipment_id)
-                        .v4
-                        .layer_timestamp
-                        .unwrap_or(0)
-                        > timestamp
+    if include_equipment_grants {
+        subtype_ids.extend(
+            attached_equipment_profiles(state, id)
+                .filter(|(equipment_id, _)| {
+                    replacement_timestamp.is_none_or(|timestamp| {
+                        state
+                            .objects
+                            .get(*equipment_id)
+                            .v4
+                            .layer_timestamp
+                            .unwrap_or(0)
+                            > timestamp
+                    })
                 })
-            })
-            .filter_map(|(_, equipment)| equipment.add_subtype.map(|subtype| subtype.stable_id())),
-    );
+                .filter_map(|(_, equipment)| {
+                    equipment.add_subtype.map(|subtype| subtype.stable_id())
+                }),
+        );
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_cards_v1::is_phyrexian(state, id) {
         subtype_ids.push(card_def::Subtype::Phyrexian.stable_id());
