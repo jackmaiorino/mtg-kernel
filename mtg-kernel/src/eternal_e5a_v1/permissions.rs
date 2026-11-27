@@ -114,15 +114,15 @@ pub(crate) fn note_library_cast(state: &mut GameState, player: PlayerId, card: O
     let Some(pay_life) = library_top_cast(state, player, card) else {
         return;
     };
+    let paid_alt_source = library_overload_source(state, player, card)
+        .or_else(|| library_bestow_source(state, player, card));
     let cast = LibraryCastV1 {
         card: super::live_link(state, card),
         holder: player,
         pay_life,
-        future_sight_overload: library_overload_source(state, player, card).map(|source| {
-            FutureSightOverloadV1 {
-                source: AbilitySourceContractV4::capture(state, source),
-                announced_at: state.engine.event_history.len(),
-            }
+        future_sight_overload: paid_alt_source.map(|source| FutureSightOverloadV1 {
+            source: AbilitySourceContractV4::capture(state, source),
+            announced_at: state.engine.event_history.len(),
         }),
     };
     let casts = &mut e5a_state(state).library_casts;
@@ -155,18 +155,30 @@ fn library_overload_source(
     crate::eternal_premodern_p2a_v1::statics::future_sight_source(state, player)
 }
 
-/// Future Sight grants a normally paid cast. Overload replaces that mana
-/// cost even when the ordinary form can instead use Bolas's Citadel.
-pub(crate) fn library_overload_allowed(
+fn library_bestow_source(state: &GameState, player: PlayerId, card: ObjectId) -> Option<ObjectId> {
+    if !is_library_top(state, player, card) {
+        return None;
+    }
+    let def = CARD_DEFS.get(usize::from(state.objects.get(card).card_def))?;
+    crate::engine::supported_bestow(def)?;
+    crate::eternal_premodern_p2a_v1::statics::future_sight_source(state, player)
+}
+
+fn future_sight_paid_alt_allowed(
     state: &GameState,
     player: PlayerId,
     card: ObjectId,
+    expected_method: CastMethodV4,
 ) -> bool {
     let Some(live) = state.objects.try_get(card) else {
         return false;
     };
     if live.zone == Zone::Library {
-        return library_overload_source(state, player, card).is_some();
+        return match expected_method {
+            CastMethodV4::Omen => library_overload_source(state, player, card).is_some(),
+            CastMethodV4::Bestow => library_bestow_source(state, player, card).is_some(),
+            _ => false,
+        };
     }
     let Some(origin) = live.v4.spell_cast_origin else {
         return false;
@@ -213,7 +225,7 @@ pub(crate) fn library_overload_allowed(
                     } else if live.zone_change_count == source.zone_change_count {
                         live.zone == Zone::Battlefield && live.card_def == source.card_def
                     } else {
-                        origin.finalized_method == Some(CastMethodV4::Omen)
+                        origin.finalized_method == Some(expected_method)
                             && live.zone_change_count > source.zone_change_count
                             && state
                                 .engine
@@ -230,6 +242,56 @@ pub(crate) fn library_overload_allowed(
     })
 }
 
+/// Future Sight grants a normally paid cast. Overload replaces that mana
+/// cost even when the ordinary form can instead use Bolas's Citadel.
+pub(crate) fn library_overload_allowed(
+    state: &GameState,
+    player: PlayerId,
+    card: ObjectId,
+) -> bool {
+    future_sight_paid_alt_allowed(state, player, card, CastMethodV4::Omen)
+}
+
+/// Future Sight grants a normally paid cast. Bestow replaces that mana
+/// cost even when the ordinary form can instead use Bolas's Citadel.
+pub(crate) fn library_bestow_allowed(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
+    future_sight_paid_alt_allowed(state, player, card, CastMethodV4::Bestow)
+}
+
+/// Clears Bolas's Citadel's life-payment alternative cost once a library-top
+/// cast commits to Bestow through Future Sight's independent paid permission
+/// (CR 118.9a). Returns whether `pay_life` was cleared.
+pub(crate) fn clear_library_citadel_cast(
+    state: &mut GameState,
+    spell: ObjectId,
+    player: PlayerId,
+) -> bool {
+    let Some(origin) = state
+        .objects
+        .try_get(spell)
+        .and_then(|live| live.v4.spell_cast_origin)
+    else {
+        return false;
+    };
+    if origin.origin_zone != Zone::Library {
+        return false;
+    }
+    let link = ObjectLinkV4 {
+        object: spell,
+        zone_change_count: origin.origin_zone_change_count,
+    };
+    let Some(cast) = e5a_state(state)
+        .library_casts
+        .iter_mut()
+        .find(|cast| cast.card == link && cast.holder == player)
+    else {
+        return false;
+    };
+    let was_pay_life = cast.pay_life;
+    cast.pay_life = false;
+    was_pay_life
+}
+
 /// Freeze the exact original paid permission before committing costs. Other
 /// library spells keep the original cast-identity receipt shape.
 pub(crate) fn prepare_library_overload_publication(
@@ -242,15 +304,23 @@ pub(crate) fn prepare_library_overload_publication(
     let Some(origin) = live.v4.spell_cast_origin else {
         return Ok(None);
     };
-    if method != CastMethodV4::Omen
-        || origin.origin_zone != Zone::Library
-        || !crate::eternal_sideboard_s1d_v1::statics::is_overload(
-            CARD_DEFS[usize::from(live.card_def)].name,
-        )
-    {
+    if origin.origin_zone != Zone::Library {
         return Ok(None);
     }
-    if !library_overload_allowed(state, player, card) {
+    let def = &CARD_DEFS[usize::from(live.card_def)];
+    let is_library_overload = method == CastMethodV4::Omen
+        && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name);
+    let is_library_bestow =
+        method == CastMethodV4::Bestow && crate::engine::supported_bestow(def).is_some();
+    if !is_library_overload && !is_library_bestow {
+        return Ok(None);
+    }
+    let allowed = if is_library_overload {
+        library_overload_allowed(state, player, card)
+    } else {
+        library_bestow_allowed(state, player, card)
+    };
+    if !allowed {
         return Err("missing original paid Future Sight permission".into());
     }
     recorded_cast(
@@ -266,18 +336,22 @@ pub(crate) fn prepare_library_overload_publication(
 }
 
 /// The serialized announcement may still be read by ordinary target checks
-/// before publication. At native entry points every completed overload on
-/// the stack must also match its independently published paid cast.
+/// before publication. At native entry points every completed overload or
+/// bestow cast from the library on the stack must also match its independently
+/// published paid cast.
 pub(crate) fn validate_published_library_overloads(state: &GameState) -> Result<(), String> {
     if !cfg!(feature = "eternal-fixtures") {
         return Ok(());
     }
     let history = &state.engine.event_history;
     for item in &state.stack {
-        if item.kind != StackItemKind::Spell
-            || item.is_copy
-            || item.v4.cast_method != Some(CastMethodV4::Omen)
-        {
+        if item.kind != StackItemKind::Spell || item.is_copy {
+            continue;
+        }
+        let Some(cast_method) = item.v4.cast_method else {
+            continue;
+        };
+        if !matches!(cast_method, CastMethodV4::Omen | CastMethodV4::Bestow) {
             continue;
         }
         let live = state
@@ -290,17 +364,19 @@ pub(crate) fn validate_published_library_overloads(state: &GameState) -> Result<
         let definition = CARD_DEFS
             .get(usize::from(live.card_def))
             .ok_or("library spell printing is missing")?;
-        if origin.origin_zone != Zone::Library
-            || !crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)
-        {
+        let is_library_overload = cast_method == CastMethodV4::Omen
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name);
+        let is_library_bestow = cast_method == CastMethodV4::Bestow
+            && crate::engine::supported_bestow(definition).is_some();
+        if origin.origin_zone != Zone::Library || (!is_library_overload && !is_library_bestow) {
             continue;
         }
         let caster =
             crate::eternal_vintage_e7b_v1::spell_caster(state, item).unwrap_or(item.controller);
         let Some(permit) =
-            prepare_library_overload_publication(state, item.source, caster, CastMethodV4::Omen)?
+            prepare_library_overload_publication(state, item.source, caster, cast_method)?
         else {
-            return Err("library overload lost its paid permission".into());
+            return Err("library paid alternative cast lost its paid permission".into());
         };
         let mut publications = history
             .scan_for_v1(&[EventKindV1::PublishedCastIdentityV1])
@@ -315,13 +391,13 @@ pub(crate) fn validate_published_library_overloads(state: &GameState) -> Result<
                 _ => None,
             });
         let Some((at, receipt)) = publications.next() else {
-            return Err("library overload lost its finalized cast publication".into());
+            return Err("library paid alternative cast lost its finalized cast publication".into());
         };
         let identity = crate::cast_identity_v1::PublicIdentityV1::Known {
             card_def: live.card_def,
         };
         if publications.next().is_some()
-            || origin.finalized_method != Some(CastMethodV4::Omen)
+            || origin.finalized_method != Some(cast_method)
             || item.v4.stack_item_id.0 == 0
             || receipt.future_sight_overload != Some(permit)
             || permit.announced_at > at
@@ -339,10 +415,28 @@ pub(crate) fn validate_published_library_overloads(state: &GameState) -> Result<
                     controller: caster,
                 })
         {
-            return Err("library overload publication disagrees with its paid permission".into());
+            return Err(
+                "library paid alternative cast publication disagrees with its paid permission"
+                    .into(),
+            );
         }
     }
     Ok(())
+}
+
+/// Whether the recorded library incarnation (`object`, `zone_change_count`)
+/// paid life through Bolas's Citadel for `holder`.
+pub(crate) fn library_cast_paid_life(
+    state: &GameState,
+    object: ObjectId,
+    holder: PlayerId,
+    zone_change_count: u32,
+) -> bool {
+    let card = ObjectLinkV4 {
+        object,
+        zone_change_count,
+    };
+    recorded_cast(state, card).is_some_and(|cast| cast.pay_life && cast.holder == holder)
 }
 
 /// `SpellCastRouteV4::LibraryPermissionV1`'s authority: the library

@@ -61,13 +61,13 @@
 
 pub(crate) mod targets;
 
-use crate::card_def::{CardType, CostComponent, TargetSpec, CARD_DEFS};
-use crate::effect::{EffectContinuation, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef};
+use crate::card_def::{TargetSpec, CARD_DEFS};
+use crate::effect::{EffectContinuation, EffectOp, ExecCtx, ObjectRef};
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_legacy_e9a_v1::{link_live_in, live_link};
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
-use crate::mana::{Cost, ManaColor, RestrictedManaUnitV1};
+use crate::mana::{ManaColor, RestrictedManaUnitV1};
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{GameState, ObjectLinkV4, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
@@ -79,9 +79,6 @@ pub(crate) const CITYSCAPE_LEVELER: &str = "Cityscape Leveler";
 pub(crate) const INVASION_SUBMERSIBLE: &str = "Invasion Submersible";
 pub(crate) const SUMMON_BAHAMUT: &str = "Summon: Bahamut";
 pub(crate) const POWERSTONE_TOKEN: &str = "Powerstone Token";
-
-/// The generic mana in Invasion Submersible's printed "Waterbend {3}".
-const WATERBEND_GENERIC: u8 = 3;
 
 /// "Destroy up to one target nonland permanent" (the Leveler's triggers and
 /// Bahamut's first two chapters).
@@ -332,166 +329,9 @@ pub(crate) fn restrict_produced_mana(
 
 // ---- Invasion Submersible: exhaust and waterbend ------------------------------------
 
-/// The number of waterbend taps one of the Submersible's four exhaust
-/// payments carries: its `TapControlled` count, 0 for the all-mana payment.
-fn waterbend_taps(components: &[CostComponent]) -> u8 {
-    components
-        .iter()
-        .find_map(|component| match component {
-            CostComponent::TapControlled { count, .. } => Some(*count),
-            _ => None,
-        })
-        .unwrap_or(0)
-}
-
-/// The printed cost every one of Invasion Submersible's exhaust payments
-/// starts from, "Waterbend {3}", or `None` for every other ability. The
-/// engine's activation total (`engine::activation_total_mana_cost`, 601.2f)
-/// adds the increases to it and takes the reductions off, Forensic
-/// Gadgeteer's floor included, exactly as for any other ability.
-pub(crate) fn waterbend_printed(
-    state: &GameState,
-    source: ObjectId,
-    components: &[CostComponent],
-) -> Option<Cost> {
-    (named(state, source, INVASION_SUBMERSIBLE)
-        && components
-            .iter()
-            .any(|component| matches!(component, CostComponent::Mana(_))))
-    .then_some(Cost {
-        pips: &[],
-        generic: WATERBEND_GENERIC,
-        x_count: 0,
-    })
-}
-
-/// The mana one of the Submersible's exhaust payments still needs once its
-/// waterbend taps paid their part of `total` (601.2h: the total is paid, each
-/// tap paying {1} of its generic mana). Other abilities keep `total`.
-pub(crate) fn waterbend_taps_paid(
-    state: &GameState,
-    source: ObjectId,
-    components: &[CostComponent],
-    total: Cost,
-) -> Cost {
-    if waterbend_printed(state, source, components).is_none() {
-        return total;
-    }
-    Cost {
-        generic: total.generic.saturating_sub(waterbend_taps(components)),
-        ..total
-    }
-}
-
-/// How many permanents a waterbend payment may tap: the generic mana of the
-/// printed waterbend cost (the ruling: "up to the amount of the generic mana
-/// in the waterbend cost", even when the total increases or decreases), and
-/// never more than the total there is to pay, which the all-mana payment's
-/// mana shows (a reduction to {2} leaves two to pay; a tax leaves three taps).
-fn waterbend_cap(state: &GameState, source: ObjectId) -> u8 {
-    exhaust_mana(state, source, 0).map_or(WATERBEND_GENERIC, |total| {
-        total.generic.min(WATERBEND_GENERIC)
-    })
-}
-
-/// The untapped artifacts and creatures `player` controls, outside `chosen`:
-/// what a waterbend tap may name (the `TapControlled` candidates of
-/// `PermanentFilter::ArtifactOrCreature`, the Submersible itself included;
-/// summoning sickness does not matter, as the cost has no {T}).
-fn tappable(state: &GameState, player: PlayerId, chosen: &[ObjectId]) -> Vec<ObjectId> {
-    state.players[player.index()]
-        .battlefield
-        .iter()
-        .copied()
-        .filter(|object| !chosen.contains(object))
-        .filter(|&object| {
-            let live = state.objects.get(object);
-            live.zone == Zone::Battlefield
-                && live.controller == player
-                && !live.tapped
-                && (crate::engine::object_has_type(state, object, CardType::Artifact)
-                    || crate::engine::object_has_type(state, object, CardType::Creature))
-        })
-        .collect()
-}
-
-/// Whether `more` further waterbend taps can be chosen, beside the `chosen`
-/// ones, so that the payment's mana part (`cost`) stays payable with none of
-/// them among the mana sources. Reserving more permanents never helps the
-/// payment, so a plan with only `chosen` reserved must exist; when enough
-/// tappable permanents lie outside that plan's sources the answer is yes, and
-/// otherwise every choice is tried. Aang's Iceberg's waterbend (wave C5c)
-/// taps the same permanents and reads this too.
-pub(crate) fn completion_exists(
-    state: &GameState,
-    player: PlayerId,
-    source: ObjectId,
-    cost: &Cost,
-    chosen: &[ObjectId],
-    more: usize,
-) -> bool {
-    let Some(plan) = crate::mana::plan_activation_mana_v1(cost, 0, player, state, source, chosen)
-    else {
-        return false;
-    };
-    let rest = tappable(state, player, chosen);
-    if rest.len() < more {
-        return false;
-    }
-    let outside_plan = rest
-        .iter()
-        .filter(|&&object| !plan.taps.iter().any(|&(tapped, _)| tapped == object))
-        .count();
-    outside_plan >= more || completion_among(state, player, source, cost, chosen, &rest, more)
-}
-
-/// Whether `more` picks among `among`, taken in order, leave `cost` payable
-/// with them and `chosen` reserved.
-fn completion_among(
-    state: &GameState,
-    player: PlayerId,
-    source: ObjectId,
-    cost: &Cost,
-    chosen: &[ObjectId],
-    among: &[ObjectId],
-    more: usize,
-) -> bool {
-    if more == 0 {
-        return crate::mana::plan_activation_mana_v1(cost, 0, player, state, source, chosen)
-            .is_some();
-    }
-    if among.len() < more {
-        return false;
-    }
-    among.iter().enumerate().any(|(index, &next)| {
-        let mut with = chosen.to_vec();
-        with.push(next);
-        completion_among(
-            state,
-            player,
-            source,
-            cost,
-            &with,
-            &among[index + 1..],
-            more - 1,
-        )
-    })
-}
-
-/// The mana part of the Submersible's exhaust payment `ability_index`, with
-/// its cost reductions and increases, as the engine charges it.
-fn exhaust_mana(state: &GameState, source: ObjectId, ability_index: usize) -> Option<Cost> {
-    let live = state.objects.try_get(source)?;
-    let ability = CARD_DEFS[usize::from(live.card_def)]
-        .activated_abilities
-        .get(ability_index)?;
-    crate::engine::activation_mana_payment(ability.cost, live.controller, source, state)
-}
-
 /// Invasion Submersible's exhaust ability: none of its four payments once one
-/// was activated for this object; a payment with more waterbend taps than
-/// `waterbend_cap` allows is not offered; and a payment is offered only if
-/// some choice of its taps leaves its mana part payable.
+/// was activated for this object; waterbend tap cap and payability are
+/// enforced by `crate::waterbend_v1`.
 pub(crate) fn activation_allowed(
     state: &GameState,
     source: ObjectId,
@@ -511,71 +351,7 @@ pub(crate) fn activation_allowed(
     if read_state(state).is_some_and(|s1q| s1q.exhausted.contains(&link)) {
         return false;
     }
-    let Some(ability) = CARD_DEFS[usize::from(live.card_def)]
-        .activated_abilities
-        .get(ability_index)
-    else {
-        return true;
-    };
-    let taps = waterbend_taps(ability.cost);
-    if taps > waterbend_cap(state, source) {
-        return false;
-    }
-    let Some(cost) = exhaust_mana(state, source, ability_index) else {
-        return true;
-    };
-    completion_exists(
-        state,
-        live.controller,
-        source,
-        &cost,
-        &[],
-        usize::from(taps),
-    )
-}
-
-/// Keeps only the waterbend taps after which the rest of the pending exhaust
-/// payment can still be completed. Called with the candidates of a pending
-/// activation's `TapControlled` cost; any other pending activation is left
-/// alone.
-pub(crate) fn retain_payable_waterbend_taps(
-    state: &GameState,
-    source: ObjectId,
-    already_chosen: &[EffectObjectBinding],
-    candidates: &mut Vec<EffectObjectBinding>,
-) {
-    let Some(pending) = state
-        .engine
-        .pending_activation
-        .as_ref()
-        .filter(|pending| pending.source == source)
-    else {
-        return;
-    };
-    if !named(state, source, INVASION_SUBMERSIBLE) {
-        return;
-    }
-    let ability_index = usize::from(pending.ability_index);
-    let Some(ability) = CARD_DEFS[usize::from(state.objects.get(source).card_def)]
-        .activated_abilities
-        .get(ability_index)
-    else {
-        return;
-    };
-    let Some(cost) = exhaust_mana(state, source, ability_index) else {
-        return;
-    };
-    let taps = usize::from(waterbend_taps(ability.cost));
-    let chosen = already_chosen
-        .iter()
-        .map(|binding| binding.object)
-        .collect::<Vec<_>>();
-    let more = taps.saturating_sub(chosen.len() + 1);
-    candidates.retain(|candidate| {
-        let mut with = chosen.clone();
-        with.push(candidate.object);
-        completion_exists(state, pending.controller, source, &cost, &with, more)
-    });
+    crate::waterbend_v1::activation_allowed(state, source, ability_index)
 }
 
 /// Records that an exhaust payment of the Submersible was made, as the
