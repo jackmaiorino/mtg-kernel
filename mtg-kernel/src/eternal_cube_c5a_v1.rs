@@ -86,7 +86,7 @@ pub struct C5aStateV1 {
     /// the exiled card's exile incarnation (607.2a).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub curator_exiles: Vec<(ObjectLinkV4, ObjectLinkV4)>,
-    /// The Alpha Deathclaw incarnations that are monstrous (701.37).
+    /// The creature incarnations that are monstrous (701.37).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub monstrous: Vec<ObjectLinkV4>,
 }
@@ -520,11 +520,17 @@ fn monstrosity_effect(ctx: &ExecCtx, state: &mut GameState) {
     monstrous.push(me);
     c5a_state(state).monstrous = monstrous;
     let _ = event::add_plus_one_counters(state, source, ctx.controller, 4);
-    // "When this creature ... becomes monstrous" is the creature's own
-    // triggered ability. A creature that has lost its abilities has none, and
-    // the player who controls the creature as it becomes monstrous controls
-    // the trigger, whoever activated the ability.
-    if !active_front_face(state, source) {
+    // "When this creature ... becomes monstrous" is Alpha Deathclaw's own
+    // triggered ability. Another creature activating a granted Monstrosity
+    // ability (such as through Agatha's Soul Cauldron) becomes monstrous and
+    // gets the counters, but does not have that triggered ability. A creature
+    // that has lost its abilities has none, and the player who controls the
+    // creature as it becomes monstrous controls the trigger, whoever activated
+    // the ability.
+    let is_deathclaw = CARD_DEFS
+        .get(usize::from(state.objects.get(source).card_def))
+        .is_some_and(|def| def.name == ALPHA_DEATHCLAW);
+    if !is_deathclaw || !active_front_face(state, source) {
         return;
     }
     let controller = state.objects.get(source).controller;
