@@ -2452,28 +2452,17 @@ fn spell_copy_origin_chain(
     Ok(())
 }
 
-/// Computes the exact expected life loss for `nominal` at payment time,
-/// authenticating `payment_world` whenever an opponent-turn Bloodletter of
-/// Aclazotz could have applied (CR 118.11).
-fn expected_cast_life_loss(
-    state: &GameState,
-    player: PlayerId,
-    nominal: i32,
-    payment_world: Option<&GameState>,
-) -> Result<i32, String> {
+/// Computes the exact expected life loss for `nominal` under `bloodletter_count`
+/// active opponent-turn Bloodletter of Aclazotz replacements (CR 118.11).
+fn expected_cast_life_loss(nominal: i32, bloodletter_count: usize) -> Result<i32, String> {
     if nominal <= 0 {
         return Err("non-positive nominal life payment".into());
     }
-    #[cfg(feature = "standard-magezero-fixtures")]
-    {
-        if let Some(world) = payment_world {
-            return Ok(crate::standard_statics_v1::modified_life_loss(
-                world, player, nominal,
-            ));
-        }
+    let mut total = nominal;
+    for _ in 0..bloodletter_count {
+        total = total.saturating_mul(2);
     }
-    let _ = (state, player, payment_world);
-    Ok(nominal)
+    Ok(total)
 }
 
 /// The receipt identifies the nominal cost and the committed loss after
@@ -2497,18 +2486,13 @@ fn validate_cast_life_x(
                 player,
                 amount,
                 loss,
-                payment_world,
-            } if *stack_item == item.v4.stack_item_id => Some((
-                at,
-                *spell,
-                *player,
-                *amount,
-                *loss,
-                payment_world.as_deref(),
-            )),
+                bloodletters,
+            } if *stack_item == item.v4.stack_item_id => {
+                Some((at, *spell, *player, *amount, *loss, bloodletters.as_slice()))
+            }
             _ => None,
         });
-    let Some((at, spell, player, amount, loss, payment_world)) = payments.next() else {
+    let Some((at, spell, player, amount, loss, bloodletters)) = payments.next() else {
         return Err("spell lost its additional life payment".into());
     };
     #[cfg(feature = "eternal-fixtures")]
@@ -2521,51 +2505,240 @@ fn validate_cast_life_x(
     #[cfg(not(feature = "eternal-fixtures"))]
     let citadel_mv = 0;
 
-    #[cfg(feature = "standard-magezero-fixtures")]
-    let needs_world = (amount > 0 || citadel_mv > 0)
-        && player != state.active_player
-        && crate::standard_statics_v1::game_contains_bloodletter(state);
-    #[cfg(not(feature = "standard-magezero-fixtures"))]
-    let needs_world = false;
+    if bloodletters
+        .windows(2)
+        .any(|pair| pair[0].object.0 >= pair[1].object.0)
+    {
+        return Err("Bloodletter payment links must be strictly sorted and unique".into());
+    }
 
-    if needs_world {
-        let Some(world) = payment_world else {
-            return Err("Bloodletter life payment lost its payment-time world".into());
-        };
-        if !world.engine.event_history.is_empty()
-            || !world.engine.event_log.is_empty()
-            || world.active_player != state.active_player
-            || world.turn != state.turn
-            || world.objects.len() > state.objects.len()
-            || !world.stack.last().is_some_and(|top| {
-                top.v4.stack_item_id == item.v4.stack_item_id
-                    && top.source == spell
-                    && top.controller == player
-            })
-            || world.players[player.index()].life < i32::from(amount).saturating_add(citadel_mv)
-            || world.players[world.active_player.index()]
-                .battlefield
-                .iter()
-                .any(|&id| {
-                    state.objects.try_get(id).is_none_or(|live| {
-                        world
-                            .objects
-                            .try_get(id)
-                            .is_none_or(|prior| prior.owner != live.owner)
-                    })
-                })
-        {
-            return Err("Bloodletter payment-time world is malformed".into());
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if (amount > 0 || citadel_mv > 0) && player != state.active_player {
+        let active = state.active_player;
+        let live_bloodletters = crate::standard_statics_v1::active_bloodletter_links(state, player);
+        let after = history.range_v2((at + 1)..);
+        let has_post_cast_other_spell = after.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::SpellCast { spell: s, .. } if *s != item.source
+            )
+        });
+        let has_post_cast_bf_entry = after.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::ZoneChange {
+                    to: Zone::Battlefield,
+                    ..
+                }
+            )
+        });
+        let has_post_cast_bf_departure = after.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::ZoneChange {
+                    from: Zone::Battlefield,
+                    ..
+                }
+            )
+        });
+        // Every listed Bloodletter no longer in the live active set must be
+        // explained by a post-payment departure, control change, ability loss,
+        // or copy change.
+        for &link in bloodletters {
+            if live_bloodletters.contains(&link) {
+                continue;
+            }
+            let Some(obj) = state.objects.try_get(link.object) else {
+                return Err("listed Bloodletter link does not exist".into());
+            };
+            let targeted_after = after.iter().any(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::Targeted {
+                        target,
+                        target_zone_change_count,
+                        targeting_stack_item,
+                        ..
+                    } if *target == link.object
+                        && *target_zone_change_count == link.zone_change_count
+                        && *targeting_stack_item != item.v4.stack_item_id
+                )
+            });
+            if obj.zone == Zone::Battlefield && obj.zone_change_count == link.zone_change_count {
+                let explained = if obj.controller != active {
+                    has_post_cast_other_spell || targeted_after
+                } else if !crate::continuous_characteristics_v1::printed_abilities_active(
+                    state,
+                    link.object,
+                ) {
+                    has_post_cast_bf_entry || has_post_cast_other_spell || targeted_after
+                } else {
+                    has_post_cast_bf_departure || targeted_after
+                };
+                if !explained {
+                    return Err(
+                        "listed Bloodletter is not active and has no post-payment change".into(),
+                    );
+                }
+            } else {
+                let departed_after = link.zone_change_count < obj.zone_change_count
+                    && after.iter().any(|event| {
+                        matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                object,
+                                from: Zone::Battlefield,
+                                controller_before,
+                                ..
+                            } if *object == link.object && *controller_before == active
+                        )
+                    });
+                if !departed_after {
+                    return Err(
+                        "listed departed Bloodletter did not leave active battlefield after payment"
+                            .into(),
+                    );
+                }
+            }
         }
-    } else if payment_world.is_some() {
-        return Err("unexpected payment-time world on non-Bloodletter life payment".into());
+        // Every currently active Bloodletter omitted from the receipt must be
+        // explained by a post-payment entry, face-up flip, transform, ability
+        // suppressor departure, or control/copy targeting.
+        for &live_link in &live_bloodletters {
+            if bloodletters.contains(&live_link) {
+                continue;
+            }
+            let explained = has_post_cast_bf_departure
+                || after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == live_link.object
+                    ) || matches!(
+                        event,
+                        CommittedEvent::TurnedFaceUp {
+                            object,
+                            zone_change_count,
+                        } if *object == live_link.object
+                            && *zone_change_count == live_link.zone_change_count
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Transformed { object, .. } if *object == live_link.object
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Targeted {
+                            target,
+                            target_zone_change_count,
+                            targeting_stack_item,
+                            ..
+                        } if *target == live_link.object
+                            && *target_zone_change_count == live_link.zone_change_count
+                            && *targeting_stack_item != item.v4.stack_item_id
+                    )
+                });
+            if !explained {
+                return Err(
+                    "live active Bloodletter omitted from payment without post-payment change"
+                        .into(),
+                );
+            }
+        }
+        // A face-up Bloodletter still on the active player's battlefield whose
+        // abilities are only suppressed by a Dress Down that entered after
+        // payment cannot be omitted from the receipt.
+        let dress_downs_on_bf: Vec<ObjectId> = state
+            .players
+            .iter()
+            .flat_map(|p| p.battlefield.iter().copied())
+            .filter(|&id| {
+                state.objects.try_get(id).is_some_and(|o| {
+                    o.v4.face_down_v1.is_none()
+                        && crate::card_def::CARD_DEFS
+                            .get(usize::from(o.card_def))
+                            .is_some_and(|d| d.name == "Dress Down")
+                })
+            })
+            .collect();
+        if !dress_downs_on_bf.is_empty()
+            && dress_downs_on_bf.iter().all(|&dd| {
+                after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == dd
+                    )
+                })
+            })
+        {
+            for &id in &state.players[active.index()].battlefield {
+                let obj = state.objects.get(id);
+                let link = crate::state::ObjectLinkV4 {
+                    object: id,
+                    zone_change_count: obj.zone_change_count,
+                };
+                if bloodletters.contains(&link)
+                    || obj.controller != active
+                    || obj.v4.face_down_v1.is_some()
+                    || !crate::card_def::CARD_DEFS
+                        .get(usize::from(obj.card_def))
+                        .is_some_and(|d| d.name == "Bloodletter of Aclazotz")
+                {
+                    continue;
+                }
+                let changed_after = after.iter().any(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::ZoneChange {
+                            object,
+                            to: Zone::Battlefield,
+                            ..
+                        } if *object == id
+                    ) || matches!(
+                        event,
+                        CommittedEvent::TurnedFaceUp {
+                            object,
+                            zone_change_count,
+                        } if *object == id && *zone_change_count == obj.zone_change_count
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Transformed { object, .. } if *object == id
+                    ) || matches!(
+                        event,
+                        CommittedEvent::Targeted {
+                            target,
+                            target_zone_change_count,
+                            targeting_stack_item,
+                            ..
+                        } if *target == id
+                            && *target_zone_change_count == obj.zone_change_count
+                            && *targeting_stack_item != item.v4.stack_item_id
+                    )
+                });
+                if !changed_after {
+                    return Err(
+                        "pre-Dress-Down active Bloodletter omitted from payment receipt".into(),
+                    );
+                }
+            }
+        }
+    } else if !bloodletters.is_empty() {
+        return Err("unexpected Bloodletter links on non-opponent-turn life payment".into());
+    }
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    if !bloodletters.is_empty() {
+        return Err("unexpected Bloodletter links without Standard fixtures".into());
     }
 
     let loss_matches = match loss {
         None => amount == 0,
         Some((index, lost)) => {
-            let expected =
-                expected_cast_life_loss(state, player, i32::from(amount), payment_world)?;
+            let expected = expected_cast_life_loss(i32::from(amount), bloodletters.len())?;
             amount > 0
                 && lost > 0
                 && lost == expected
@@ -2604,7 +2777,7 @@ fn validate_cast_life_x(
         else {
             return Err("Citadel life payment missing after additional life X receipt".into());
         };
-        let expected_citadel = expected_cast_life_loss(state, caster, citadel_mv, payment_world)?;
+        let expected_citadel = expected_cast_life_loss(citadel_mv, bloodletters.len())?;
         if *citadel_player != caster || *citadel_lost != expected_citadel {
             return Err("Citadel life payment disagrees with spell mana value".into());
         }
@@ -2636,26 +2809,6 @@ fn validate_cast_life_x(
                 || tail_start > pub_at
             {
                 return Err("additional life payment lies outside this spell's cast window".into());
-            }
-            if payment_world.is_some() && pub_at + 2 == history.len() {
-                if amount > 0
-                    && expected_cast_life_loss(state, player, i32::from(amount), payment_world)?
-                        != expected_cast_life_loss(state, player, i32::from(amount), Some(state))?
-                {
-                    return Err(
-                        "payment-time world disagrees with unchanged live Bloodletter multiplier"
-                            .into(),
-                    );
-                }
-                if citadel_mv > 0
-                    && expected_cast_life_loss(state, caster, citadel_mv, payment_world)?
-                        != expected_cast_life_loss(state, caster, citadel_mv, Some(state))?
-                {
-                    return Err(
-                        "payment-time world disagrees with unchanged live Citadel Bloodletter multiplier"
-                            .into(),
-                    );
-                }
             }
             pub_at
         }
@@ -23265,7 +23418,7 @@ fn validated_stack_item_target_metadata(
                         target_zone_change_count,
                         targeting_stack_item,
                         ..
-                    } if *targeting_stack_item == item.v4.stack_item_id
+                    } if (item.is_copy || *targeting_stack_item == item.v4.stack_item_id)
                         && *targeted == target
                         && *target_zone_change_count == contract_zcc =>
                     {
@@ -23273,7 +23426,7 @@ fn validated_stack_item_target_metadata(
                     }
                     _ => None,
                 })
-                .last();
+                .next();
             let live = state.objects.try_get(target);
             let same_battlefield_incarnation = live.is_some_and(|obj| {
                 obj.zone == Zone::Battlefield && obj.zone_change_count == contract_zcc
@@ -23327,19 +23480,27 @@ fn validated_stack_item_target_metadata(
                                 CommittedEvent::Transformed { object, .. } if *object == target
                             ) || matches!(
                                 event,
-                                CommittedEvent::ZoneChange {
-                                    from: Zone::Battlefield,
-                                    ..
-                                }
-                            ) || matches!(
-                                event,
                                 CommittedEvent::Targeted {
+                                    target: other_target,
+                                    target_zone_change_count,
                                     targeting_stack_item,
                                     ..
-                                } if *targeting_stack_item != item.v4.stack_item_id
+                                } if *other_target == target
+                                    && *target_zone_change_count == contract_zcc
+                                    && *targeting_stack_item != item.v4.stack_item_id
                             ) || matches!(
                                 event,
-                                CommittedEvent::SpellCast { spell, .. } if *spell != item.source
+                                CommittedEvent::ZoneChange {
+                                    object,
+                                    from: Zone::Battlefield,
+                                    ..
+                                } if state
+                                    .objects
+                                    .try_get(*object)
+                                    .and_then(|o| {
+                                        crate::card_def::CARD_DEFS.get(usize::from(o.card_def))
+                                    })
+                                    .is_some_and(|d| d.name == "Assimilation Aegis")
                             )
                         })
                 });
@@ -31775,7 +31936,32 @@ pub(crate) fn spell_slot_retarget_candidates_v1(
         .iter()
         .find(|item| item.v4.stack_item_id == stack_item && item.kind == StackItemKind::Spell)?;
     let spec = item.v4.target_spec?;
-    let current = *item.targets.get(chosen.len())?;
+    let slot = chosen.len();
+    let current = *item.targets.get(slot)?;
+    let is_x_bounded_creature_slot = state.objects.try_get(item.source).is_some_and(|obj| {
+        let def = &crate::card_def::CARD_DEFS[usize::from(obj.card_def)];
+        if slot == 0 && crate::standard_cards_v1::x_bounded_creature_target(def) {
+            return true;
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        if def.name == "Kozilek's Command" {
+            return matches!(
+                (spec, slot),
+                (
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::PlayerThenCreatureV1,
+                    ),
+                    1
+                ) | (
+                    TargetSpec::StandardV1(
+                        crate::standard_cards_v1::StandardTargetV1::CreatureThenGraveyardCardsV1,
+                    ),
+                    0
+                )
+            );
+        }
+        false
+    });
     let legal = legal_targets_for_controller_from_source(
         spec,
         chosen,
@@ -31784,7 +31970,14 @@ pub(crate) fn spell_slot_retarget_candidates_v1(
         state,
     )
     .into_iter()
-    .filter(|target| *target != Target::Object(item.source))
+    .filter(|target| {
+        *target != Target::Object(item.source)
+            && (!is_x_bounded_creature_slot
+                || !matches!(
+                    target,
+                    Target::Object(o) if object_mana_value(state, *o) > item.v4.x_value
+                ))
+    })
     .collect::<Vec<_>>();
     Some(if legal.is_empty() {
         vec![current]
@@ -34373,21 +34566,15 @@ fn finalize_owned_cast(
         #[cfg(not(feature = "eternal-fixtures"))]
         let citadel_mv = 0;
         #[cfg(feature = "standard-magezero-fixtures")]
-        let payment_world = if (x_value > 0 || citadel_mv > 0)
-            && pending.controller != state.active_player
-            && crate::standard_statics_v1::game_contains_bloodletter(state)
-        {
-            let mut snapshot = state.clone();
-            snapshot.engine.event_history = Default::default();
-            snapshot.engine.event_log.clear();
-            Some(Box::new(snapshot))
+        let bloodletters = if x_value > 0 || citadel_mv > 0 {
+            crate::standard_statics_v1::active_bloodletter_links(state, pending.controller)
         } else {
-            None
+            Vec::new()
         };
         #[cfg(not(feature = "standard-magezero-fixtures"))]
-        let payment_world = {
+        let bloodletters = {
             let _ = citadel_mv;
-            None
+            Vec::new()
         };
         let loss = if x_value > 0 {
             let start = state.engine.event_history.len();
@@ -34424,7 +34611,7 @@ fn finalize_owned_cast(
                 player: pending.controller,
                 amount: x_value,
                 loss,
-                payment_world,
+                bloodletters,
             });
     }
     #[cfg(feature = "eternal-fixtures")]

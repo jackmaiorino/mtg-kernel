@@ -3747,6 +3747,67 @@ mod cast_x_routes {
             "Dominate X = 0 must fizzle when face-down target turns face up to MV 1"
         );
 
+        // Retargeting a kept creature slot whose MV rose after original
+        // targeting (Commandeer on Kozilek's Command X = 0 mode 1 after P1
+        // turns manifested Llanowar Elves face up): must NOT halt; creature
+        // half fizzles under CR 608.2b while player half resolves.
+        let mut state = plains();
+        put(&mut state, P1, "Abhorrent Oculus", Zone::Battlefield);
+        for _ in 0..2 {
+            put(&mut state, P1, "Llanowar Elves", Zone::Library);
+        }
+        pass_until(&mut state, |s| {
+            s.active_player == P1 && s.step == Step::Main1
+        });
+        pass_until(&mut state, |s| {
+            s.active_player == P0 && s.step == Step::Main1
+        });
+        let elves = state.players[1]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&o| state.objects.get(o).v4.face_down_v1.is_some())
+            .expect("Abhorrent Oculus manifested Llanowar Elves");
+        let cmd = free_exile(&mut state, "Kozilek's Command");
+        let commandeer = put(&mut state, P1, "Commandeer", Zone::Hand);
+        act(&mut state, Action::CastSpell(cmd));
+        let _ = next(&mut state);
+        act(&mut state, Action::ChooseSpellMode(1));
+        let _ = next(&mut state);
+        act(&mut state, Action::ChooseTarget(Target::Player(P0)));
+        let _ = next(&mut state);
+        act(&mut state, Action::ChooseTarget(Target::Object(elves)));
+        cast_finished(&mut state);
+        // Pass P0 priority to P1; P1 turns Elves face up (MV 1) then Commandeers.
+        let _ = next(&mut state);
+        act(&mut state, Action::Pass);
+        let _ = next(&mut state);
+        pool(&mut state, P1, &[ManaColor::G], 0);
+        act(&mut state, Action::ActivateAbility(elves, 255));
+        assert!(state.objects.get(elves).v4.face_down_v1.is_none());
+        pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 5);
+        act(&mut state, Action::CastSpell(commandeer));
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseCastMode { .. } => {
+                Action::ChooseCastMode(mtg_kernel::engine::CastMode::Normal)
+            }
+            Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(cmd)),
+            Decision::ChooseEffectTargets { legal_targets, .. } => {
+                if legal_targets.contains(&Target::Player(P1)) {
+                    Action::ChooseEffectTarget(Target::Player(P1))
+                } else {
+                    Action::ChooseEffectTarget(legal_targets[0])
+                }
+            }
+            other => first_answer(other),
+        });
+        assert!(state.engine.halted.is_none());
+        assert_eq!(
+            zone(&state, elves),
+            Zone::Battlefield,
+            "Kozilek's Command creature half must fizzle after retargeting"
+        );
+
         // Shared PlayerThenCreatureV1 regression: Flame of Anor's draw-two +
         // deal-five mode has no X and must accept positive-MV creatures.
         let mut state = plains();
@@ -3876,7 +3937,14 @@ mod cast_x_routes {
         top.v4.target_contracts = vec![wall_contract; 6];
         for event in forged_after_dd.engine.event_history.iter_mut() {
             match event {
-                event::CommittedEvent::CastLifeXPaidV1 { amount, .. } => *amount = 6,
+                event::CommittedEvent::CastLifeXPaidV1 {
+                    amount,
+                    bloodletters,
+                    ..
+                } => {
+                    *amount = 6;
+                    bloodletters.clear();
+                }
                 event::CommittedEvent::PublishedCastIdentityV1 { receipt }
                     if receipt.spell == covenant =>
                 {
