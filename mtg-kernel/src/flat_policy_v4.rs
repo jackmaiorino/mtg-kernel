@@ -201,6 +201,53 @@ mod tests {
         }
     }
 
+    fn public_counter_state_v1() -> (crate::state::GameState, crate::ids::ObjectId) {
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Zone;
+
+        let mut state = ready_state();
+        let card = put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
+        put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
+        (state, card)
+    }
+
+    #[test]
+    fn v4_public_charge_counters_are_unsupported_visible_observation() {
+        let (mut state, card) = public_counter_state_v1();
+        state.objects.get_mut(card).counters.charge = 1;
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("expected a live decision");
+        };
+        let observation = session.flat_policy_observation_v4(expected).unwrap();
+        assert_eq!(
+            observation.projection.surface.battlefield[0][0]
+                .counters
+                .charge,
+            1
+        );
+        assert_eq!(
+            OwnedScoringV4::default().encode(&session).map(|_| ()),
+            Err(FlatDecisionErrorV2::UnsupportedVisibleObservation)
+        );
+    }
+
+    #[test]
+    fn v4_public_oil_and_net_counters_remain_observation_contract_faults() {
+        for (oil, net) in [(1, 0), (0, 1)] {
+            let (mut state, card) = public_counter_state_v1();
+            let counters = &mut state.objects.get_mut(card).counters;
+            counters.oil = oil;
+            counters.net = net;
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            assert_eq!(
+                OwnedScoringV4::default().encode(&session).map(|_| ()),
+                Err(FlatDecisionErrorV2::ObservationContract),
+                "oil={oil} net={net}"
+            );
+        }
+    }
+
     fn stack_fixture_v1(actor: PlayerId, hidden_variant: bool) -> FastActorSessionV1 {
         use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;

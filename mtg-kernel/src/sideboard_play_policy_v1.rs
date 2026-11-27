@@ -99,6 +99,15 @@ pub(crate) enum SelectionErrorV1 {
     Other(String),
 }
 
+impl SelectionErrorV1 {
+    pub(crate) fn encoder_refusal_kind(&self) -> Option<String> {
+        match self {
+            Self::Encoding { error, .. } => Some(format!("{error:?}")),
+            Self::Other(_) => None,
+        }
+    }
+}
+
 impl From<SelectionErrorV1> for String {
     fn from(error: SelectionErrorV1) -> Self {
         match error {
@@ -4677,14 +4686,6 @@ mod tests {
         assert!(unclamped.deployed_masses_v1(&[0.0, 1.0]).is_err());
     }
 
-    /// Proves the reconciliation layer, not just the raw action slice:
-    /// `score_fast_session_v1`'s V3 path (`encode_current_flat_scoring_decision_owned_v3`,
-    /// which shares `flat_policy_v2.rs`'s `build_scoring_owned_v3`) must
-    /// score a decision whose pending trigger's source has been shuffled
-    /// into its owner's library -- the same fixture the action-slice
-    /// regression tests in `rl_session/flat_action_v3.rs` use, driven all
-    /// the way through the frozen play policy's scorer instead of just the
-    /// raw action slice.
     #[test]
     fn typed_v4_selection_retains_terminal_error_text_without_an_encoder_kind() {
         let session = FastActorSessionV1::reset_with_limits(1, 91, 1, 0);
@@ -4698,6 +4699,7 @@ mod tests {
             .err()
             .expect("terminal selection must fail");
         assert!(matches!(&error, SelectionErrorV1::Other(_)));
+        assert_eq!(error.encoder_refusal_kind(), None);
         assert_eq!(String::from(error), "cannot collect a terminal decision");
         assert_eq!(
             policy
@@ -4708,6 +4710,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn selection_error_reports_typed_encoder_refusal_kinds_only() {
+        for (error, text, expected) in [
+            (
+                FlatDecisionErrorV2::UnsupportedVisibleObservation,
+                "ObservationContract",
+                "UnsupportedVisibleObservation",
+            ),
+            (
+                FlatDecisionErrorV2::ObservationContract,
+                "UnsupportedVisibleObservation",
+                "ObservationContract",
+            ),
+            (
+                FlatDecisionErrorV2::Action(
+                    crate::rl_session::FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic,
+                ),
+                "ObservationContract",
+                "Action(UnsupportedActionSemantic)",
+            ),
+        ] {
+            let error = SelectionErrorV1::Encoding {
+                error,
+                text: text.to_owned(),
+            };
+            assert_eq!(error.encoder_refusal_kind().as_deref(), Some(expected));
+        }
+        let other = SelectionErrorV1::Other("UnsupportedVisibleObservation".to_owned());
+        assert_eq!(other.encoder_refusal_kind(), None);
+    }
+
+    /// Proves the reconciliation layer, not just the raw action slice:
+    /// `score_fast_session_v1`'s V3 path (`encode_current_flat_scoring_decision_owned_v3`,
+    /// which shares `flat_policy_v2.rs`'s `build_scoring_owned_v3`) must
+    /// score a decision whose pending trigger's source has been shuffled
+    /// into its owner's library -- the same fixture the action-slice
+    /// regression tests in `rl_session/flat_action_v3.rs` use, driven all
+    /// the way through the frozen play policy's scorer instead of just the
+    /// raw action slice.
     #[test]
     fn score_fast_session_v1_reconciles_a_pending_trigger_hidden_source() {
         let (mut state, hunter, _goaded, _ordinary) =

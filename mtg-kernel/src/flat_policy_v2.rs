@@ -1077,6 +1077,7 @@ pub(crate) struct FlatObservationOwnedTablesV2 {
 pub enum FlatDecisionErrorV2 {
     Action(FlatActionDecisionSliceErrorV1),
     ObservationContract,
+    UnsupportedVisibleObservation,
     InvalidReference,
     InconsistentReference,
     ScorerBindingMismatch,
@@ -1744,7 +1745,11 @@ impl FlatDecisionEncoderV2 {
         ordinal: u32,
         current_turn: u32,
     ) -> Result<u32, FlatDecisionErrorV2> {
-        if card.counters.oil != 0 || card.counters.charge != 0 || card.counters.net != 0 {
+        if card.counters.charge != 0 {
+            return Err(FlatDecisionErrorV2::UnsupportedVisibleObservation);
+        }
+        // Oil and net counters are candidates for the same typed kind later.
+        if card.counters.oil != 0 || card.counters.net != 0 {
             return Err(FlatDecisionErrorV2::ObservationContract);
         }
         let index = self.add_stable(
