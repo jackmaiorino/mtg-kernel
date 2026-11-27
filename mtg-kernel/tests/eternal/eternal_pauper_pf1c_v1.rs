@@ -4802,24 +4802,25 @@ struct SweepOutcome {
 /// Timing and stack-only target requirements are derived from `CardDef`.
 /// Cards that are not offered on this board are listed by name with their
 /// reason rather than skipped silently:
-/// - `Emry, Lurker of the Loch`: an engine limitation, not a rule. It carries a
-///   spell-local `generic_cost_reduction`, and the engine excludes such
-///   reducers from `CastMethodV4::Escape`, although the reduction could
-///   legally apply to an escape cost. Recorded as a follow-up.
 /// - `Stern Scolding`: targets only a creature spell on the stack with power
 ///   or toughness 2 or less; the sweep's opposing spell is Lightning Bolt (an
 ///   Instant), so no legal target exists in either board state.
 fn expected_breach_offered(card: &str, opposing_spell: bool) -> bool {
     use mtg_kernel::standard_cards_v1::StandardTargetV1;
     let definition = def(card);
+    let instant_second_form = definition
+        .adventure
+        .as_ref()
+        .is_some_and(|adventure| adventure.types.contains(&CardType::Instant))
+        || definition
+            .omen
+            .as_ref()
+            .is_some_and(|omen| omen.types.contains(&CardType::Instant));
     if opposing_spell
         && !definition.types.contains(&CardType::Instant)
         && !definition.keywords.has(Keywords::FLASH)
+        && !instant_second_form
     {
-        return false;
-    }
-    if card == "Emry, Lurker of the Loch" {
-        assert!(definition.generic_cost_reduction.is_some());
         return false;
     }
     if card == "Stern Scolding" {
@@ -5722,4 +5723,430 @@ fn public_escape_refuses_an_elected_bargain_it_does_not_record() {
     pending.sacrifice_chosen = fuel[..3].to_vec();
     let error = public_observation(&state).unwrap_err();
     assert!(error.contains("optional additional cost"), "{error}");
+}
+
+/// Sagu Wildling // Roost Seek cast through Underworld Breach with only {G}
+/// offers and casts its Omen form (mode 1), exiles 3 other cards, round-trips
+/// through snapshot restore both while pending and on the stack, and shuffles
+/// into its owner's library on resolution.
+#[test]
+fn public_escape_casts_sagu_wildling_omen_with_only_green() {
+    let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let wildling = put(&mut state, P0, "Sagu Wildling", Zone::Graveyard);
+    let fuel = ["Island", "Forest", "Ponder", "Swamp"]
+        .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    put(&mut state, P0, "Forest", Zone::Library);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    assert!(castable(&mut state, wildling));
+    act(&mut state, Action::CastSpell(wildling));
+    let mut exiled = 0;
+    let mut restored_pending = false;
+    for _ in 0..12 {
+        let decision = next(&mut state);
+        if state.engine.pending_cast.is_none() {
+            break;
+        }
+        assert_eq!(
+            state.engine.pending_cast.as_ref().unwrap().mode_chosen,
+            Some(1)
+        );
+        if exiled == 1 && !restored_pending {
+            let round_trip: GameState =
+                serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+            assert!(public_observation(&round_trip).is_ok());
+            state = round_trip;
+            restored_pending = true;
+        }
+        let stage = staged_escape(&state)["stage"].clone();
+        assert_eq!(stage["kind"], "paying");
+        assert_eq!(stage["breach_escape"], true);
+        let action = match decision {
+            Decision::ChooseCostTargets {
+                cost_kind: CostKind::ExileFromGraveyard,
+                candidates,
+                ..
+            } => {
+                exiled += 1;
+                Action::ChooseCostTarget(*fuel.iter().find(|id| candidates.contains(id)).unwrap())
+            }
+            other => first_answer(other),
+        };
+        act(&mut state, action);
+    }
+    assert!(restored_pending);
+    assert_eq!(exiled, 3);
+    let item = state.stack.last().unwrap();
+    assert_eq!(item.source, wildling);
+    assert_eq!(
+        item.v4.cast_method,
+        Some(mtg_kernel::state::CastMethodV4::Omen)
+    );
+    assert_eq!(item.mode_chosen, 0);
+    let mut restored_stack: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    assert!(public_observation(&restored_stack).is_ok());
+    assert_eq!(
+        fuel.iter()
+            .filter(|&&id| zone(&restored_stack, id) == Zone::Exile)
+            .count(),
+        3
+    );
+    settle_first(&mut restored_stack);
+    assert_eq!(zone(&restored_stack, wildling), Zone::Library);
+}
+
+/// Bonecrusher Giant // Stomp cast through Underworld Breach at instant speed
+/// (with an opposing spell on the stack) offers Stomp, exiles 3 other cards,
+/// validates across snapshot restore on the stack, and exiles on adventure.
+#[test]
+fn public_escape_casts_bonecrusher_giant_stomp_at_instant_speed() {
+    let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let giant = put(&mut state, P0, "Bonecrusher Giant", Zone::Graveyard);
+    let fuel = ["Island", "Forest", "Ponder", "Swamp"]
+        .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    // Pass priority to P1 so P1 puts Lightning Bolt on the stack.
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P0, .. }
+    ));
+    act(&mut state, Action::Pass);
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P1, .. }
+    ));
+    act(&mut state, Action::CastSpell(bolt));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseTargets { player: P1, .. }
+    ));
+    act(&mut state, Action::ChooseTarget(Target::Player(P0)));
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P1, .. }
+    ));
+    act(&mut state, Action::Pass);
+    // Now P0 has priority with Lightning Bolt on the stack: only Stomp (Instant) is legal.
+    assert!(castable(&mut state, giant));
+    act(&mut state, Action::CastSpell(giant));
+    let mut exiled = 0;
+    for _ in 0..12 {
+        let decision = next(&mut state);
+        if state.engine.pending_cast.is_none() {
+            break;
+        }
+        assert_eq!(
+            state.engine.pending_cast.as_ref().unwrap().mode_chosen,
+            Some(1)
+        );
+        let action = match decision {
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Player(P1)) =>
+            {
+                Action::ChooseTarget(Target::Player(P1))
+            }
+            Decision::ChooseCostTargets {
+                cost_kind: CostKind::ExileFromGraveyard,
+                candidates,
+                ..
+            } => {
+                exiled += 1;
+                Action::ChooseCostTarget(*fuel.iter().find(|id| candidates.contains(id)).unwrap())
+            }
+            other => first_answer(other),
+        };
+        act(&mut state, action);
+    }
+    assert_eq!(exiled, 3);
+    let item = state.stack.last().unwrap();
+    assert_eq!(item.source, giant);
+    assert_eq!(
+        item.v4.cast_method,
+        Some(mtg_kernel::state::CastMethodV4::Omen)
+    );
+    let mut restored: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    assert!(public_observation(&restored).is_ok());
+    settle_first(&mut restored);
+    assert_eq!(zone(&restored, giant), Zone::Exile);
+    assert!(restored.objects.get(giant).v4.on_adventure);
+}
+
+/// Fire // Ice cast through Underworld Breach with only {1}{U} casts its right
+/// half (Ice), exiles 3 other cards, taps the target, draws a card, and returns
+/// to its owner's graveyard.
+#[test]
+fn public_escape_casts_fire_ice_right_half_ice() {
+    let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let fire_ice = put(&mut state, P0, "Fire // Ice", Zone::Graveyard);
+    let fuel = ["Island", "Forest", "Ponder", "Swamp"]
+        .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    let target = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    put(&mut state, P0, "Plains", Zone::Library);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    assert!(castable(&mut state, fire_ice));
+    act(&mut state, Action::CastSpell(fire_ice));
+    let mut exiled = 0;
+    for _ in 0..12 {
+        let decision = next(&mut state);
+        if state.engine.pending_cast.is_none() {
+            break;
+        }
+        assert_eq!(
+            state.engine.pending_cast.as_ref().unwrap().mode_chosen,
+            Some(1)
+        );
+        let action = match decision {
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(target)) =>
+            {
+                Action::ChooseTarget(Target::Object(target))
+            }
+            Decision::ChooseCostTargets {
+                cost_kind: CostKind::ExileFromGraveyard,
+                candidates,
+                ..
+            } => {
+                exiled += 1;
+                Action::ChooseCostTarget(*fuel.iter().find(|id| candidates.contains(id)).unwrap())
+            }
+            other => first_answer(other),
+        };
+        act(&mut state, action);
+    }
+    assert_eq!(exiled, 3);
+    let item = state.stack.last().unwrap();
+    assert_eq!(item.source, fire_ice);
+    assert_eq!(
+        item.v4.cast_method,
+        Some(mtg_kernel::state::CastMethodV4::Omen)
+    );
+    let hand_before = state.players[P0.index()].hand.len();
+    let mut restored: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    assert!(public_observation(&restored).is_ok());
+    settle_first(&mut restored);
+    assert!(restored.objects.get(target).tapped);
+    assert_eq!(restored.players[P0.index()].hand.len(), hand_before + 1);
+    assert_eq!(zone(&restored, fire_ice), Zone::Graveyard);
+}
+
+/// Emry, Lurker of the Loch applies her artifact generic cost reduction when
+/// escaped through Underworld Breach.
+#[test]
+fn public_escape_casts_emry_with_artifact_cost_reduction() {
+    let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let emry = put(&mut state, P0, "Emry, Lurker of the Loch", Zone::Graveyard);
+    let fuel = ["Island", "Forest", "Ponder", "Swamp"]
+        .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    // Without artifacts, {2}{U} is not payable with {U}.
+    assert!(!castable(&mut state, emry));
+    // With two artifacts, Emry costs {U} + exile 3.
+    put(&mut state, P0, "Mox Pearl", Zone::Battlefield);
+    put(&mut state, P0, "Mox Sapphire", Zone::Battlefield);
+    assert!(castable(&mut state, emry));
+    act(&mut state, Action::CastSpell(emry));
+    let mut exiled = 0;
+    for _ in 0..12 {
+        let decision = next(&mut state);
+        if state.engine.pending_cast.is_none() {
+            break;
+        }
+        let action = match decision {
+            Decision::ChooseCostTargets {
+                cost_kind: CostKind::ExileFromGraveyard,
+                candidates,
+                ..
+            } => {
+                exiled += 1;
+                Action::ChooseCostTarget(*fuel.iter().find(|id| candidates.contains(id)).unwrap())
+            }
+            other => first_answer(other),
+        };
+        act(&mut state, action);
+    }
+    assert_eq!(exiled, 3);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, emry), Zone::Battlefield);
+}
+
+/// Tolarian Terror and Cryptic Serpent apply their graveyard instant/sorcery
+/// generic cost reduction when escaped through Underworld Breach without
+/// counting themselves.
+#[test]
+fn public_escape_tolarian_terror_and_cryptic_serpent_graveyard_reduction() {
+    for (card, colored, short_generic, exact_generic) in [
+        ("Tolarian Terror", &[ManaColor::U][..], 2u8, 3u8),
+        (
+            "Cryptic Serpent",
+            &[ManaColor::U, ManaColor::U][..],
+            1u8,
+            2u8,
+        ),
+    ] {
+        let mut short = plains();
+        mtg_kernel::rl::enable_public_shroud_v1(&mut short);
+        put(&mut short, P0, "Underworld Breach", Zone::Battlefield);
+        let spell = put(&mut short, P0, card, Zone::Graveyard);
+        for _ in 0..3 {
+            put(&mut short, P0, "Ponder", Zone::Graveyard);
+        }
+        pool(&mut short, P0, colored, short_generic);
+        assert!(
+            !castable(&mut short, spell),
+            "{card} should not be payable 1 mana short"
+        );
+
+        let mut exact = plains();
+        mtg_kernel::rl::enable_public_shroud_v1(&mut exact);
+        put(&mut exact, P0, "Underworld Breach", Zone::Battlefield);
+        let spell = put(&mut exact, P0, card, Zone::Graveyard);
+        let fuel = [
+            put(&mut exact, P0, "Ponder", Zone::Graveyard),
+            put(&mut exact, P0, "Ponder", Zone::Graveyard),
+            put(&mut exact, P0, "Ponder", Zone::Graveyard),
+        ];
+        pool(&mut exact, P0, colored, exact_generic);
+        assert!(castable(&mut exact, spell), "{card} should be castable");
+        act(&mut exact, Action::CastSpell(spell));
+        for _ in 0..12 {
+            let decision = next(&mut exact);
+            if exact.engine.pending_cast.is_none() {
+                break;
+            }
+            act(&mut exact, first_answer(decision));
+        }
+        assert!(exact.engine.pending_cast.is_none(), "{card}");
+        assert_eq!(
+            fuel.iter()
+                .filter(|&&id| zone(&exact, id) == Zone::Exile)
+                .count(),
+            3
+        );
+        settle_first(&mut exact);
+        assert_eq!(zone(&exact, spell), Zone::Battlefield, "{card}");
+    }
+}
+
+/// Delve with Underworld Breach requires disjoint graveyard cards (3 for Escape
+/// plus N for Delve), never counts the escaped card itself, fails when 1 card
+/// short, and Hogaak (which requires Convoke) fails closed cleanly.
+#[test]
+fn public_escape_delve_disjoint_exile_and_hogaak_fail_closed() {
+    // Gurmag Angler ({6}{B}, Delve) with only {B} needs 3 Escape + 6 Delve = 9 other cards.
+    let mut short = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut short);
+    put(&mut short, P0, "Underworld Breach", Zone::Battlefield);
+    let angler = put(&mut short, P0, "Gurmag Angler", Zone::Graveyard);
+    for _ in 0..8 {
+        put(&mut short, P0, "Island", Zone::Graveyard);
+    }
+    pool(&mut short, P0, &[ManaColor::B], 0);
+    assert!(
+        !castable(&mut short, angler),
+        "8 other cards (9 including self) must not pay 3 Escape + 6 Delve"
+    );
+
+    let mut exact = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut exact);
+    put(&mut exact, P0, "Underworld Breach", Zone::Battlefield);
+    let angler = put(&mut exact, P0, "Gurmag Angler", Zone::Graveyard);
+    let fuel: Vec<_> = (0..9)
+        .map(|_| put(&mut exact, P0, "Island", Zone::Graveyard))
+        .collect();
+    pool(&mut exact, P0, &[ManaColor::B], 0);
+    assert!(castable(&mut exact, angler));
+    act(&mut exact, Action::CastSpell(angler));
+    for _ in 0..12 {
+        let decision = next(&mut exact);
+        if exact.engine.pending_cast.is_none() {
+            break;
+        }
+        act(&mut exact, first_answer(decision));
+    }
+    assert!(exact.engine.pending_cast.is_none());
+    assert_eq!(
+        fuel.iter()
+            .filter(|&&id| zone(&exact, id) == Zone::Exile)
+            .count(),
+        9,
+        "3 Escape exiles and 6 Delve exiles must be disjoint"
+    );
+    settle_first(&mut exact);
+    assert_eq!(zone(&exact, angler), Zone::Battlefield);
+
+    // Hogaak (no_mana: true, requires Convoke for {B/G}{B/G}) fails closed
+    // under Breach even with abundant mana and graveyard fuel when no creatures
+    // can convoke its colored pips.
+    let mut hogaak_state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut hogaak_state);
+    put(
+        &mut hogaak_state,
+        P0,
+        "Underworld Breach",
+        Zone::Battlefield,
+    );
+    let hogaak = put(
+        &mut hogaak_state,
+        P0,
+        "Hogaak, Arisen Necropolis",
+        Zone::Graveyard,
+    );
+    for _ in 0..10 {
+        put(&mut hogaak_state, P0, "Island", Zone::Graveyard);
+    }
+    pool(
+        &mut hogaak_state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::G, ManaColor::G],
+        5,
+    );
+    assert!(!castable(&mut hogaak_state, hogaak));
+}
+
+/// A forged staged Escape snapshot of Damn with `mode_chosen` set to 1
+/// (Overload) is rejected by `validate_pending_cast`, matching the form menu.
+#[test]
+fn public_escape_refuses_forged_overload_form_snapshot() {
+    let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let target = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let damn = put(&mut state, P0, "Damn", Zone::Graveyard);
+    for name in ["Island", "Forest", "Ponder", "Swamp"] {
+        put(&mut state, P0, name, Zone::Graveyard);
+    }
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::W, ManaColor::W],
+        2,
+    );
+    act(&mut state, Action::CastSpell(damn));
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    assert_eq!(
+        state.engine.pending_cast.as_ref().unwrap().mode_chosen,
+        Some(0)
+    );
+    let mut forged: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    forged.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(1);
+    let error = public_observation(&forged).unwrap_err();
+    assert!(error.contains("first form"), "{error}");
+    assert!(engine::step(&mut forged, Action::ChooseTarget(Target::Object(target))).is_err());
+    assert!(matches!(
+        engine::advance_until_decision(&mut forged),
+        Decision::Halted { .. }
+    ));
 }

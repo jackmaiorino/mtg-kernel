@@ -152,6 +152,7 @@ pub(super) struct SpellComponentChoicesV1 {
 pub(super) struct SelectedSpellManaCostsV1 {
     granted_flashback_v1: bool,
     breach_escape: bool,
+    escape_second_form: bool,
     pub(super) tinybones_mana_v72: Option<super::tinybones_v72::ManaGrantV72>,
     pub(super) any_mana_type: bool,
     /// Whether the last component group is retrace's land discard
@@ -240,7 +241,11 @@ impl SelectedSpellManaCostsV1 {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
             CastMethodV4::Flashback if self.granted_flashback_v1 => Some(&[][..]),
             CastMethodV4::Flashback => Some(flashback_cost_v1(definition)?),
-            CastMethodV4::Escape => Some(escape_cost_v1(definition, self.breach_escape)?),
+            CastMethodV4::Escape => Some(escape_cost_for_mode_v1(
+                definition,
+                self.breach_escape,
+                u8::from(self.escape_second_form),
+            )?),
             _ => None,
         };
         // A card with a choice between additional costs (#715) has one of two
@@ -373,6 +378,14 @@ impl SelectedSpellManaCostsV1 {
             return None;
         }
         let mut reserved = separately_reserved_graveyard.to_vec();
+        if state
+            .objects
+            .try_get(source)
+            .is_some_and(|object| object.zone == crate::state::Zone::Graveyard)
+            && !reserved.contains(&source)
+        {
+            reserved.push(source);
+        }
         for (components, chosen) in self.component_groups.iter().zip(chosen_by_group) {
             reserved.extend(super::validate_cost_component_choices_v1(
                 state, player, source, components, chosen,
@@ -789,9 +802,13 @@ fn selected_spell_mana_costs_with_escape(
     state: &GameState,
     breach_escape: bool,
 ) -> Option<SelectedSpellManaCostsV1> {
+    let escape_second_form = method == CastMethodV4::Escape
+        && mode == 1
+        && super::escape_supports_second_form_v1(definition);
+    let second_form_spell = method == CastMethodV4::Omen || escape_second_form;
     let grist_cda = cfg!(feature = "eternal-fixtures")
         && crate::eternal_cube_c9c_v1::is_grist_card(definition.name)
-        && method != CastMethodV4::Omen
+        && !second_form_spell
         && method != CastMethodV4::Bestow
         && !(method == CastMethodV4::Alternative
             && definition
@@ -803,6 +820,7 @@ fn selected_spell_mana_costs_with_escape(
         replicate.is_none() && crate::eternal_pauper_e8b_v1::splice_cost(definition).is_some();
     let mut selected = SelectedSpellManaCostsV1 {
         breach_escape,
+        escape_second_form,
         granted_flashback_v1: false,
         tinybones_mana_v72: None,
         any_mana_type: false,
@@ -810,9 +828,9 @@ fn selected_spell_mana_costs_with_escape(
         legendary_spell: definition
             .supertypes
             .contains(&card_def::Supertype::Legendary)
-            && method != CastMethodV4::Omen,
+            && !second_form_spell,
         all_creature_types_v60: definition.changeling
-            && method != CastMethodV4::Omen
+            && !second_form_spell
             && method != CastMethodV4::Bestow
             && !(method == CastMethodV4::Alternative
                 && definition
@@ -870,7 +888,25 @@ fn selected_spell_mana_costs_with_escape(
             }
         }
         CastMethodV4::Flashback => selected.components(flashback_cost_v1(definition)?),
-        CastMethodV4::Escape => selected.components(escape_cost_v1(definition, breach_escape)?),
+        CastMethodV4::Escape => {
+            if escape_second_form {
+                let types = if let Some(adventure) = supported_adventure(definition) {
+                    adventure.types
+                } else {
+                    supported_omen(definition)?.types
+                };
+                selected.components(escape_cost_for_mode_v1(definition, breach_escape, 1)?);
+                selected.types = types;
+            } else {
+                selected.components(escape_cost_v1(definition, breach_escape)?);
+                selected.delve = definition.delve;
+                if let Some(reducer) = definition.generic_cost_reduction {
+                    selected.own_generic_reduction =
+                        normal_cast_reduction_count(reducer.count, player, targets, state)
+                            .saturating_mul(u32::from(reducer.generic_per_count));
+                }
+            }
+        }
         CastMethodV4::Madness => selected.costs.push(definition.madness_cost?),
         CastMethodV4::Plotted => {
             definition.plot_cost?;
@@ -894,7 +930,7 @@ fn selected_spell_mana_costs_with_escape(
     }
     // Spend restrictions inspect the selected spell form, not the creature
     // printed on a different face/form or the source of an activated ability.
-    if method == CastMethodV4::Omen
+    if second_form_spell
         || (method == CastMethodV4::Alternative
             && definition
                 .alt_cost
@@ -928,8 +964,18 @@ fn selected_spell_mana_costs_with_escape(
     // {1} less, whichever cost is paid.
     #[cfg(feature = "eternal-fixtures")]
     {
+        let color_method = if escape_second_form {
+            CastMethodV4::Omen
+        } else {
+            method
+        };
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
-            crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, method, player),
+            crate::eternal_pauper_e8b_v1::spell_cost_reduction(
+                state,
+                definition,
+                color_method,
+                player,
+            ),
         );
         // Sailors' Bane costs {1} less per instant, sorcery and Adventure
         // card in its owner's graveyard and exile (wave S1b).
@@ -1050,6 +1096,17 @@ pub(super) fn escape_cost_v1(
         .or_else(|| crate::eternal_lurrus_v1::granted_escape_cost(definition))
 }
 
+pub(super) fn escape_cost_for_mode_v1(
+    definition: &card_def::CardDef,
+    breach: bool,
+    mode: u8,
+) -> Option<&'static [CostComponent]> {
+    if mode == 1 && super::escape_supports_second_form_v1(definition) {
+        return crate::eternal_lurrus_v1::granted_escape_cost_form1(definition);
+    }
+    escape_cost_v1(definition, breach)
+}
+
 // Keep selected form, payment and source inputs explicit at this shared quote boundary.
 pub(super) fn selected_spell_mana_costs_for_source_v1(
     source: ObjectId,
@@ -1128,7 +1185,8 @@ fn selected_spell_mana_costs_for_source_grant_v1(
     // Preserve other reducers, but remove this source's graveyard contribution.
     // Limited to the eternal build so the rated Pauper build keeps its quotes.
     if cfg!(feature = "eternal-fixtures")
-        && (method == CastMethodV4::Normal || granted)
+        && (matches!(method, CastMethodV4::Normal | CastMethodV4::Escape) || granted)
+        && !selected.escape_second_form
         && state
             .objects
             .try_get(source)
@@ -1166,6 +1224,11 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         // Disruptor Flute: spells with the chosen name cost {3} more. Chill:
         // red spells, by the cast form's color, cost {2} more. Gloom: white
         // spells cost {3} more.
+        let tax_method = if selected.escape_second_form {
+            CastMethodV4::Omen
+        } else {
+            method
+        };
         selected.own_generic_increase =
             crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player)
                 .saturating_add(crate::eternal_sideboard_s1a_v1::statics::flute_spell_tax(
@@ -1173,10 +1236,10 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                     definition.object_name,
                 ))
                 .saturating_add(crate::eternal_premodern_p3a_v1::statics::chill_tax(
-                    state, definition, method,
+                    state, definition, tax_method,
                 ))
                 .saturating_add(crate::eternal_premodern_p3b_v1::statics::gloom_spell_tax(
-                    state, definition, method,
+                    state, definition, tax_method,
                 ))
                 // Kaervek's Torch: spells that target it cost {2} more
                 // (Pauper field wave Pf1c).
@@ -2104,11 +2167,18 @@ pub(super) fn prepare_final_spell_payment_v1(
     ) {
         return None;
     }
+    let payment_method = if pending.source_contract.cast_method == CastMethodV4::Escape
+        && method == CastMethodV4::Omen
+    {
+        CastMethodV4::Escape
+    } else {
+        method
+    };
     let selected = selected_spell_mana_costs_for_source_v1(
         source,
         definition,
         (
-            method,
+            payment_method,
             pending.kicked == Some(true),
             pending.mode_chosen.unwrap_or(0),
         ),
@@ -2127,7 +2197,7 @@ pub(super) fn prepare_final_spell_payment_v1(
     } else {
         selected.component_choices_v1(
             definition,
-            method,
+            payment_method,
             player,
             state,
             &pending.sacrifice_chosen,
@@ -2308,7 +2378,7 @@ pub(super) fn prepare_final_spell_payment_v1(
     let base_count = usize::from(
         prepared.compound.is_none()
             && matches!(
-                method,
+                payment_method,
                 CastMethodV4::Alternative | CastMethodV4::Flashback | CastMethodV4::Escape
             ),
     );
