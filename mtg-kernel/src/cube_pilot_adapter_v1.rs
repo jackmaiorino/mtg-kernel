@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// M3 release decoding identifier (temperature-1 wide sampler).
@@ -129,16 +129,29 @@ impl D9PilotConfig {
         f32::from_bits(self.london_keep_offset_bits)
     }
 
-    /// Fails closed on any missing digest, non-finite keep offset, decoding
-    /// mismatch, or card-database hash mismatch.
+    /// Fails closed on any missing or malformed digest, non-finite keep offset,
+    /// decoding mismatch, or compiled card-database hash mismatch.
     pub fn validate(&self) -> Result<(), D9AdapterError> {
+        let is_lower_hex = |s: &str, len: usize| {
+            s.len() == len
+                && s.bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        };
         for (name, value) in [
             ("checkpoint_sha256", &self.pin.checkpoint_sha256),
             ("after_state_sha256", &self.pin.after_state_sha256),
-            ("card_database_sha256", &self.pin.card_database_sha256),
             ("table_sha256", &self.pin.table_sha256),
-            ("training_math", &self.pin.training_math),
             ("source_binary_sha256", &self.pin.source_binary_sha256),
+        ] {
+            if !is_lower_hex(value, 64) {
+                return Err(D9AdapterError::InvalidConfig(format!(
+                    "pin.{name} must be a 64-character lowercase hex sha256"
+                )));
+            }
+        }
+        for (name, value) in [
+            ("card_database_sha256", &self.pin.card_database_sha256),
+            ("training_math", &self.pin.training_math),
             ("decoding", &self.pin.decoding),
         ] {
             if value.trim().is_empty() {
@@ -159,10 +172,18 @@ impl D9PilotConfig {
                 actual: self.pin.decoding.clone(),
             });
         }
-        if self.pin.card_database_sha256 != self.expected_card_database_sha256 {
+        let compiled_card_db = format!("{KERNEL_CARDDB_HASH:016x}");
+        if self.expected_card_database_sha256 != compiled_card_db {
+            return Err(D9AdapterError::PinMismatch {
+                field: "expected_card_database_sha256",
+                expected: compiled_card_db,
+                actual: self.expected_card_database_sha256.clone(),
+            });
+        }
+        if self.pin.card_database_sha256 != compiled_card_db {
             return Err(D9AdapterError::PinMismatch {
                 field: "card_database_sha256",
-                expected: self.expected_card_database_sha256.clone(),
+                expected: compiled_card_db,
                 actual: self.pin.card_database_sha256.clone(),
             });
         }
@@ -225,6 +246,10 @@ pub struct FastSessionRequest {
     pub caps: GameCaps,
     pub decoding_mode: D9DecodingMode,
     pub london_keep_offset_bits: u32,
+    /// Calling thread's live per-decision counter (`game_decision_counter()`).
+    /// Collectors MUST store the running decision count here (`Ordering::Relaxed`)
+    /// after every decision to uphold the `per-decision-v1` watchdog contract.
+    pub decision_counter: Arc<AtomicU64>,
 }
 
 /// Structured encoder refusal reported by an M2 collector.
@@ -264,6 +289,10 @@ pub trait FastSessionCollector: Send + Sync {
 
     /// Executes one full game attempt under the exact seeds, seats, caps, and
     /// M3 decoding settings in `request`.
+    ///
+    /// Implementations MUST update `request.decision_counter` (or equivalently
+    /// `game_decision_counter()` on the calling thread) after every decision so
+    /// the in-process watchdog and heartbeat observe live progress.
     fn play_attempt(&self, request: &FastSessionRequest) -> FastSessionOutcome;
 }
 
@@ -328,6 +357,7 @@ impl<C: FastSessionCollector> GamePilot for D9GamePilot<C> {
             caps: *caps,
             decoding_mode: self.config.decoding_mode,
             london_keep_offset_bits: self.config.london_keep_offset_bits,
+            decision_counter: Arc::clone(&counter),
         };
         let result = catch_unwind(AssertUnwindSafe(|| self.collector.play_attempt(&request)));
         match result {
@@ -362,7 +392,7 @@ impl<C: FastSessionCollector> GamePilot for D9GamePilot<C> {
                     .downcast_ref::<&str>()
                     .map(|s| (*s).to_owned())
                     .or_else(|| payload.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "D9 collector panicked".to_owned());
+                    .unwrap_or_else(|| "panic".to_owned());
                 AttemptOutcome {
                     decisions: counter.load(Ordering::Relaxed),
                     physical_decisions: None,
@@ -398,8 +428,9 @@ impl D9PilotRegistry {
         self
     }
 
-    /// Registers one validated [`D9GamePilot`]. Rejects duplicate registrations
-    /// whose pins differ.
+    /// Registers one validated [`D9GamePilot`]. Duplicate registration for an
+    /// identical pin is idempotent and keeps the existing registered collector;
+    /// any pin field difference fails closed.
     pub fn register<C: FastSessionCollector + 'static>(
         &mut self,
         pilot: D9GamePilot<C>,
@@ -558,6 +589,9 @@ mod tests {
                     .refuse_action_seed_mod
                     .is_some_and(|m| req.action_seed % m == 0)
             {
+                for step in 1..=7 {
+                    req.decision_counter.store(step, Ordering::Relaxed);
+                }
                 return FastSessionOutcome::EncoderRefusal(FastSessionRefusal {
                     kind: "unsupported_zone".to_owned(),
                     reason: "mock encoder refusal".to_owned(),
@@ -566,6 +600,9 @@ mod tests {
                     policy_steps: Some(9),
                     last_action_source: Some(req.decks[0][0]),
                 });
+            }
+            for step in 1..=12 {
+                req.decision_counter.store(step, Ordering::Relaxed);
             }
             let winner = req.seats[(req.action_seed & 1) as usize];
             FastSessionOutcome::Finished {
@@ -597,6 +634,27 @@ mod tests {
             })
         ));
 
+        // JSON config carrying the same wrong card DB hash in both fields must still fail closed.
+        let mut both_wrong = cfg.clone();
+        both_wrong.pin.card_database_sha256 = "0000000000000000".to_owned();
+        both_wrong.expected_card_database_sha256 = "0000000000000000".to_owned();
+        let roundtripped: D9PilotConfig =
+            serde_json::from_str(&serde_json::to_string(&both_wrong).unwrap()).unwrap();
+        assert!(matches!(
+            roundtripped.validate(),
+            Err(D9AdapterError::PinMismatch {
+                field: "expected_card_database_sha256",
+                ..
+            })
+        ));
+
+        let mut empty_math = cfg.clone();
+        empty_math.pin.training_math = "   ".to_owned();
+        assert!(matches!(
+            empty_math.validate(),
+            Err(D9AdapterError::InvalidConfig(_))
+        ));
+
         let mut bad_decoding = cfg.clone();
         bad_decoding.pin.decoding = "uniform-index-splitmix64-v1".to_owned();
         assert!(matches!(
@@ -607,15 +665,17 @@ mod tests {
             })
         ));
 
-        let bad_nan = D9PilotConfig::for_compiled_kernel(
-            pin.clone(),
-            D9DecodingMode::SampleTemp1Wide,
-            f32::NAN,
-        );
-        assert!(matches!(
-            bad_nan.validate(),
-            Err(D9AdapterError::InvalidConfig(_))
-        ));
+        for bad_offset in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let bad = D9PilotConfig::for_compiled_kernel(
+                pin.clone(),
+                D9DecodingMode::SampleTemp1Wide,
+                bad_offset,
+            );
+            assert!(matches!(
+                bad.validate(),
+                Err(D9AdapterError::InvalidConfig(_))
+            ));
+        }
 
         let mut collector_pin = pin.clone();
         collector_pin.table_sha256 = "ff".repeat(32);
@@ -651,6 +711,32 @@ mod tests {
         let mut registry = D9PilotRegistry::new();
         registry.register(pilot).unwrap();
 
+        // Duplicate registration with a differing pin field for the same checkpoint fails closed.
+        let mut altered_pin = pin.clone();
+        altered_pin.table_sha256 = "aa".repeat(32);
+        let altered_cfg = D9PilotConfig::for_compiled_kernel(
+            altered_pin.clone(),
+            D9DecodingMode::SampleTemp1Wide,
+            -0.5,
+        );
+        let altered_pilot = D9GamePilot::new(
+            altered_cfg.clone(),
+            MockCollector {
+                pin: altered_pin,
+                refuse_action_seed_mod: None,
+                refuse_all: false,
+                expected_keep_offset_bits: altered_cfg.london_keep_offset_bits,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            registry.register(altered_pilot),
+            Err(D9AdapterError::PinMismatch {
+                field: "table_sha256",
+                ..
+            })
+        ));
+
         assert!(registry.load_checkpoint(&pin).is_ok());
 
         let mut wrong_math = pin.clone();
@@ -660,6 +746,57 @@ mod tests {
         let mut unknown = pin;
         unknown.checkpoint_sha256 = "99".repeat(32);
         assert!(registry.load_checkpoint(&unknown).is_err());
+    }
+
+    #[test]
+    fn d9_collector_advances_live_decision_counter_during_play() {
+        use crate::cube_worker_liveness_v1::observe_decisions;
+        use std::time::Duration;
+
+        struct AdvancingCollector {
+            pin: PilotPin,
+        }
+        impl FastSessionCollector for AdvancingCollector {
+            fn pin(&self) -> &PilotPin {
+                &self.pin
+            }
+
+            fn play_attempt(&self, req: &FastSessionRequest) -> FastSessionOutcome {
+                for step in 1..=6u64 {
+                    req.decision_counter.store(step, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(60));
+                }
+                FastSessionOutcome::Finished {
+                    decisions: 6,
+                    physical_decisions: Some(6),
+                    policy_steps: Some(6),
+                    end: GameEnd::Natural {
+                        winner_seat: Some(req.seats[0]),
+                        reason: "advancing".to_owned(),
+                    },
+                    last_action_source: None,
+                }
+            }
+        }
+
+        let pin = sample_pin();
+        let cfg =
+            D9PilotConfig::for_compiled_kernel(pin.clone(), D9DecodingMode::SampleTemp1Wide, 0.0);
+        let pilot = D9GamePilot::new(cfg, AdvancingCollector { pin }).unwrap();
+        let forest = card_id_by_name("Forest").unwrap();
+        let deck = canonical_deck(&vec![forest; 40]);
+        let spec = AttemptSpec {
+            decks: [&deck, &deck],
+            seats: [0, 1],
+            episode: 0,
+            env_seed: 1,
+            action_seed: 2,
+        };
+        // Total play time ~360ms > 200ms watchdog, but counter advances every ~60ms so it must not stall.
+        let (outcome, stalled) =
+            observe_decisions(Duration::from_millis(200), || pilot.play(&spec, &GameCaps::default()));
+        assert!(!stalled, "advancing decision counter must satisfy per-decision-v1 liveness");
+        assert_eq!(outcome.decisions, 6);
     }
 
     #[test]
@@ -690,27 +827,49 @@ mod tests {
         .unwrap();
 
         // Parity harness checks natural + refusal cases cleanly.
-        let matching_pilot = D9GamePilot::new(
+        let mixed_pilot_a = D9GamePilot::new(
             cfg.clone(),
             MockCollector {
                 pin: pin.clone(),
-                refuse_action_seed_mod: None,
-                refuse_all: true,
+                refuse_action_seed_mod: Some(2),
+                refuse_all: false,
                 expected_keep_offset_bits: cfg.london_keep_offset_bits,
             },
         )
         .unwrap();
-        let cases = vec![D9ParityCase {
-            label: "refusal-case".to_owned(),
-            decks: [d0.clone(), d1.clone()],
-            seats: [2, 5],
-            episode: 0,
-            env_seed: 101,
-            action_seed: 202,
-            caps: GameCaps::default(),
-        }];
-        let report = verify_d9_collector_parity(&refusing_pilot, &matching_pilot, &cases).unwrap();
-        assert_eq!(report.cases_checked, 1);
+        let mixed_pilot_b = D9GamePilot::new(
+            cfg.clone(),
+            MockCollector {
+                pin: pin.clone(),
+                refuse_action_seed_mod: Some(2),
+                refuse_all: false,
+                expected_keep_offset_bits: cfg.london_keep_offset_bits,
+            },
+        )
+        .unwrap();
+        let cases = vec![
+            D9ParityCase {
+                label: "refusal-case".to_owned(),
+                decks: [d0.clone(), d1.clone()],
+                seats: [2, 5],
+                episode: 0,
+                env_seed: 101,
+                action_seed: 202,
+                caps: GameCaps::default(),
+            },
+            D9ParityCase {
+                label: "natural-case".to_owned(),
+                decks: [d1.clone(), d0.clone()],
+                seats: [5, 2],
+                episode: 1,
+                env_seed: 103,
+                action_seed: 203,
+                caps: GameCaps::default(),
+            },
+        ];
+        let report = verify_d9_collector_parity(&mixed_pilot_a, &mixed_pilot_b, &cases).unwrap();
+        assert_eq!(report.cases_checked, 2);
+        assert_eq!(report.natural_ends, 1);
         assert_eq!(report.encoder_refusals, 1);
 
         // Divergent collector fails closed in parity check.
