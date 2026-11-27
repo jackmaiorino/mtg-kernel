@@ -8,14 +8,17 @@
 //!   checkpoint/source-binary digests);
 //! - [`FastSessionCollector`] trait boundary for M2's in-process collector;
 //! - `encoder_refusal:<kind>` refusal-to-halt mapping (`GameEnd::Terminal`
-//!   yielding `stop_kind = "terminal:encoder_refusal:<kind>"`);
+//!   yielding pod-record `stop_kind = "terminal:encoder_refusal:<kind>"` and
+//!   tripwire/census `cube_b_census_v1::stop_kind = "encoder_refusal:<kind>"`);
 //! - [`D9PilotRegistry`] implementing [`PilotProvider`] for training and reads;
 //! - [`verify_d9_collector_parity`] parity harness scaffold for D15 / M5
 //!   qualification.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::cube_draft_v1::{game_decision_counter, Deck, GameCaps, GameEnd};
-use crate::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot, UniformPilot};
+use crate::cube_seat_v1::{
+    AttemptOutcome, AttemptSpec, GamePilot, PilotSampleCounts, UniformPilot,
+};
 use crate::cube_training_driver_v1::{PilotPin, PilotProvider, TrainingDriverError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -30,7 +33,8 @@ pub const M3_SAMPLE_TEMP1_WIDE_V1: &str = "m3-sample-temp1-wide-v1";
 /// refuses a state or legal action set.
 pub const ENCODER_REFUSAL_CLASSIFICATION: &str = "encoder_refusal";
 /// Prefix prepended to the refusal kind inside `GameEnd::Terminal::code`,
-/// producing `stop_kind = "terminal:encoder_refusal:<kind>"`.
+/// producing pod-record `stop_kind = "terminal:encoder_refusal:<kind>"` and
+/// tripwire/census `stop_kind = "encoder_refusal:<kind>"`.
 pub const ENCODER_REFUSAL_CODE_PREFIX: &str = "encoder_refusal:";
 
 /// Decoding mode certified by M3 and bound in D11.
@@ -251,19 +255,26 @@ pub struct FastSessionRequest {
     /// Collectors MUST store the running decision count here (`Ordering::Relaxed`)
     /// after every decision to uphold the `per-decision-v1` watchdog contract.
     pub decision_counter: Arc<AtomicU64>,
+    /// When true, this attempt belongs to the deterministic logical-ID
+    /// pilot-path sample (`m4-interfaces/v3` section 4) and the collector MUST
+    /// populate `pilot_sample` on completion and encoder refusal.
+    pub sample_pilot_path: bool,
 }
 
 /// Structured encoder refusal reported by an M2 collector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FastSessionRefusal {
     /// Short snake_case refusal category (e.g. `unsupported_zone`,
-    /// `feature_overflow`), mapped into `terminal:encoder_refusal:<kind>`.
+    /// `feature_overflow`), mapped into `encoder_refusal:<kind>`.
     pub kind: String,
     pub reason: String,
     pub decisions: u64,
     pub physical_decisions: Option<u64>,
     pub policy_steps: Option<u64>,
     pub last_action_source: Option<u16>,
+    pub first_player_seat: Option<usize>,
+    pub last_acting_seat: Option<usize>,
+    pub pilot_sample: Option<PilotSampleCounts>,
 }
 
 /// Result returned by [`FastSessionCollector::play_attempt`].
@@ -275,6 +286,9 @@ pub enum FastSessionOutcome {
         policy_steps: Option<u64>,
         end: GameEnd,
         last_action_source: Option<u16>,
+        first_player_seat: Option<usize>,
+        last_acting_seat: Option<usize>,
+        pilot_sample: Option<PilotSampleCounts>,
     },
     EncoderRefusal(FastSessionRefusal),
 }
@@ -345,8 +359,13 @@ impl<C: FastSessionCollector> D9GamePilot<C> {
     }
 }
 
-impl<C: FastSessionCollector> GamePilot for D9GamePilot<C> {
-    fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+impl<C: FastSessionCollector> D9GamePilot<C> {
+    fn run_attempt(
+        &self,
+        spec: &AttemptSpec<'_>,
+        caps: &GameCaps,
+        sample_pilot_path: bool,
+    ) -> AttemptOutcome {
         let counter = game_decision_counter();
         counter.store(0, Ordering::Relaxed);
         let request = FastSessionRequest {
@@ -359,6 +378,7 @@ impl<C: FastSessionCollector> GamePilot for D9GamePilot<C> {
             decoding_mode: self.config.decoding_mode,
             london_keep_offset_bits: self.config.london_keep_offset_bits,
             decision_counter: Arc::clone(&counter),
+            sample_pilot_path,
         };
         let result = catch_unwind(AssertUnwindSafe(|| self.collector.play_attempt(&request)));
         match result {
@@ -368,6 +388,9 @@ impl<C: FastSessionCollector> GamePilot for D9GamePilot<C> {
                 policy_steps,
                 end,
                 last_action_source,
+                first_player_seat,
+                last_acting_seat,
+                pilot_sample,
             }) => {
                 counter.store(decisions, Ordering::Relaxed);
                 AttemptOutcome {
@@ -376,16 +399,51 @@ impl<C: FastSessionCollector> GamePilot for D9GamePilot<C> {
                     policy_steps,
                     end,
                     last_action_source,
+                    first_player_seat,
+                    last_acting_seat: if decisions == 0 {
+                        None
+                    } else {
+                        last_acting_seat
+                    },
+                    pilot_sample: if sample_pilot_path {
+                        pilot_sample
+                    } else {
+                        None
+                    },
                 }
             }
             Ok(FastSessionOutcome::EncoderRefusal(refusal)) => {
                 counter.store(refusal.decisions, Ordering::Relaxed);
+                let pilot_sample = if sample_pilot_path {
+                    match refusal.pilot_sample {
+                        Some(mut counts) => {
+                            if counts.refused_decisions == 0 {
+                                counts.refused_decisions = 1;
+                            }
+                            Some(counts)
+                        }
+                        None if refusal.decisions == 0 => Some(PilotSampleCounts {
+                            refused_decisions: 1,
+                            ..PilotSampleCounts::default()
+                        }),
+                        None => None,
+                    }
+                } else {
+                    None
+                };
                 AttemptOutcome {
                     decisions: refusal.decisions,
                     physical_decisions: refusal.physical_decisions,
                     policy_steps: refusal.policy_steps,
                     end: encoder_refusal_game_end(&refusal.kind, refusal.reason),
                     last_action_source: refusal.last_action_source,
+                    first_player_seat: refusal.first_player_seat,
+                    last_acting_seat: if refusal.decisions == 0 {
+                        None
+                    } else {
+                        refusal.last_acting_seat
+                    },
+                    pilot_sample,
                 }
             }
             Err(payload) => {
@@ -400,9 +458,22 @@ impl<C: FastSessionCollector> GamePilot for D9GamePilot<C> {
                     policy_steps: None,
                     end: GameEnd::Panic { message },
                     last_action_source: None,
+                    first_player_seat: None,
+                    last_acting_seat: None,
+                    pilot_sample: None,
                 }
             }
         }
+    }
+}
+
+impl<C: FastSessionCollector> GamePilot for D9GamePilot<C> {
+    fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        self.run_attempt(spec, caps, false)
+    }
+
+    fn play_sampled(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        self.run_attempt(spec, caps, true)
     }
 }
 
@@ -552,9 +623,10 @@ mod tests {
     use crate::card_def::card_id_by_name;
     use crate::cube_draft_v1::CubePool;
     use crate::cube_pod_runner_v1::{
-        is_halted, run_training_pod, stop_kind, training_roles_with_older, uniform_training_chairs,
-        validate_pod_record_json, PilotInfo, PilotKind, PodRunnerError, PodStatus, PodUse,
-        TrainingPodConfig,
+        is_halted, run_training_pod, run_training_pod_with_options, stop_kind,
+        training_roles_with_older, uniform_training_chairs, validate_pod_record_json, PilotInfo,
+        PilotKind, PodRecordVersion, PodRunnerError, PodStatus, PodUse, TrainingPodConfig,
+        TrainingPodOptions,
     };
     use crate::cube_seat_v1::canonical_deck;
 
@@ -593,6 +665,20 @@ mod tests {
                 for step in 1..=7 {
                     req.decision_counter.store(step, Ordering::Relaxed);
                 }
+                let pilot_sample = req.sample_pilot_path.then(|| {
+                    let mut counts = PilotSampleCounts {
+                        decisions: 7,
+                        refused_decisions: 1,
+                        offered_decisions_null: 1,
+                        offered_actions_null: 2,
+                        chosen_null: 1,
+                        ..PilotSampleCounts::default()
+                    };
+                    counts.offered_decisions_by_card.insert(req.decks[0][0], 6);
+                    counts.offered_actions_by_card.insert(req.decks[0][0], 12);
+                    counts.chosen_by_card.insert(req.decks[0][0], 6);
+                    counts
+                });
                 return FastSessionOutcome::EncoderRefusal(FastSessionRefusal {
                     kind: "unsupported_zone".to_owned(),
                     reason: "mock encoder refusal".to_owned(),
@@ -600,12 +686,25 @@ mod tests {
                     physical_decisions: Some(7),
                     policy_steps: Some(9),
                     last_action_source: Some(req.decks[0][0]),
+                    first_player_seat: Some(req.seats[0]),
+                    last_acting_seat: Some(req.seats[0]),
+                    pilot_sample,
                 });
             }
             for step in 1..=12 {
                 req.decision_counter.store(step, Ordering::Relaxed);
             }
             let winner = req.seats[(req.action_seed & 1) as usize];
+            let pilot_sample = req.sample_pilot_path.then(|| {
+                let mut counts = PilotSampleCounts {
+                    decisions: 12,
+                    ..PilotSampleCounts::default()
+                };
+                counts.offered_decisions_by_card.insert(req.decks[1][0], 12);
+                counts.offered_actions_by_card.insert(req.decks[1][0], 24);
+                counts.chosen_by_card.insert(req.decks[1][0], 12);
+                counts
+            });
             FastSessionOutcome::Finished {
                 decisions: 12,
                 physical_decisions: Some(12),
@@ -615,6 +714,9 @@ mod tests {
                     reason: "mock_natural".to_owned(),
                 },
                 last_action_source: Some(req.decks[1][0]),
+                first_player_seat: Some(req.seats[0]),
+                last_acting_seat: Some(req.seats[1]),
+                pilot_sample,
             }
         }
     }
@@ -778,6 +880,9 @@ mod tests {
                         reason: "advancing".to_owned(),
                     },
                     last_action_source: None,
+                    first_player_seat: Some(req.seats[0]),
+                    last_acting_seat: Some(req.seats[0]),
+                    pilot_sample: None,
                 }
             }
         }
@@ -813,6 +918,10 @@ mod tests {
         assert_eq!(
             stop_kind(&end).as_deref(),
             Some("terminal:encoder_refusal:unsupported_zone")
+        );
+        assert_eq!(
+            crate::cube_b_census_v1::stop_kind(&end).as_deref(),
+            Some("encoder_refusal:unsupported_zone")
         );
 
         let forest = card_id_by_name("Forest").unwrap();
@@ -896,8 +1005,30 @@ mod tests {
             Err(D9AdapterError::ParityMismatch(_))
         ));
 
-        // Through real run_training_pod: 4 consecutive encoder refusals exhaust retries
-        // cleanly and emit a valid PodRecord with stop_kind == terminal:encoder_refusal:unsupported_zone.
+        // Sampled refusal populates refused_decisions and conserved chosen counts.
+        let refusal_spec = AttemptSpec {
+            decks: [&d0, &d1],
+            seats: [2, 5],
+            episode: 0,
+            env_seed: 101,
+            action_seed: 202,
+        };
+        let sampled_refusal = refusing_pilot.play_sampled(&refusal_spec, &GameCaps::default());
+        assert_eq!(sampled_refusal.first_player_seat, Some(2));
+        assert_eq!(sampled_refusal.last_acting_seat, Some(2));
+        let sample = sampled_refusal
+            .pilot_sample
+            .expect("sampled refusal emits pilot_sample");
+        assert_eq!(sample.decisions, 7);
+        assert_eq!(sample.refused_decisions, 1);
+        assert_eq!(
+            sample.chosen_by_card.values().sum::<u64>() + sample.chosen_null,
+            sample.decisions
+        );
+
+        // Through real run_training_pod (v2) and v3 with sampling: 4 consecutive encoder refusals
+        // exhaust retries cleanly and emit a valid PodRecord with
+        // pod-record stop_kind == terminal:encoder_refusal:unsupported_zone.
         let cube = CubePool::from_json_texts(
             include_str!("../../data/cube_v1/mtgo_vintage_cube_20261007.json"),
             include_str!("../../data/cube_v1/mtgo_vintage_cube_20261007_gaps.json"),
@@ -923,5 +1054,42 @@ mod tests {
         );
         let json = serde_json::to_string(&*pod).unwrap();
         validate_pod_record_json(&json).expect("stopped refusal pod record passes schema check");
+
+        let mut v3_chairs = uniform_training_chairs(roles);
+        let v3_opts = TrainingPodOptions {
+            record_version: PodRecordVersion::V3,
+            pilot_sample_denom: 1,
+            host: "test-host",
+        };
+        let v3_err = run_training_pod_with_options(
+            &cube,
+            &pod_cfg,
+            &mut v3_chairs,
+            &refusing_pilot,
+            &v3_opts,
+            None,
+        )
+        .err()
+        .expect("expected Stopped v3 pod on 4 encoder refusals");
+        let PodRunnerError::Stopped(v3_pod) = v3_err else {
+            panic!("expected Stopped v3 pod on 4 encoder refusals, got {v3_err:?}");
+        };
+        assert_eq!(
+            v3_pod.games[0].attempts[0].stop_kind.as_deref(),
+            Some("terminal:encoder_refusal:unsupported_zone")
+        );
+        assert!(v3_pod.games[0].chairs[0].is_some());
+        assert_eq!(
+            v3_pod.games[0].attempts[0].first_player_seat,
+            v3_pod.games[0].chairs[0]
+        );
+        assert_eq!(
+            v3_pod.games[0].attempts[0].last_acting_seat,
+            v3_pod.games[0].chairs[0]
+        );
+        assert!(v3_pod.games[0].attempts[0].last_acting_arm.is_some());
+        let v3_json = serde_json::to_string(&*v3_pod).unwrap();
+        validate_pod_record_json(&v3_json)
+            .expect("stopped v3 refusal pod record passes schema check");
     }
 }
