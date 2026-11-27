@@ -57,7 +57,7 @@ pub struct MetamorphCopyV1 {
     pub(crate) discarded_at: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cast_at: Option<usize>,
-    stack_item: StackItemId,
+    pub(crate) stack_item: StackItemId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reanimated_by: Option<AbilitySourceContractV4>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,7 +115,7 @@ pub struct NoncastCopyChoiceV1 {
     pub(crate) values: crate::copy_entry_v1::CandidateValues,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cast_at: Option<usize>,
-    stack_item: StackItemId,
+    pub(crate) stack_item: StackItemId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     vial: Option<vial::CopyOriginV1>,
 }
@@ -491,12 +491,33 @@ impl MetamorphCopyV1 {
         {
             return false;
         }
-        // Only companion receipts for this exact discard (e.g. Tinybones's
-        // discard journal) may appear between the land discard and the
-        // immediately following preparation / Show and Tell choice receipt.
-        if !history[at + 1..receipt_at]
-            .iter()
-            .all(|ev| Self::is_discard_companion_event(ev, at))
+        // Require the exact `CopyDiscardPaid` provenance receipt committed by
+        // `pay_copy_entry_cost` immediately before the preparation / Show and
+        // Tell choice receipt, with only companion receipts for this exact
+        // discard between the land move and `paid_at`.
+        let Some(paid_at) = receipt_at.checked_sub(1) else {
+            return false;
+        };
+        if at >= paid_at
+            || !matches!(
+                history.get(paid_at),
+                Some(CommittedEvent::CopyEntryProvenanceV1 { journal })
+                    if matches!(
+                        journal.as_ref(),
+                        crate::copy_entry_v1::ProvenanceV1::CopyDiscardPaid {
+                            stack_item,
+                            physical,
+                            land: paid_land,
+                            discard_at,
+                        } if *stack_item == self.stack_item
+                            && *physical == self.physical
+                            && *paid_land == land
+                            && *discard_at == at
+                    )
+            )
+            || !history[at + 1..paid_at]
+                .iter()
+                .all(|ev| Self::is_discard_companion_event(ev, at))
         {
             return false;
         }

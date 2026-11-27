@@ -1125,6 +1125,7 @@ fn become_absorbing_copy(
     copied_subtypes.dedup();
     let copied_ward = ObjectStateV4::from_card_def(copied_def).ward_generic;
 
+    let target_link = live_link(state, target);
     let link = live_link(state, host);
     let own_def = state.objects.get(host).card_def;
     let existing = absorbing_copy_index(state, host);
@@ -1159,6 +1160,15 @@ fn become_absorbing_copy(
         host,
         link.zone_change_count,
         &[own_def, copied_def],
+    );
+    crate::copy_entry_v1::record_absorbing_copy_applied(
+        state,
+        link,
+        target_link,
+        until_turn_of,
+        copied_def,
+        copied_face,
+        copied_adds_artifact,
     );
 }
 

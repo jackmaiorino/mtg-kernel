@@ -2338,6 +2338,11 @@ pub enum CommittedEvent {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         bloodletters: Vec<crate::state::ObjectLinkV4>,
     },
+    /// History-only provenance receipts emitted in Eternal builds to bind
+    /// completed noncast copy validation to exact entry-time effects and lineage.
+    CopyEntryProvenanceV1 {
+        journal: Box<crate::copy_entry_v1::ProvenanceV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

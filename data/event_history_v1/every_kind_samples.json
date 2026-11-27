@@ -337,5 +337,6 @@
 {"ResolutionDiscardWaitsV1":{"stack_item_id":3,"path":[1,1],"player":0,"hand":[{"object":12,"zone_change_count":1}]}},
 {"ResolutionDrawChoiceOfferedV1":{"stack_item_id":3,"player":0,"path":[3],"attempts":1}},
 {"ResolutionDrawChoiceAnsweredV1":{"stack_item_id":3,"path":[3]}},
-{"CastLifeXPaidV1":{"spell":41,"stack_item":1,"player":0,"amount":3,"loss":[0,3]}}
+{"CastLifeXPaidV1":{"spell":41,"stack_item":1,"player":0,"amount":3,"loss":[0,3]}},
+{"CopyEntryProvenanceV1":{"journal":{"LandAnimated":{"host":{"object":10,"zone_change_count":1},"card_def":100,"until_end_of_turn":true}}}}
 ]

@@ -3655,7 +3655,15 @@ fn pay_copy_entry_cost(
         let before = state.engine.event_history.len();
         crate::engine::commit_discarded_card(state, land.source);
         let offset = state.engine.event_history[before..].iter().position(|e| matches!(e, CommittedEvent::ZoneChange {object, from:Zone::Hand, to, ..} if *object == land.source && *to != Zone::Hand)).ok_or("Mox Diamond copy lost its discarded land")?;
-        copy.discarded_at = Some(before + offset);
+        let discard_at = before + offset;
+        copy.discarded_at = Some(discard_at);
+        crate::copy_entry_v1::record_copy_discard_paid(
+            state,
+            copy.stack_item,
+            copy.physical,
+            land,
+            discard_at,
+        );
     }
     Ok(())
 }

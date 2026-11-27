@@ -3991,9 +3991,10 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
     assert_eq!(zone(&state, land), Zone::Graveyard);
 
     // Forgery A: coherently bypass Mox Diamond's land discard by removing the
-    // discard event, restoring the land to hand, shifting prepared_at and
-    // entry_history_index down by 1, and clearing entry_answer + discarded_at
-    // in both NoncastCopyPrepared and MetamorphCopied.
+    // discard event and its CopyDiscardPaid receipt, restoring the land to
+    // hand, shifting prepared_at and entry_history_index down by 2, and
+    // clearing entry_answer + discarded_at in both NoncastCopyPrepared and
+    // MetamorphCopied.
     {
         let mut state_a = state.clone();
         state_a.players[0].graveyard.retain(|&id| id != land);
@@ -4014,6 +4015,15 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
                 })
             })
             .unwrap();
+        assert!(
+            history[discard_idx + 1]
+                .get("CopyEntryProvenanceV1")
+                .and_then(|e| e.get("journal"))
+                .and_then(|j| j.get("CopyDiscardPaid"))
+                .is_some(),
+            "expected CopyDiscardPaid immediately after Mox Diamond land discard"
+        );
+        history.remove(discard_idx + 1);
         history.remove(discard_idx);
         for ev in history.iter_mut() {
             if let Some(journal) = ev
@@ -4022,15 +4032,15 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
             {
                 if let Some(prep) = journal.get_mut("NoncastCopyPrepared") {
                     let old_p = prep["copy"]["prepared_at"].as_u64().unwrap();
-                    prep["copy"]["prepared_at"] = serde_json::json!(old_p - 1);
+                    prep["copy"]["prepared_at"] = serde_json::json!(old_p - 2);
                     prep["copy"].as_object_mut().unwrap().remove("entry_answer");
                     prep["copy"].as_object_mut().unwrap().remove("discarded_at");
                 }
                 if let Some(copied) = journal.get_mut("MetamorphCopied") {
                     let old_e = copied["entry_history_index"].as_u64().unwrap();
-                    copied["entry_history_index"] = serde_json::json!(old_e - 1);
+                    copied["entry_history_index"] = serde_json::json!(old_e - 2);
                     let old_p = copied["copy"]["prepared_at"].as_u64().unwrap();
-                    copied["copy"]["prepared_at"] = serde_json::json!(old_p - 1);
+                    copied["copy"]["prepared_at"] = serde_json::json!(old_p - 2);
                     copied["copy"]
                         .as_object_mut()
                         .unwrap()
@@ -4124,9 +4134,11 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
         assert_copy_restore_refused(forged, Action::Pass);
     }
 
-    // Forgery C (Finding 5): reusing the same discarded_at across two copies
-    // in the SAME Show and Tell window (so r1's lower-bound check `cast_at < d`
-    // passes for both copies) must be refused by `used_discards` and adjacency.
+    // Forgery C (Test isolation): reusing the same discarded_at across two
+    // copies in the SAME Show and Tell window with NO second land discard
+    // ZoneChange in history (P0 copies Mox Diamond discarding l0; P1 copies
+    // Mind Stone, then P1 is coherently forged to Mox Diamond reusing l0).
+    // Also check that a genuine dual-Mox Show and Tell snapshot restores cleanly.
     {
         let mut two = islands();
         two.active_player = P0;
@@ -4155,7 +4167,44 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
             serde_json::from_value(serde_json::to_value(&two).unwrap()).unwrap();
         act(&mut restored, Action::Pass);
 
-        let mut forged = serde_json::to_value(&two).unwrap();
+        // Isolated duplicate-discard forgery: P0 copies Mox Diamond (discarding
+        // l0) and P1 copies Mind Stone (zero second land discard in history),
+        // then P1's copy is rewritten to Mox Diamond reusing l0's discarded_at.
+        let mut dup = islands();
+        dup.active_player = P0;
+        dup.priority_player = P0;
+        let mox = put(&mut dup, P0, "Mox Diamond", Zone::Battlefield);
+        settle_first(&mut dup);
+        let stone = put(&mut dup, P0, "Mind Stone", Zone::Battlefield);
+        let _l0 = put(&mut dup, P0, "Island", Zone::Hand);
+        let p0_mm = put(&mut dup, P0, "Phyrexian Metamorph", Zone::Hand);
+        let p1_mm = put(&mut dup, P1, "Phyrexian Metamorph", Zone::Hand);
+        let show = put(&mut dup, P0, "Show and Tell", Zone::Hand);
+        pool(&mut dup, P0, &[ManaColor::U], 2);
+        cast(&mut dup, show, &[]);
+        assert!(settle(&mut dup).is_some());
+        act(&mut dup, Action::ChooseEffectTarget(Target::Object(p0_mm)));
+        act(&mut dup, Action::ChooseEffectTarget(Target::Object(p1_mm)));
+        act(&mut dup, Action::ChooseEffectTarget(Target::Object(mox)));
+        act(&mut dup, Action::ChooseEffectOption(1));
+        act(&mut dup, Action::ChooseEffectTarget(Target::Object(stone)));
+        settled(&mut dup);
+        assert_eq!(zone(&dup, p0_mm), Zone::Battlefield);
+        assert_eq!(zone(&dup, p1_mm), Zone::Battlefield);
+
+        let mox_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&dup, mox);
+        let mox_id = id("Mox Diamond");
+        let stone_id = id("Mind Stone");
+        dup.objects.get_mut(p1_mm).card_def = mox_id;
+        dup.objects.get_mut(p1_mm).name = "Mox Diamond".to_string();
+        let mut forged = serde_json::to_value(&dup).unwrap();
+        if let Some(defs) = forged["standard_v1"]["copied_card_defs"].as_array_mut() {
+            for row in defs.iter_mut() {
+                if row[0] == serde_json::json!(p1_mm) && row[2] == serde_json::json!(stone_id) {
+                    row[2] = serde_json::json!(mox_id);
+                }
+            }
+        }
         let history = forged["engine"]["event_history"].as_array_mut().unwrap();
         let mut first_discard = None;
         let mut first_answer = None;
@@ -4174,6 +4223,7 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
                     first_discard = Some(chosen["copy"]["discarded_at"].clone());
                     first_answer = Some(chosen["copy"]["entry_answer"].clone());
                 } else {
+                    chosen["copy"]["copied"] = serde_json::to_value(mox_contract).unwrap();
                     chosen["copy"]["discarded_at"] = first_discard.clone().unwrap();
                     chosen["copy"]["entry_answer"] = first_answer.clone().unwrap();
                 }
@@ -4181,6 +4231,8 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
             if let Some(copied) = journal.get_mut("MetamorphCopied") {
                 seen_copied += 1;
                 if seen_copied == 2 {
+                    copied["entrant"]["card_def"] = serde_json::json!(mox_id);
+                    copied["copy"]["copied"] = serde_json::to_value(mox_contract).unwrap();
                     copied["copy"]["discarded_at"] = first_discard.clone().unwrap();
                     copied["copy"]["entry_answer"] = first_answer.clone().unwrap();
                 }
@@ -4191,18 +4243,21 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
         assert_copy_restore_refused(forged, Action::Pass);
     }
 
-    // Forgery D (Blocking Finding 1): a real Putrid Imp activated-ability
-    // Hand -> Graveyard land discard while Reanimate is on the stack must be
-    // refused when pointed to as Mox Diamond's entry_answer / discarded_at.
+    // Forgery D1 (Test isolation): Putrid Imp activated-ability Hand ->
+    // Graveyard land discard while Reanimate is on the stack, followed by
+    // Reanimate copying Mind Stone (ZERO intervening events between imp_discard
+    // and prepared_at, and NO genuine second-land Mox payment in history).
+    // Coherently forging Mind Stone -> Mox Diamond pointing at imp_discard
+    // isolates CopyDiscardPaid provenance without any blacklisted ZoneChange.
     {
         let mut imp_state = islands();
         imp_state.active_player = P0;
         imp_state.priority_player = P0;
         let mox = put(&mut imp_state, P0, "Mox Diamond", Zone::Battlefield);
         settle_first(&mut imp_state);
+        let stone = put(&mut imp_state, P0, "Mind Stone", Zone::Battlefield);
         let imp = put(&mut imp_state, P0, "Putrid Imp", Zone::Battlefield);
         let l1 = put(&mut imp_state, P0, "Island", Zone::Hand);
-        let _l2 = put(&mut imp_state, P0, "Mountain", Zone::Hand);
         let l1_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&imp_state, l1);
         let metamorph = put(&mut imp_state, P0, "Phyrexian Metamorph", Zone::Graveyard);
         let reanimate = put(&mut imp_state, P0, "Reanimate", Zone::Hand);
@@ -4242,30 +4297,93 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
             })
             .unwrap();
 
-        // Now let Reanimate resolve, copying Mox Diamond and discarding l2.
+        // Let Reanimate resolve copying Mind Stone so NO second land discard
+        // exists in event_history, placing NoncastCopyPrepared directly at
+        // imp_discard + 1.
         assert!(matches!(
             settle(&mut imp_state),
             Some(Decision::ChooseEffectTargets { .. })
         ));
         act(
             &mut imp_state,
-            Action::ChooseEffectTarget(Target::Object(mox)),
+            Action::ChooseEffectTarget(Target::Object(stone)),
         );
-        act(&mut imp_state, Action::ChooseEffectOption(1));
         settled(&mut imp_state);
         assert_eq!(zone(&imp_state, metamorph), Zone::Battlefield);
+        assert!(matches!(
+            imp_state.engine.event_history.get(imp_discard + 1),
+            Some(mtg_kernel::event::CommittedEvent::MeddlingMageEntryV1 { .. })
+        ));
 
+        let mox_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&imp_state, mox);
+        let mox_id = id("Mox Diamond");
+        let stone_id = id("Mind Stone");
+        imp_state.objects.get_mut(metamorph).card_def = mox_id;
+        imp_state.objects.get_mut(metamorph).name = "Mox Diamond".to_string();
         let mut forged = serde_json::to_value(&imp_state).unwrap();
+        if let Some(defs) = forged["standard_v1"]["copied_card_defs"].as_array_mut() {
+            for row in defs.iter_mut() {
+                if row[0] == serde_json::json!(metamorph) && row[2] == serde_json::json!(stone_id) {
+                    row[2] = serde_json::json!(mox_id);
+                }
+            }
+        }
         for ev in forged["engine"]["event_history"].as_array_mut().unwrap() {
             if let Some(journal) = ev
                 .get_mut("MeddlingMageEntryV1")
                 .and_then(|e| e.get_mut("journal"))
             {
-                for key in ["NoncastCopyPrepared", "MetamorphCopied"] {
-                    if let Some(entry) = journal.get_mut(key) {
-                        entry["copy"]["entry_answer"] = serde_json::json!({"Discard": l1_contract});
-                        entry["copy"]["discarded_at"] = serde_json::json!(imp_discard);
-                    }
+                if let Some(prep) = journal.get_mut("NoncastCopyPrepared") {
+                    prep["copy"]["copied"] = serde_json::to_value(mox_contract).unwrap();
+                    prep["copy"]["entry_answer"] = serde_json::json!({"Discard": l1_contract});
+                    prep["copy"]["discarded_at"] = serde_json::json!(imp_discard);
+                }
+                if let Some(copied) = journal.get_mut("MetamorphCopied") {
+                    copied["entrant"]["card_def"] = serde_json::json!(mox_id);
+                    copied["copy"]["copied"] = serde_json::to_value(mox_contract).unwrap();
+                    copied["copy"]["entry_answer"] = serde_json::json!({"Discard": l1_contract});
+                    copied["copy"]["discarded_at"] = serde_json::json!(imp_discard);
+                }
+            }
+        }
+        assert_copy_restore_refused(forged, Action::Pass);
+    }
+
+    // Forgery D2 (Test isolation): inserting a non-blacklisted event (LifeGain,
+    // which r2's event blacklist allowed) between a genuine Mox Diamond land
+    // discard and its CopyDiscardPaid receipt isolates r3's companion-only
+    // adjacency whitelist.
+    {
+        let mut forged = serde_json::to_value(&state).unwrap();
+        let history = forged["engine"]["event_history"].as_array_mut().unwrap();
+        let discard_idx = history
+            .iter()
+            .position(|ev| {
+                ev.get("ZoneChange").is_some_and(|z| {
+                    z["object"] == serde_json::json!(land)
+                        && z["from"] == "Hand"
+                        && z["to"] == "Graveyard"
+                })
+            })
+            .unwrap();
+        history.insert(
+            discard_idx + 1,
+            serde_json::json!({"LifeGain": {"player": 0, "amount": 1}}),
+        );
+        for ev in history.iter_mut() {
+            if let Some(journal) = ev
+                .get_mut("MeddlingMageEntryV1")
+                .and_then(|e| e.get_mut("journal"))
+            {
+                if let Some(prep) = journal.get_mut("NoncastCopyPrepared") {
+                    let old_p = prep["copy"]["prepared_at"].as_u64().unwrap();
+                    prep["copy"]["prepared_at"] = serde_json::json!(old_p + 1);
+                }
+                if let Some(copied) = journal.get_mut("MetamorphCopied") {
+                    let old_e = copied["entry_history_index"].as_u64().unwrap();
+                    copied["entry_history_index"] = serde_json::json!(old_e + 1);
+                    let old_p = copied["copy"]["prepared_at"].as_u64().unwrap();
+                    copied["copy"]["prepared_at"] = serde_json::json!(old_p + 1);
                 }
             }
         }
@@ -4730,6 +4848,456 @@ fn noncast_metamorph_completed_snapshot_refuses_coherent_forgery() {
         let mut restored: GameState =
             serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
         act(&mut restored, Action::Pass);
+    }
+
+    // 6 (R3 Blocking Finding 1): never-animated Mishra's Factory must be
+    // refused both after cleanup and after donor departure; a genuinely
+    // animated Mishra's Factory must restore cleanly after both.
+    {
+        let advance_to_p1_main1 = |state: &mut GameState| {
+            run_until(
+                state,
+                |s| {
+                    s.active_player == P1
+                        && s.step == Step::Main1
+                        && s.stack.is_empty()
+                        && s.engine.pending_triggers.is_empty()
+                },
+                |_, _| None,
+            );
+        };
+        let forge_to_factory = |base: &GameState,
+                                metamorph: mtg_kernel::ids::ObjectId,
+                                factory_contract: mtg_kernel::state::AbilitySourceContractV4|
+         -> serde_json::Value {
+            let mut state_f = base.clone();
+            let factory_id = id("Mishra's Factory");
+            let stone_id = id("Mind Stone");
+            state_f.objects.get_mut(metamorph).card_def = factory_id;
+            state_f.objects.get_mut(metamorph).name = "Mishra's Factory".to_string();
+            let mut forged = serde_json::to_value(&state_f).unwrap();
+            mutate_both_receipts(&mut forged, |entry, is_copied| {
+                entry["copy"]["copied"] = serde_json::to_value(factory_contract).unwrap();
+                if is_copied {
+                    entry["entrant"]["card_def"] = serde_json::json!(factory_id);
+                }
+            });
+            if let Some(defs) = forged["standard_v1"]["copied_card_defs"].as_array_mut() {
+                for row in defs.iter_mut() {
+                    if row[0] == serde_json::json!(metamorph)
+                        && row[2] == serde_json::json!(stone_id)
+                    {
+                        row[2] = serde_json::json!(factory_id);
+                    }
+                }
+            }
+            forged
+        };
+
+        // 6a: Never-animated Mishra's Factory after cleanup.
+        let mut state = islands();
+        state.active_player = P0;
+        state.priority_player = P0;
+        let factory = put(&mut state, P0, "Mishra's Factory", Zone::Battlefield);
+        let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+        let factory_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&state, factory);
+        let metamorph = reanimate_copy(&mut state, P0);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(stone)),
+        );
+        settled(&mut state);
+        advance_to_p1_main1(&mut state);
+        assert!(!engine::object_has_type(
+            &state,
+            factory,
+            CardType::Creature
+        ));
+        assert!(!engine::object_has_type(
+            &state,
+            factory,
+            CardType::Artifact
+        ));
+        assert_copy_restore_refused(
+            forge_to_factory(&state, metamorph, factory_contract),
+            Action::Pass,
+        );
+
+        // 6b: Never-animated Mishra's Factory after donor departure.
+        let mut state = islands();
+        state.active_player = P0;
+        state.priority_player = P0;
+        let factory = put(&mut state, P0, "Mishra's Factory", Zone::Battlefield);
+        let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+        let wasteland = put(&mut state, P0, "Wasteland", Zone::Battlefield);
+        let factory_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&state, factory);
+        let metamorph = reanimate_copy(&mut state, P0);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(stone)),
+        );
+        settled(&mut state);
+        activate(&mut state, wasteland, 0, &[Target::Object(factory)]);
+        settled(&mut state);
+        assert_eq!(zone(&state, factory), Zone::Graveyard);
+        assert_copy_restore_refused(
+            forge_to_factory(&state, metamorph, factory_contract),
+            Action::Pass,
+        );
+
+        // 6c: Positive genuinely animated Mishra's Factory, after cleanup and
+        // after donor departure.
+        let mut state = islands();
+        state.active_player = P0;
+        state.priority_player = P0;
+        let factory = put(&mut state, P0, "Mishra's Factory", Zone::Battlefield);
+        let wasteland = put(&mut state, P0, "Wasteland", Zone::Battlefield);
+        pool(&mut state, P0, &[], 1);
+        activate(&mut state, factory, 0, &[]);
+        settled(&mut state);
+        assert!(engine::object_has_type(&state, factory, CardType::Creature));
+        let metamorph = reanimate_copy(&mut state, P0);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(factory)),
+        );
+        settled(&mut state);
+        assert_eq!(
+            state.objects.get(metamorph).card_def,
+            id("Mishra's Factory")
+        );
+
+        // After cleanup on P1's Main1.
+        advance_to_p1_main1(&mut state);
+        assert!(!engine::object_has_type(
+            &state,
+            factory,
+            CardType::Creature
+        ));
+        let mut restored_cleanup: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        act(&mut restored_cleanup, Action::Pass);
+
+        // After donor departure (Wasteland destroys Factory).
+        act(&mut state, Action::Pass);
+        activate(&mut state, wasteland, 0, &[Target::Object(factory)]);
+        settled(&mut state);
+        assert_eq!(zone(&state, factory), Zone::Graveyard);
+        let mut restored_departed: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        act(&mut restored_departed, Action::Pass);
+    }
+
+    // 7 (R3 Blocking Finding 2): Saheeli, Sublime Artificer coverage must be
+    // bound to slot 0 (host), exact copied values, and resolution before entry.
+    {
+        let advance_to_p1_main1 = |state: &mut GameState| {
+            run_until(
+                state,
+                |s| {
+                    s.active_player == P1
+                        && s.step == Step::Main1
+                        && s.stack.is_empty()
+                        && s.engine.pending_triggers.is_empty()
+                },
+                |_, _| None,
+            );
+        };
+        let setup_saheeli_image = || {
+            let mut state = islands();
+            state.active_player = P0;
+            state.priority_player = P0;
+            let _strix = put(&mut state, P1, "Baleful Strix", Zone::Battlefield);
+            let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+            let saheeli = put(&mut state, P0, "Saheeli, Sublime Artificer", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::U, ManaColor::R], 1);
+            cast(&mut state, saheeli, &[]);
+            settled(&mut state);
+            let image = put(&mut state, P0, "Phantasmal Image", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::U], 1);
+            cast(&mut state, image, &[]);
+            settle_option(&mut state, 1);
+            assert_eq!(state.objects.get(image).card_def, id("Baleful Strix"));
+            (state, saheeli, image, stone)
+        };
+
+        let activate_saheeli_stifling_image =
+            |state: &mut GameState,
+             saheeli: mtg_kernel::ids::ObjectId,
+             slot0: mtg_kernel::ids::ObjectId,
+             slot1: mtg_kernel::ids::ObjectId| {
+                activate(
+                    state,
+                    saheeli,
+                    0,
+                    &[Target::Object(slot0), Target::Object(slot1)],
+                );
+                next(state);
+                let sac_trigger = state.stack.last().unwrap().v4.stack_item_id;
+                let stifle = put(state, P0, "Stifle", Zone::Hand);
+                pool(state, P0, &[ManaColor::U], 0);
+                cast(state, stifle, &[Target::StackItem(sac_trigger)]);
+                settled(state);
+            };
+
+        // 7a: Negative post-entry Saheeli host forgery (plus genuine post-entry
+        // restore). Image copies Strix; Metamorph copies Image; AFTER entry
+        // Saheeli targets [Image (slot 0), Mind Stone (slot 1)] (Stifle counters
+        // Image's sacrifice trigger so Image gets a genuine live saheeli_copies
+        // record). Forging Metamorph's frozen mods to `{ added_artifact: true }`
+        // must be refused.
+        {
+            let (mut state, saheeli, image, stone) = setup_saheeli_image();
+            let metamorph = reanimate_copy(&mut state, P0);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(image)),
+            );
+            settled(&mut state);
+            activate_saheeli_stifling_image(&mut state, saheeli, image, stone);
+            assert_eq!(zone(&state, image), Zone::Battlefield);
+            assert_eq!(state.objects.get(image).card_def, id("Mind Stone"));
+
+            // Genuine post-entry Saheeli snapshot must restore cleanly.
+            let mut genuine: GameState =
+                serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+            act(&mut genuine, Action::Pass);
+
+            // Forge earlier Metamorph receipt + live copy_mods/subtypes to
+            // strip illusion_sacrifice and Illusion subtype.
+            let mut forged_state = state.clone();
+            let illusion_id = mtg_kernel::card_def::Subtype::Illusion.stable_id();
+            forged_state
+                .objects
+                .get_mut(metamorph)
+                .v4
+                .effective_subtype_ids
+                .retain(|&s| s != illusion_id);
+            let mut forged = serde_json::to_value(&forged_state).unwrap();
+            let forged_mods = serde_json::json!({ "added_artifact": true });
+            mutate_both_receipts(&mut forged, |entry, _| {
+                entry["copy"]["values"]["mods"] = forged_mods.clone();
+            });
+            for row in forged["eternal_v1"]["c8b"]["copy_mods"]
+                .as_array_mut()
+                .unwrap()
+            {
+                if row[0]["object"] == serde_json::json!(metamorph) {
+                    row[1] = forged_mods.clone();
+                }
+            }
+            assert_copy_restore_refused(forged, Action::Pass);
+        }
+
+        // 7b: Negative model-only Saheeli after cleanup. BEFORE entry, Saheeli
+        // targets [Mind Stone (slot 0), Image (slot 1)] so Image is ONLY the
+        // model, never the host. After cleanup, stripping Image's
+        // illusion_sacrifice must be refused.
+        {
+            let (mut state, saheeli, image, stone) = setup_saheeli_image();
+            activate_saheeli_stifling_image(&mut state, saheeli, stone, image);
+            assert_eq!(zone(&state, image), Zone::Battlefield);
+            assert_eq!(state.objects.get(stone).card_def, id("Baleful Strix"));
+            let metamorph = reanimate_copy(&mut state, P0);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(image)),
+            );
+            settled(&mut state);
+            advance_to_p1_main1(&mut state);
+
+            let mut forged_state = state.clone();
+            let illusion_id = mtg_kernel::card_def::Subtype::Illusion.stable_id();
+            forged_state
+                .objects
+                .get_mut(metamorph)
+                .v4
+                .effective_subtype_ids
+                .retain(|&s| s != illusion_id);
+            let mut forged = serde_json::to_value(&forged_state).unwrap();
+            let forged_mods = serde_json::json!({ "added_artifact": true });
+            mutate_both_receipts(&mut forged, |entry, _| {
+                entry["copy"]["values"]["mods"] = forged_mods.clone();
+            });
+            for row in forged["eternal_v1"]["c8b"]["copy_mods"]
+                .as_array_mut()
+                .unwrap()
+            {
+                if row[0]["object"] == serde_json::json!(metamorph) {
+                    row[1] = forged_mods.clone();
+                }
+            }
+            assert_copy_restore_refused(forged, Action::Pass);
+        }
+
+        // 7c: Positive genuine Saheeli host before AND after cleanup. BEFORE
+        // entry, Saheeli targets [Image (slot 0), Mind Stone (slot 1)].
+        // Metamorph copies the Saheeli-covered Image (becoming Mind Stone with
+        // `added_artifact: true` and no illusion_sacrifice). Restores cleanly
+        // both before cleanup and after cleanup unwinds Image back to Strix.
+        {
+            let (mut state, saheeli, image, stone) = setup_saheeli_image();
+            activate_saheeli_stifling_image(&mut state, saheeli, image, stone);
+            assert_eq!(zone(&state, image), Zone::Battlefield);
+            assert_eq!(state.objects.get(image).card_def, id("Mind Stone"));
+            let metamorph = reanimate_copy(&mut state, P0);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(image)),
+            );
+            settled(&mut state);
+            assert_eq!(state.objects.get(metamorph).card_def, id("Mind Stone"));
+
+            let mut before_cleanup: GameState =
+                serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+            act(&mut before_cleanup, Action::Pass);
+
+            advance_to_p1_main1(&mut state);
+            assert_eq!(state.objects.get(image).card_def, id("Baleful Strix"));
+            assert_eq!(state.objects.get(metamorph).card_def, id("Mind Stone"));
+            let mut after_cleanup: GameState =
+                serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+            act(&mut after_cleanup, Action::Pass);
+        }
+    }
+
+    // 8 (R3 Blocking Finding 3): unrelated battlefield Phantasmal Image must
+    // NOT authenticate forged Illusion mods on a departed ordinary Servo token;
+    // a token that actually copied Phantasmal Image (via Vaultborn Tyrant) must
+    // restore cleanly after both the original Image and the token depart.
+    {
+        // 8a: Negative ordinary Servo token departed with unrelated Image.
+        {
+            let mut state = islands();
+            state.active_player = P0;
+            state.priority_player = P0;
+            let _strix = put(&mut state, P1, "Baleful Strix", Zone::Battlefield);
+            let saheeli = put(&mut state, P0, "Saheeli, Sublime Artificer", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::U, ManaColor::R], 1);
+            cast(&mut state, saheeli, &[]);
+            settled(&mut state);
+            // Cast a noncreature spell to create a genuine ordinary Servo Token.
+            let ring = put(&mut state, P0, "Sol Ring", Zone::Hand);
+            pool(&mut state, P0, &[], 1);
+            cast(&mut state, ring, &[]);
+            settled(&mut state);
+            let servo = state.players[0]
+                .battlefield
+                .iter()
+                .copied()
+                .find(|&o| state.objects.get(o).card_def == id("Servo Token"))
+                .expect("ordinary Servo Token created by Saheeli");
+            // Put an unrelated Phantasmal Image copying Baleful Strix on play.
+            let image = put(&mut state, P0, "Phantasmal Image", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::U], 1);
+            cast(&mut state, image, &[]);
+            settle_option(&mut state, 1);
+
+            let metamorph = reanimate_copy(&mut state, P0);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(servo)),
+            );
+            settled(&mut state);
+            assert_eq!(state.objects.get(metamorph).card_def, id("Servo Token"));
+
+            // Kill the ordinary Servo token so donor_same_incarnation is false.
+            let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::R], 0);
+            cast(&mut state, bolt, &[Target::Object(servo)]);
+            settled(&mut state);
+            assert_ne!(zone(&state, servo), Zone::Battlefield);
+
+            // Forge Phantasmal Image mods onto the departed Servo token copy.
+            let mut forged_state = state.clone();
+            let illusion_id = mtg_kernel::card_def::Subtype::Illusion.stable_id();
+            let live_mm = forged_state.objects.get_mut(metamorph);
+            live_mm.v4.effective_subtype_ids.push(illusion_id);
+            live_mm.v4.effective_subtype_ids.sort_unstable();
+            live_mm.v4.effective_subtype_ids.dedup();
+            let metamorph_link = serde_json::json!({
+                "object": metamorph,
+                "zone_change_count": forged_state.objects.get(metamorph).zone_change_count,
+            });
+            let mut forged = serde_json::to_value(&forged_state).unwrap();
+            let forged_mods = serde_json::json!({
+                "added_subtypes": [illusion_id],
+                "illusion_sacrifice": true,
+            });
+            let forged_vals = serde_json::json!({
+                "card_def": id("Servo Token"),
+                "face_index": 0,
+                "mods": forged_mods,
+                "copied_end_step_sacrifices_v1": 0,
+                "copied_nightmare_v1": false,
+                "prototyped": false,
+            });
+            mutate_both_receipts(&mut forged, |entry, _| {
+                entry["copy"]["values"] = forged_vals.clone();
+            });
+            forged["eternal_v1"]["c8b"]["copy_mods"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!([metamorph_link, forged_mods]));
+            assert_copy_restore_refused(forged, Action::Pass);
+        }
+
+        // 8b: Positive token that genuinely copied a Phantasmal Image (via
+        // Vaultborn Tyrant death trigger), restoring cleanly after both the
+        // original Phantasmal Image and the token donor have departed.
+        {
+            let mut state = islands();
+            state.active_player = P0;
+            state.priority_player = P0;
+            let _orig_tyrant = put(&mut state, P1, "Vaultborn Tyrant", Zone::Battlefield);
+            let image = put(&mut state, P0, "Phantasmal Image", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::U], 1);
+            cast(&mut state, image, &[]);
+            settle_option(&mut state, 1);
+            assert_eq!(state.objects.get(image).card_def, id("Vaultborn Tyrant"));
+
+            // Destroy Phantasmal Image with Wrath of God so Vaultborn Tyrant's
+            // dies trigger creates an artifact Illusion token copy.
+            let wrath = put(&mut state, P0, "Wrath of God", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);
+            cast(&mut state, wrath, &[]);
+            settled(&mut state);
+            assert_eq!(zone(&state, image), Zone::Graveyard);
+            let token_donor = state.players[0]
+                .battlefield
+                .iter()
+                .copied()
+                .find(|&o| {
+                    state.objects.get(o).v4.is_token
+                        && state.objects.get(o).card_def == id("Vaultborn Tyrant")
+                })
+                .expect("Vaultborn Tyrant artifact Illusion token copy");
+
+            // Reanimate Metamorph copying the Vaultborn Tyrant Illusion token.
+            let metamorph = reanimate_copy(&mut state, P0);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(token_donor)),
+            );
+            settled(&mut state);
+            assert_eq!(
+                state.objects.get(metamorph).card_def,
+                id("Vaultborn Tyrant")
+            );
+
+            // Target the token donor so its Illusion sacrifice trigger removes
+            // it from the battlefield (both original Image and token departed).
+            let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::R], 0);
+            cast(&mut state, bolt, &[Target::Object(token_donor)]);
+            settled(&mut state);
+            assert_ne!(zone(&state, token_donor), Zone::Battlefield);
+            assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+
+            let mut restored: GameState =
+                serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+            act(&mut restored, Action::Pass);
+        }
     }
 }
 
