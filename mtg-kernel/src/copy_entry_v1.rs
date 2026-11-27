@@ -326,7 +326,7 @@ pub(crate) fn record_ability_countered_if_relevant(
         )))) => CounteredAbilityKindV1::VaultbornDeathCopy,
         Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C8cV1(
             C8cOpV1::AbsorbingManCopyV1,
-        )))) => CounteredAbilityKindV1::AbsorbingMan,
+        )))) if !item.v4.target_contracts.is_empty() => CounteredAbilityKindV1::AbsorbingMan,
         Some(effect)
             if item.kind == crate::state::StackItemKind::ActivatedAbility
                 && crate::eternal_sideboard_s1b_v1::meddling_mage_entry::has_mandatory_effect_discard(

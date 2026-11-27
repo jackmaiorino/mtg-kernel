@@ -7830,6 +7830,56 @@ fn noncast_metamorph_completed_snapshot_refuses_coherent_forgery() {
             }
             assert_copy_restore_refused(forged, Action::Pass);
         }
+
+        // 8h (R9 Finding 4 positive control): Absorbing Man's precombat-main
+        // trigger goes on the stack with zero targets and is countered by
+        // Stifle; a subsequent genuine Reanimate noncast copy must restore
+        // cleanly without emitting or rejecting an untargeted `AbsorbingMan`
+        // countered receipt.
+        {
+            let mut state = islands();
+            state.active_player = P0;
+            state.priority_player = P0;
+            let _ab_man = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+
+            let turn_start = state.turn;
+            run_until(
+                &mut state,
+                |s| {
+                    s.active_player == P0
+                        && s.step == Step::Main1
+                        && s.turn > turn_start
+                        && !s.stack.is_empty()
+                },
+                |_, decision| match decision {
+                    Decision::ChooseTargets { .. } => Some(Action::FinishEffectSelection),
+                    _ => None,
+                },
+            );
+            let top = state.stack.last().unwrap();
+            assert!(
+                top.v4.target_contracts.is_empty(),
+                "expected zero-target Absorbing Man trigger"
+            );
+            let abs_trigger_item = top.v4.stack_item_id;
+            let stifle = put(&mut state, P0, "Stifle", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::U], 0);
+            cast(&mut state, stifle, &[Target::StackItem(abs_trigger_item)]);
+            settled(&mut state);
+
+            let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+            let metamorph = reanimate_copy(&mut state, P0);
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(stone)),
+            );
+            settled(&mut state);
+            assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+
+            let json = serde_json::to_value(&state).unwrap();
+            let mut restored: GameState = serde_json::from_value(json).unwrap();
+            act(&mut restored, Action::Pass);
+        }
     }
 }
 
