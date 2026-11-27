@@ -1206,21 +1206,32 @@ pub(crate) fn validate_retained(state: &GameState) -> Result<(), String> {
     let mut paid_discard_stack_items = BTreeMap::new();
     for (index, event) in state.engine.event_history.iter().enumerate() {
         if let CommittedEvent::CopyEntryProvenanceV1 { journal } = event {
-            if let crate::copy_entry_v1::ProvenanceV1::CopyDiscardPaid {
-                stack_item,
-                physical,
-                discard_at,
-                ..
-            } = journal.as_ref()
-            {
-                if stack_item.0 == 0
-                    || stack_item.0 > state.engine.next_stack_item_id
-                    || !paid_discard_keys.insert((*stack_item, *physical))
-                    || !paid_discard_indices.insert(*discard_at)
-                {
-                    return Err("duplicate or out-of-bounds copy-entry discard receipt".into());
+            match journal.as_ref() {
+                crate::copy_entry_v1::ProvenanceV1::CopyDiscardPaid {
+                    stack_item,
+                    physical,
+                    discard_at,
+                    ..
+                } => {
+                    if stack_item.0 == 0
+                        || stack_item.0 > state.engine.next_stack_item_id
+                        || !paid_discard_keys.insert((*stack_item, *physical))
+                        || !paid_discard_indices.insert(*discard_at)
+                    {
+                        return Err("duplicate or out-of-bounds copy-entry discard receipt".into());
+                    }
+                    paid_discard_stack_items.insert(*discard_at, (*stack_item, physical.owner));
                 }
-                paid_discard_stack_items.insert(*discard_at, (*stack_item, physical.owner));
+                crate::copy_entry_v1::ProvenanceV1::AbilityCountered { stack_item, kind } => {
+                    if !crate::copy_entry_v1::validate_ability_countered_receipt(
+                        state,
+                        *stack_item,
+                        kind,
+                    ) {
+                        return Err("countered-ability provenance receipt is invalid".into());
+                    }
+                }
+                _ => {}
             }
             continue;
         }
@@ -1770,12 +1781,111 @@ fn is_controller_hand_discard(ev: &CommittedEvent, controller: PlayerId) -> bool
     )
 }
 
+fn mandatory_controller_effect_discards(op: &crate::effect::EffectOp) -> usize {
+    use crate::effect::{EffectOp, PlayerRef};
+    use crate::standard_cards_v1::StandardOpV1;
+    match op {
+        EffectOp::StandardV1(StandardOpV1::EachPlayerDiscards { count }) => *count as usize,
+        EffectOp::DiscardCards {
+            player: PlayerRef::Controller,
+            count,
+        } => *count as usize,
+        EffectOp::DiscardBasicLandOrCards {
+            player: PlayerRef::Controller,
+            otherwise,
+        } => (*otherwise as usize).min(1),
+        EffectOp::Sequence(ops) => ops.iter().fold(0usize, |acc, step| {
+            acc.saturating_add(mandatory_controller_effect_discards(step))
+        }),
+        _ => 0,
+    }
+}
+
+fn activated_effect_discard_uses_for_object(
+    state: &GameState,
+    id: ObjectId,
+    live: &crate::state::GameObject,
+    controller: PlayerId,
+    turn_slice: &[CommittedEvent],
+) -> usize {
+    use crate::state::{AbilityKindV4, StackItemKind};
+    if live.zone != Zone::Battlefield
+        || live.controller != controller
+        || live.v4.ability_uses_this_turn.is_empty()
+        || crate::eternal_cube_c8b_v1::has_saheeli_copy(state, id)
+        || crate::standard_cards_v1::active_aegis_copy(state, id)
+        || crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+        || crate::eternal_legacy_e7a_v1::active_copy(state, id)
+    {
+        return 0;
+    }
+    let stolen_this_turn = turn_slice.iter().any(|ev| {
+        matches!(
+            ev,
+            CommittedEvent::TemporaryControlInstalledV1 { installation }
+                if matches!(
+                    installation.target,
+                    crate::state::StackTargetContractV4::Object { object, .. }
+                        if object == id
+                )
+        )
+    });
+    if stolen_this_turn {
+        return 0;
+    }
+    let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
+        return 0;
+    };
+    let mut total: usize = 0;
+    for entry in &live.v4.ability_uses_this_turn {
+        if entry.ability_kind != AbilityKindV4::Activated || entry.uses == 0 {
+            continue;
+        }
+        let Some(ability) = def
+            .activated_abilities
+            .get(usize::from(entry.ability_index))
+        else {
+            continue;
+        };
+        if ability.activation_zone != Zone::Battlefield {
+            continue;
+        }
+        let effect = (ability.effect)();
+        let per_use = mandatory_controller_effect_discards(&effect);
+        if per_use == 0 {
+            continue;
+        }
+        let pending_on_stack = state
+            .stack
+            .iter()
+            .filter(|item| {
+                item.kind == StackItemKind::ActivatedAbility
+                    && item.source == id
+                    && item.controller == controller
+                    && item.inline_effect.as_ref() == Some(&effect)
+            })
+            .count();
+        let resolved_uses = usize::from(entry.uses).saturating_sub(pending_on_stack);
+        total = total.saturating_add(per_use.saturating_mul(resolved_uses));
+    }
+    total
+}
+
 /// Same-turn hand-discard conservation law: every activated ability with a
 /// fixed hand-discard cost (live or departed on the current turn, such as
 /// Putrid Imp), every spell-resolution / spell-cost discard (such as Faithless
-/// Looting or `ResolutionDiscardWaitsV1`), and every Mox Diamond
-/// `CopyDiscardPaid` receipt in the current turn consumes a distinct
-/// `Hand -> Graveyard | Exile | Library` move by that controller.
+/// Looting or `ResolutionDiscardWaitsV1`), every live mandatory
+/// ability-resolution discard (such as Liliana of the Veil's +1), and every
+/// Mox Diamond `CopyDiscardPaid` receipt in the current turn consumes a
+/// distinct `Hand -> Graveyard | Exile | Library` move by that controller.
+///
+/// Threat-model boundary: snapshots are produced and stored by our own pinned
+/// code, so stateless restore validation guards against corruption and engine
+/// bugs, not an adversary. Direct edits of `S1bStateV1` departed-use counters
+/// (`departed_animate_uses`, `departed_discard_uses`) that produce a state
+/// byte-for-byte identical to a legal alternative game are out of scope for
+/// stateless restore validation; integrity of stored snapshots rests on the
+/// record hashes in manifests and receipts.
 ///
 /// Residual boundary: once Untap clears `ability_uses_this_turn` and Cleanup
 /// expires temporary boosts on a subsequent turn, an unauthenticated JSON
@@ -1993,6 +2103,7 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
             }
         }
 
+        let mut resolution_effect_discard_indices = HashSet::new();
         if let Some(s1b) = super::read_state(state) {
             for &(ctrl, idx, obj) in &s1b.resolution_effect_discards {
                 if ctrl != controller {
@@ -2015,18 +2126,18 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
                         "resolution-effect discard record does not match event history".into(),
                     );
                 }
-                spell_discard_indices.insert(idx);
+                resolution_effect_discard_indices.insert(idx);
             }
         }
 
-        if copy_discards
-            .iter()
-            .any(|idx| spell_discard_indices.contains(idx))
-        {
+        if copy_discards.iter().any(|idx| {
+            spell_discard_indices.contains(idx) || resolution_effect_discard_indices.contains(idx)
+        }) {
             return Err("copy-entry discard overlaps a non-copy-entry discard".into());
         }
 
         let mut activated_discards: usize = 0;
+        let mut live_effect_discard_uses: usize = 0;
         let mut counted_links = HashSet::new();
         for (id, live) in state.objects.iter() {
             let uses = activated_discard_uses_for_object(state, id, live, controller, turn_slice);
@@ -2037,7 +2148,25 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
                 });
                 activated_discards = activated_discards.saturating_add(uses);
             }
+            let effect_uses =
+                activated_effect_discard_uses_for_object(state, id, live, controller, turn_slice);
+            live_effect_discard_uses = live_effect_discard_uses.saturating_add(effect_uses);
         }
+        let pending_effect_discard = state
+            .engine
+            .pending_discard
+            .as_ref()
+            .filter(|p| {
+                p.player == controller
+                    && matches!(
+                        p.resume,
+                        crate::engine::DiscardResume::None
+                            | crate::engine::DiscardResume::FinishAbilityResolution { .. }
+                            | crate::engine::DiscardResume::FinishEffectContinuation { .. }
+                    )
+            })
+            .map_or(0usize, |p| p.count as usize);
+        live_effect_discard_uses = live_effect_discard_uses.saturating_sub(pending_effect_discard);
         if let Some(s1b) = super::read_state(state) {
             for &(link, owner_ctrl, uses) in &s1b.departed_discard_uses {
                 if owner_ctrl == controller && counted_links.insert(link) {
@@ -2045,10 +2174,18 @@ fn validate_same_turn_discard_conservation(state: &GameState) -> Result<(), Stri
                 }
             }
         }
-        let available_discards = hand_discard_indices
+        let non_spell_discards = hand_discard_indices
             .difference(&spell_discard_indices)
             .count();
-        if available_discards < activated_discards.saturating_add(copy_discards.len()) {
+        let extra_resolution_discards = resolution_effect_discard_indices
+            .difference(&spell_discard_indices)
+            .count();
+        let effective_resolution_discards = extra_resolution_discards.max(live_effect_discard_uses);
+        if non_spell_discards
+            < effective_resolution_discards
+                .saturating_add(activated_discards)
+                .saturating_add(copy_discards.len())
+        {
             return Err("copy-entry discard violates same-turn hand-discard conservation".into());
         }
     }

@@ -4947,7 +4947,92 @@ fn noncast_mox_diamond_copy_refuses_discard_bypass_and_unrelated_hand_moves() {
                 }
             }
         }
+        let mut forged_cleared = forged.clone();
+        forged_cleared["eternal_v1"]["s1b"]["resolution_effect_discards"] = serde_json::json!([]);
         assert_copy_restore_refused(forged, Action::Pass);
+        assert_copy_restore_refused(forged_cleared, Action::Pass);
+    }
+
+    // Positive control D1f+: Liliana of the Veil +1 (recorded in both
+    // `resolution_effect_discards` and live `ability_uses_this_turn`) plus
+    // Putrid Imp (1 discard) plus a genuine Mox Diamond copy (1 land discard)
+    // must restore cleanly without double-counting Liliana's +1.
+    {
+        let mut lili_ok = islands();
+        lili_ok.active_player = P0;
+        lili_ok.priority_player = P0;
+        let mox = put(&mut lili_ok, P0, "Mox Diamond", Zone::Battlefield);
+        settle_first(&mut lili_ok);
+        let imp = put(&mut lili_ok, P0, "Putrid Imp", Zone::Battlefield);
+        let liliana = put(&mut lili_ok, P0, "Liliana of the Veil", Zone::Hand);
+        pool(&mut lili_ok, P0, &[ManaColor::B, ManaColor::B], 1);
+        cast(&mut lili_ok, liliana, &[]);
+        settled(&mut lili_ok);
+        assert_eq!(zone(&lili_ok, liliana), Zone::Battlefield);
+        let junk = put(&mut lili_ok, P0, "Mind Stone", Zone::Hand);
+        let p1_junk = put(&mut lili_ok, P1, "Mind Stone", Zone::Hand);
+        let l1 = put(&mut lili_ok, P0, "Island", Zone::Hand);
+        let l2 = put(&mut lili_ok, P0, "Island", Zone::Hand);
+        let metamorph = put(&mut lili_ok, P0, "Phyrexian Metamorph", Zone::Graveyard);
+        let reanimate = put(&mut lili_ok, P0, "Reanimate", Zone::Hand);
+
+        activate(&mut lili_ok, liliana, 0, &[]);
+        run_until(
+            &mut lili_ok,
+            |s| {
+                s.stack.is_empty()
+                    && s.engine.pending_discard.is_none()
+                    && zone(s, junk) == Zone::Graveyard
+                    && zone(s, p1_junk) == Zone::Graveyard
+            },
+            |_, decision| match decision {
+                Decision::Discard { player, .. } => Some(Action::Discard(vec![if *player == P0 {
+                    junk
+                } else {
+                    p1_junk
+                }])),
+                _ => None,
+            },
+        );
+        pool(&mut lili_ok, P0, &[ManaColor::B], 0);
+        cast(&mut lili_ok, reanimate, &[Target::Object(metamorph)]);
+        next(&mut lili_ok);
+        activate(&mut lili_ok, imp, 0, &[]);
+        run_until(
+            &mut lili_ok,
+            |s| {
+                s.stack.len() == 1
+                    && s.engine.pending_discard.is_none()
+                    && zone(s, l1) == Zone::Graveyard
+            },
+            |_, decision| match decision {
+                Decision::Discard { .. } => Some(Action::Discard(vec![l1])),
+                _ => None,
+            },
+        );
+        assert!(matches!(
+            settle(&mut lili_ok),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        act(
+            &mut lili_ok,
+            Action::ChooseEffectTarget(Target::Object(mox)),
+        );
+        assert!(matches!(
+            next(&mut lili_ok),
+            Decision::ChooseEffectOption { .. }
+        ));
+        act(&mut lili_ok, Action::ChooseEffectOption(1));
+        settled(&mut lili_ok);
+        assert_eq!(zone(&lili_ok, junk), Zone::Graveyard);
+        assert_eq!(zone(&lili_ok, l1), Zone::Graveyard);
+        assert_eq!(zone(&lili_ok, l2), Zone::Graveyard);
+        assert_eq!(zone(&lili_ok, metamorph), Zone::Battlefield);
+        assert_eq!(lili_ok.objects.get(metamorph).card_def, id("Mox Diamond"));
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&lili_ok).unwrap()).unwrap();
+        act(&mut restored, Action::Pass);
     }
 
     // Forgery D2 (Test isolation): inserting a non-blacklisted event (LifeGain,
@@ -7158,6 +7243,63 @@ fn noncast_metamorph_completed_snapshot_refuses_coherent_forgery() {
                     }
                 }
             }
+            // Genuine snapshot restores cleanly, while omitting mandatory
+            // `kind`, omitting `producer` on `SpringheartLandfall`, or
+            // mutating `producer` on the countered-ability receipt fails
+            // deserialization or restore.
+            let genuine_json = serde_json::to_value(&state).unwrap();
+            {
+                let mut ok_restored: GameState =
+                    serde_json::from_value(genuine_json.clone()).unwrap();
+                act(&mut ok_restored, Action::Pass);
+            }
+            let mut missing_kind = genuine_json.clone();
+            let mut missing_producer = genuine_json.clone();
+            let mut mutated_producer = genuine_json;
+            let mut found_countered = false;
+            for (v, mode) in [
+                (&mut missing_kind, 0u8),
+                (&mut missing_producer, 1u8),
+                (&mut mutated_producer, 2u8),
+            ] {
+                for ev in v["engine"]["event_history"].as_array_mut().unwrap() {
+                    if let Some(countered) = ev
+                        .get_mut("CopyEntryProvenanceV1")
+                        .and_then(|e| e.get_mut("journal"))
+                        .and_then(|j| j.get_mut("AbilityCountered"))
+                    {
+                        found_countered = true;
+                        match mode {
+                            0 => {
+                                countered.as_object_mut().unwrap().remove("kind");
+                            }
+                            1 => {
+                                countered["kind"]["SpringheartLandfall"]
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .remove("producer");
+                            }
+                            _ => {
+                                countered["kind"]["SpringheartLandfall"]["producer"]["card_def"] =
+                                    serde_json::json!(id("Mind Stone"));
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(
+                found_countered,
+                "expected SpringheartLandfall AbilityCountered receipt in 8g"
+            );
+            assert!(
+                serde_json::from_value::<GameState>(missing_kind).is_err(),
+                "omitting mandatory kind on AbilityCountered must fail deserialization"
+            );
+            assert!(
+                serde_json::from_value::<GameState>(missing_producer).is_err(),
+                "omitting producer on SpringheartLandfall must fail deserialization"
+            );
+            assert_copy_restore_refused(mutated_producer, Action::Pass);
             assert_copy_restore_refused(forged, Action::Pass);
         }
     }

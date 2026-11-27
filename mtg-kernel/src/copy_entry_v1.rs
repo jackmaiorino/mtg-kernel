@@ -63,6 +63,16 @@ pub struct CopiableValuesV1 {
     pub(crate) prototyped: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum CounteredAbilityKindV1 {
+    AbsorbingMan,
+    SaheeliCopy,
+    VaultbornDeathCopy,
+    SpringheartLandfall { producer: AbilitySourceContractV4 },
+    LandAnimate { host: ObjectLinkV4 },
+}
+
 /// History-only provenance receipts emitted exclusively in Eternal builds
 /// (`cfg!(feature = "eternal-fixtures")`) to bind completed noncast copy
 /// validation to exact entry-time animations, Saheeli host applications,
@@ -114,10 +124,7 @@ pub enum ProvenanceV1 {
     },
     AbilityCountered {
         stack_item: crate::ids::StackItemId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        springheart_producer: Option<AbilitySourceContractV4>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        animate_host: Option<ObjectLinkV4>,
+        kind: CounteredAbilityKindV1,
     },
 }
 
@@ -274,33 +281,19 @@ pub(crate) fn record_ability_countered_if_relevant(
     if item.kind == crate::state::StackItemKind::Spell {
         return;
     }
-    let is_springheart = matches!(
-        item.inline_effect.as_ref(),
-        Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
-            EternalOpV1::C8bV1(C8bOpV1::SpringheartLandfallV1)
-        )))
-    );
-    let is_animate = matches!(
-        item.inline_effect.as_ref(),
-        Some(EffectOp::AnimateSource | EffectOp::AnimateSourcePermanentlyV1)
-    );
-    let relevant = is_springheart
-        || is_animate
-        || matches!(
-            item.inline_effect.as_ref(),
-            Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
-                EternalOpV1::C8bV1(C8bOpV1::SaheeliCopyV1 | C8bOpV1::VaultbornDeathCopyV1)
-                    | EternalOpV1::C8cV1(C8cOpV1::AbsorbingManCopyV1)
-            )))
-        );
-    if relevant {
-        let springheart_producer = is_springheart.then(|| {
-            item.v4
+    let kind = match item.inline_effect.as_ref() {
+        Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C8bV1(
+            C8bOpV1::SpringheartLandfallV1,
+        )))) => {
+            let producer = item
+                .v4
                 .ability_source_contract
-                .unwrap_or_else(|| AbilitySourceContractV4::capture(state, item.source))
-        });
-        let animate_host = if is_animate {
-            item.v4
+                .unwrap_or_else(|| AbilitySourceContractV4::capture(state, item.source));
+            CounteredAbilityKindV1::SpringheartLandfall { producer }
+        }
+        Some(EffectOp::AnimateSource | EffectOp::AnimateSourcePermanentlyV1) => {
+            let Some(host) = item
+                .v4
                 .ability_source_contract
                 .map(|c| ObjectLinkV4 {
                     object: c.source,
@@ -312,17 +305,63 @@ pub(crate) fn record_ability_countered_if_relevant(
                         zone_change_count: live.zone_change_count,
                     })
                 })
-        } else {
-            None
-        };
-        push_provenance(
-            state,
-            ProvenanceV1::AbilityCountered {
-                stack_item: item.v4.stack_item_id,
-                springheart_producer,
-                animate_host,
-            },
-        );
+            else {
+                return;
+            };
+            CounteredAbilityKindV1::LandAnimate { host }
+        }
+        Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C8bV1(
+            C8bOpV1::SaheeliCopyV1,
+        )))) => CounteredAbilityKindV1::SaheeliCopy,
+        Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C8bV1(
+            C8bOpV1::VaultbornDeathCopyV1,
+        )))) => CounteredAbilityKindV1::VaultbornDeathCopy,
+        Some(EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C8cV1(
+            C8cOpV1::AbsorbingManCopyV1,
+        )))) => CounteredAbilityKindV1::AbsorbingMan,
+        _ => return,
+    };
+    push_provenance(
+        state,
+        ProvenanceV1::AbilityCountered {
+            stack_item: item.v4.stack_item_id,
+            kind,
+        },
+    );
+}
+
+pub(crate) fn validate_ability_countered_receipt(
+    state: &GameState,
+    stack_item: crate::ids::StackItemId,
+    kind: &CounteredAbilityKindV1,
+) -> bool {
+    if stack_item.0 == 0 || stack_item.0 > state.engine.next_stack_item_id {
+        return false;
+    }
+    match kind {
+        CounteredAbilityKindV1::SpringheartLandfall { producer } => {
+            card_id_by_name(crate::eternal_cube_c8b_v1::SPRINGHEART_NANTUKO)
+                == Some(producer.card_def)
+                && producer.zone == crate::state::Zone::Battlefield
+                && state.objects.try_get(producer.source).is_some_and(|live| {
+                    live.owner == producer.owner
+                        && live.zone_change_count >= producer.zone_change_count
+                        && (live.card_def == producer.card_def
+                            || crate::standard_cards_v1::had_card_def(
+                                state,
+                                producer.source,
+                                producer.zone_change_count,
+                                producer.card_def,
+                            ))
+                })
+        }
+        CounteredAbilityKindV1::LandAnimate { host } => state
+            .objects
+            .try_get(host.object)
+            .is_some_and(|live| live.zone_change_count >= host.zone_change_count),
+        CounteredAbilityKindV1::AbsorbingMan
+        | CounteredAbilityKindV1::SaheeliCopy
+        | CounteredAbilityKindV1::VaultbornDeathCopy => true,
     }
 }
 
@@ -2147,8 +2186,8 @@ fn authenticated_mods_for_link(
                             if let event::CommittedEvent::CopyEntryProvenanceV1 { journal } = ev {
                                 if let ProvenanceV1::AbilityCountered {
                                     stack_item: item,
-                                    springheart_producer: Some(p),
-                                    ..
+                                    kind:
+                                        CounteredAbilityKindV1::SpringheartLandfall { producer: p },
                                 } = journal.as_ref()
                                 {
                                     if Some(p.card_def) == springheart_id
@@ -2599,7 +2638,7 @@ fn donor_land_animated_at_entry(
                                 ) || matches!(
                                     journal.as_ref(),
                                     ProvenanceV1::AbilityCountered {
-                                        animate_host: Some(h),
+                                        kind: CounteredAbilityKindV1::LandAnimate { host: h },
                                         ..
                                     } if *h == host_link
                                 )
@@ -2813,6 +2852,14 @@ fn donor_type_granted_at_entry(
 /// Authenticates a completed `MetamorphCopyV1` against the copied face's entry
 /// replacement contract, `CopiableValuesV1` bounds and provenance, and donor
 /// artifact/creature legality (CR 614.12, 707.2, 707.9).
+///
+/// Threat-model boundary: snapshots are produced and stored by our own pinned
+/// code, so stateless restore validation guards against corruption and engine
+/// bugs, not an adversary. Direct edits of `S1bStateV1` departed-use counters
+/// (`departed_animate_uses`, `departed_discard_uses`) that produce a state
+/// byte-for-byte identical to a legal alternative game are out of scope for
+/// stateless restore validation; integrity of stored snapshots rests on the
+/// record hashes in manifests and receipts.
 pub(crate) fn validate_completed_copy(
     state: &GameState,
     copy: &crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1,
