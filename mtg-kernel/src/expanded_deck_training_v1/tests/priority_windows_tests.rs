@@ -10,7 +10,7 @@ use super::*;
 use crate::priority_action_windows_v1::SeatPriorityWindowsV1;
 use crate::state::{SplitMix64, Step};
 use PauperMulliganModeV1::Learned;
-use SeatPriorityWindowsV1::{ActionWindowsEndStepV1, ActionWindowsV1, HarnessV2};
+use SeatPriorityWindowsV1::{ActionWindowsEndStepV1, ActionWindowsV1, EngineWindowsV1, HarnessV2};
 
 const DECKS: [&str; 9] = [
     "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates", "Faeries",
@@ -342,6 +342,9 @@ fn a_present_field_gives_each_physical_seat_its_rule() {
                         ActionWindowsEndStepV1 => {
                             assert_eq!(s.game_state().step, Step::End, "{context}");
                             added_by_rule[1] += 1;
+                        }
+                        EngineWindowsV1 => {
+                            panic!("engine-windows-v1 is not in this per-seat matrix: {context}")
                         }
                     }
                 }
