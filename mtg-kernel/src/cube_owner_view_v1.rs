@@ -38,13 +38,13 @@ pub use sample_plan::{
     learned_row_option_counts, ordered_pool_sha256, owner_view_build_seed, owner_view_draft_seed,
     resolve_page_spec, sample_pick_spec, sample_pool_spec, seed_deal_v1, summarize_card,
     BuildDistributions, CardSummary, FirstPickRankRow, HeadLabelRow, OwnerViewError,
-    OwnerViewPageData, OwnerViewPageSpec, PickerMode, SamplePickEntry, SamplePickOption,
-    SamplePickSpec, SamplePoolEntry, SamplePoolSpec, SeedPart, DIST_BUILDS_PER_CHAIR,
-    DIST_DRAFT_COUNT, DIST_DRAFT_START, DIST_TOTAL_BUILDS, FIRST_PICK_DRAFT_COUNT,
-    FIRST_PICK_DRAFT_START, FIRST_PICK_MIN_PACKS, FIRST_PICK_PACK_COUNT, LAW_BOUNDARY_NOTICE,
-    OWNER_VIEW_NAMESPACE, SAMPLED_BUILDS_LABEL, SAMPLE_PICK_COUNT, SAMPLE_PICK_DRAFT_START,
-    SAMPLE_POOL_BUILD_K, SAMPLE_POOL_COUNT, SAMPLE_POOL_DRAFT_START, SHAKEDOWN_LABEL,
-    SHAKEDOWN_OWNER_VIEW_RUNS, SHAKEDOWN_PAGE_SPECS, UNIFORM_PICKS_LABEL,
+    OwnerViewPageData, OwnerViewPageSpec, PickerMode, ResolvedOwnerViewPageSpec, SamplePickEntry,
+    SamplePickOption, SamplePickSpec, SamplePoolEntry, SamplePoolSpec, SeedPart,
+    DIST_BUILDS_PER_CHAIR, DIST_DRAFT_COUNT, DIST_DRAFT_START, DIST_TOTAL_BUILDS,
+    FIRST_PICK_DRAFT_COUNT, FIRST_PICK_DRAFT_START, FIRST_PICK_MIN_PACKS, FIRST_PICK_PACK_COUNT,
+    LAW_BOUNDARY_NOTICE, OWNER_VIEW_NAMESPACE, SAMPLED_BUILDS_LABEL, SAMPLE_PICK_COUNT,
+    SAMPLE_PICK_DRAFT_START, SAMPLE_POOL_BUILD_K, SAMPLE_POOL_COUNT, SAMPLE_POOL_DRAFT_START,
+    SHAKEDOWN_LABEL, SHAKEDOWN_OWNER_VIEW_RUNS, SHAKEDOWN_PAGE_SPECS, UNIFORM_PICKS_LABEL,
 };
 
 use crate::cube_draft_v1::CubePool;

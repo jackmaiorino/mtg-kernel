@@ -107,7 +107,7 @@ impl fmt::Display for OwnerViewError {
             ),
             Self::UndeclaredRunId(id) => write!(
                 f,
-                "undeclared owner-view run id {id:?}: expected one of {:?}",
+                "undeclared owner-view run id {id:?}: expected b<n>-u{{0032,0064,0096,0128}} or k<n>-u{{0064,0128}} for n >= 1 (e.g. {:?})",
                 SHAKEDOWN_OWNER_VIEW_RUNS
             ),
             Self::PickerModeMismatch {
@@ -343,17 +343,70 @@ pub const SHAKEDOWN_PAGE_SPECS: [OwnerViewPageSpec; 6] = [
     },
 ];
 
-/// Resolves a declared D16 run id to its expected segment, update and picker
-/// mode. Any undeclared run id is refused.
-pub fn resolve_page_spec(run_id: &str) -> Result<OwnerViewPageSpec, OwnerViewError> {
+/// Resolved mapping from a shakedown owner-view run id (`b<n>-u0032`,
+/// `b<n>-u0064`, `b<n>-u0096`, `b<n>-u0128`, `k<n>-u0064`, or `k<n>-u0128`
+/// for canonical `n >= 1`, per D0.13, D0.18, and D0.21) to its expected
+/// checkpoint segment, training run id, checkpoint update, and picker mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedOwnerViewPageSpec {
+    pub run_id: String,
+    pub expected_segment: Segment,
+    pub expected_training_run: String,
+    pub expected_update: u64,
+    pub picker_mode: PickerMode,
+}
+
+fn is_canonical_positive_u64(text: &str) -> bool {
+    !text.is_empty()
+        && !text.starts_with('0')
+        && text.bytes().all(|b| b.is_ascii_digit())
+        && text.parse::<u64>().is_ok_and(|n| n >= 1)
+}
+
+/// Resolves a declared D16 shakedown owner-view run id (`b<n>-u0032`,
+/// `b<n>-u0064`, `b<n>-u0096`, `b<n>-u0128`, `k<n>-u0064`, or `k<n>-u0128`
+/// with canonical `n >= 1`) to its expected segment, training run, update, and
+/// picker mode. Any undeclared run id is refused.
+pub fn resolve_page_spec(run_id: &str) -> Result<ResolvedOwnerViewPageSpec, OwnerViewError> {
     if !is_valid_token(run_id) {
         return Err(OwnerViewError::InvalidRunId(run_id.to_owned()));
     }
-    SHAKEDOWN_PAGE_SPECS
-        .iter()
-        .copied()
-        .find(|spec| spec.run_id == run_id)
-        .ok_or_else(|| OwnerViewError::UndeclaredRunId(run_id.to_owned()))
+    let Some((training_run, update_str)) = run_id.split_once("-u") else {
+        return Err(OwnerViewError::UndeclaredRunId(run_id.to_owned()));
+    };
+    let (expected_segment, picker_mode, expected_update) =
+        if let Some(rest) = training_run.strip_prefix('b') {
+            if !is_canonical_positive_u64(rest) {
+                return Err(OwnerViewError::UndeclaredRunId(run_id.to_owned()));
+            }
+            let update = match update_str {
+                "0032" => 32,
+                "0064" => 64,
+                "0096" => 96,
+                "0128" => 128,
+                _ => return Err(OwnerViewError::UndeclaredRunId(run_id.to_owned())),
+            };
+            (Segment::BuilderOnly, PickerMode::UniformFixture, update)
+        } else if let Some(rest) = training_run.strip_prefix('k') {
+            if !is_canonical_positive_u64(rest) {
+                return Err(OwnerViewError::UndeclaredRunId(run_id.to_owned()));
+            }
+            let update = match update_str {
+                "0064" => 64,
+                "0128" => 128,
+                _ => return Err(OwnerViewError::UndeclaredRunId(run_id.to_owned())),
+            };
+            (Segment::PickPhase, PickerMode::LearnedPickHead, update)
+        } else {
+            return Err(OwnerViewError::UndeclaredRunId(run_id.to_owned()));
+        };
+    Ok(ResolvedOwnerViewPageSpec {
+        run_id: run_id.to_owned(),
+        expected_segment,
+        expected_training_run: training_run.to_owned(),
+        expected_update,
+        picker_mode,
+    })
 }
 
 impl PickerMode {

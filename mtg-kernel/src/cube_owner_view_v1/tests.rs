@@ -476,8 +476,19 @@ fn page_identity_mismatch_and_pool_mismatch_are_refused() {
     let standin_b2 = StandInCheckpoint::from_fixture(&fixture_b2_32);
     let standin_k64 = StandInCheckpoint::from_fixture(&fixture_k1_64);
 
-    // 1. Undeclared run ids are refused (no prefix fallback, nothing for M5).
-    for undeclared in ["b1-u0000", "b2-u0032", "k1-u0032", "m5-u0064", "custom"] {
+    // 1. Undeclared run ids are refused (no zero/leading-zero/non-shakedown/M5 fallback).
+    for undeclared in [
+        "b0-u0032",
+        "b01-u0032",
+        "b1-u0000",
+        "b2-u0016",
+        "b2-u32",
+        "k0-u0064",
+        "k1-u0032",
+        "k2-u0032",
+        "m5-u0064",
+        "custom",
+    ] {
         assert!(matches!(
             resolve_page_spec(undeclared),
             Err(OwnerViewError::UndeclaredRunId(_))
@@ -493,6 +504,42 @@ fn page_identity_mismatch_and_pool_mismatch_are_refused() {
             Err(OwnerViewError::UndeclaredRunId(_))
         ));
     }
+
+    // 1b. Restart run ids b<n>-u{0032,0064,0096,0128} and k<n>-u{0064,0128} resolve and bind
+    // strictly to their matching training run and segment (D0.13 / D0.18).
+    let b2_spec = resolve_page_spec("b2-u0032").expect("b2-u0032 resolves");
+    assert_eq!(b2_spec.expected_segment, Segment::BuilderOnly);
+    assert_eq!(b2_spec.expected_training_run, "b2");
+    assert_eq!(b2_spec.expected_update, 32);
+    assert_eq!(b2_spec.picker_mode, PickerMode::UniformFixture);
+
+    let k2_spec = resolve_page_spec("k2-u0128").expect("k2-u0128 resolves");
+    assert_eq!(k2_spec.expected_segment, Segment::PickPhase);
+    assert_eq!(k2_spec.expected_training_run, "k2");
+    assert_eq!(k2_spec.expected_update, 128);
+    assert_eq!(k2_spec.picker_mode, PickerMode::LearnedPickHead);
+
+    let (b2_data, b2_html) = render_owner_view_page(
+        "b2-u0032",
+        &pool,
+        &pool_sha,
+        &fixture_b2_32.header(),
+        &standin_b2,
+    )
+    .expect("b2-u0032 renders with matching b2 checkpoint");
+    assert_eq!(b2_data.run_id, "b2-u0032");
+    assert_eq!(b2_data.checkpoint.run, "b2");
+    assert!(b2_html.contains("b2-u0032"));
+    assert!(matches!(
+        render_owner_view_page(
+            "b2-u0032",
+            &pool,
+            &pool_sha,
+            &fixture_b1_32.header(),
+            &standin_32
+        ),
+        Err(OwnerViewError::CheckpointMismatch { .. })
+    ));
 
     // 2. Learned picker mode on a b1 page is refused.
     assert!(matches!(
