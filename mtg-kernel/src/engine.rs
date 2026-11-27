@@ -24277,23 +24277,25 @@ fn validated_stack_item_target_metadata(
     Ok(Some(spec))
 }
 
-pub(crate) fn stack_targets_still_legal(
+pub(crate) fn stack_target_legalities(
     item: &StackItem,
     state: &GameState,
-) -> Result<bool, String> {
+) -> Result<Vec<bool>, String> {
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::dungeons::occurrences::validate_stack_target_source(state, item)?;
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
-        return Ok(true);
+        return Ok(Vec::new());
     };
     if let Some(legal) = crate::eternal_vintage_e7b_v1::minsc::departed_target_legal(state, item)? {
         let [target] = item.targets.as_slice() else {
-            return Ok(false);
+            return Ok(vec![false]);
         };
         let [contract] = item.v4.target_contracts.as_slice() else {
-            return Ok(false);
+            return Ok(vec![false]);
         };
-        return Ok(legal && target_contract_matches_live(state, *target, *contract));
+        return Ok(vec![
+            legal && target_contract_matches_live(state, *target, *contract),
+        ]);
     }
     if item.kind == StackItemKind::ActivatedAbility
         && item.v4.granted_by.is_none()
@@ -24302,7 +24304,7 @@ pub(crate) fn stack_targets_still_legal(
             .ability_source_contract
             .is_some_and(|s| crate::zul_ashur_v1::owns_definition(s.card_def))
     {
-        return Ok(crate::zul_ashur_v1::target_legal(state, item));
+        return Ok(vec![crate::zul_ashur_v1::target_legal(state, item)]);
     }
     if spec == TargetSpec::CreatureThenUpToOneAttachedEquipment {
         return Ok(crate::fiery_annihilation_v1::target_legalities(
@@ -24313,7 +24315,8 @@ pub(crate) fn stack_targets_still_legal(
             &item.v4.target_contracts,
         )
         .into_iter()
-        .any(|legal| legal));
+        .take(item.targets.len())
+        .collect());
     }
     if spec == TargetSpec::TwoCreaturesWithDifferentControllers {
         return Ok(different_controller_creature_targets_are_legal(
@@ -24324,13 +24327,14 @@ pub(crate) fn stack_targets_still_legal(
             &item.v4.target_contracts,
         )
         .into_iter()
-        .any(|legal| legal));
+        .take(item.targets.len())
+        .collect());
     }
     if item.targets.is_empty() {
-        return Ok(true);
+        return Ok(Vec::new());
     }
     let mut chosen = Vec::with_capacity(item.targets.len());
-    let mut any_legal = false;
+    let mut legalities = Vec::with_capacity(item.targets.len());
     for (&target, &contract) in item.targets.iter().zip(&item.v4.target_contracts) {
         let same_incarnation = if crate::ashroot_animist_v1::owns_item(item) {
             target_contract_matches_live(
@@ -24526,14 +24530,79 @@ pub(crate) fn stack_targets_still_legal(
                 .contains(&target)
             }
         };
-        any_legal |= same_incarnation && legal_now;
+        legalities.push(same_incarnation && legal_now);
         chosen.push(target);
     }
-    // 608.2b: a spell with multiple targets is countered by the rules only
-    // when *all* targets are illegal. Its effect program remains responsible
-    // for ignoring each individually-illegal target (Searing Blaze already
-    // guards its creature leaf this way).
-    Ok(any_legal)
+    // 608.2b: return each target's resolution-time legality so callers can
+    // fizzle when all are illegal and authenticate copy-changed legal targets.
+    Ok(legalities)
+}
+
+pub(crate) fn stack_targets_still_legal(
+    item: &StackItem,
+    state: &GameState,
+) -> Result<bool, String> {
+    let legalities = stack_target_legalities(item, state)?;
+    Ok(legalities.is_empty() || legalities.iter().any(|&legal| legal))
+}
+
+/// Target slots whose live object became a copy or stopped being one before
+/// resolution (`live.card_def != contract.card_def`) and still satisfies the
+/// stack item's targeting restriction at resolution (CR 608.2b, 707.4, 400.7).
+pub(crate) fn copy_legal_targets_v1(
+    state: &GameState,
+    item: &StackItem,
+    legalities: &[bool],
+) -> Vec<u16> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return Vec::new();
+    }
+    item.targets
+        .iter()
+        .zip(item.v4.target_contracts.iter())
+        .zip(legalities.iter().copied())
+        .enumerate()
+        .filter_map(|(index, ((&target, &contract), legal))| {
+            if !legal {
+                return None;
+            }
+            let (
+                Target::Object(object),
+                StackTargetContractV4::Object {
+                    object: bound,
+                    card_def,
+                    owner,
+                    zone_change_count,
+                    ..
+                },
+            ) = (target, contract)
+            else {
+                return None;
+            };
+            (bound == object
+                && state.objects.try_get(object).is_some_and(|live| {
+                    live.card_def != card_def
+                        && live.owner == owner
+                        && live.zone_change_count == zone_change_count
+                        && !crate::standard_cards_v1::active_aegis_copy(state, object)
+                        && crate::standard_cards_v1::had_card_def(
+                            state,
+                            object,
+                            zone_change_count,
+                            card_def,
+                        )
+                }))
+            .then(|| u16::try_from(index).expect("target slot fits u16"))
+        })
+        .collect()
+}
+
+pub(crate) fn copy_legal_targets_for_item_v1(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Vec<u16>, String> {
+    let legalities = stack_target_legalities(item, state)?;
+    Ok(copy_legal_targets_v1(state, item, &legalities))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25447,8 +25516,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
-    let targets_legal = match stack_targets_still_legal(item, state) {
-        Ok(legal) => legal,
+    let target_legalities = match stack_target_legalities(item, state) {
+        Ok(legalities) => legalities,
         Err(_error) => {
             #[cfg(test)]
             eprintln!("Resolution target preflight rejected: {_error}");
@@ -25459,6 +25528,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let targets_legal = target_legalities.is_empty() || target_legalities.iter().any(|&l| l);
     if targets_legal && crate::goblin_negotiation_v1::preflight_resolution(state, item).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -25915,6 +25985,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     state.engine.pending_kicked_source = if item.kicked { Some(item.source) } else { None };
     state.engine.battlemage_entry_v1.0 = (!item.v4.battlemage_kickers_v1.is_empty())
         .then_some((item.source, item.v4.battlemage_kickers_v1));
+    let copy_legal_targets_v1 = copy_legal_targets_v1(state, &item, &target_legalities);
     let ctx = ExecCtx {
         niv_damage_origin_v1,
         stack_item_id: Some(item.v4.stack_item_id),
@@ -25932,6 +26003,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         } else {
             item.v4.target_contracts.clone()
         },
+        copy_legal_targets_v1,
         discarded: item.discarded.clone(),
         paid_cost_refs: item.v4.paid_cost_refs.clone(),
         hidden_ability_source: item.v4.hidden_ability_source,
@@ -46230,6 +46302,254 @@ mod tests {
 
         // The genuine parent still offers its copy.
         assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Issue #936: a permanent that becomes a copy before a spell or ability
+    /// targeting it resolves is still the same object (CR 707.4, 400.7) and
+    /// must still be affected when it remains a legal target (CR 608.2b).
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn candelabra_target_that_becomes_a_copy_stays_the_same_land() {
+        let mut state = ready_game_in_main1(0);
+        let candelabra = put_on_battlefield(&mut state, PlayerId::P0, "Candelabra of Tawnos");
+        let stage = put_on_battlefield(&mut state, PlayerId::P0, "Thespian's Stage");
+        let mountain = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let mountain_def = state.objects.get(mountain).card_def;
+        state.players[0].mana_pool[mana::ManaColor::C.pool_index()] = 3;
+
+        // Candelabra X=1 (ability 1) targets Thespian's Stage.
+        step(&mut state, Action::ActivateAbility(candelabra, 1)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(stage)));
+                step(&mut state, Action::ChooseTarget(Target::Object(stage))).unwrap();
+            }
+            other => panic!("expected ChooseTargets for Candelabra, got {other:?}"),
+        }
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+
+        // In response, Thespian's Stage activates (ability 0, {2}, {T}) targeting Mountain.
+        step(&mut state, Action::ActivateAbility(stage, 0)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(mountain)));
+                step(&mut state, Action::ChooseTarget(Target::Object(mountain))).unwrap();
+            }
+            other => panic!("expected ChooseTargets for Thespian's Stage, got {other:?}"),
+        }
+
+        // Resolve Stage's copy ability first; Stage is now a tapped Mountain.
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        assert!(state.objects.get(stage).tapped);
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.objects.get(stage).card_def, mountain_def);
+        assert!(state.objects.get(stage).tapped);
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(
+            copy_legal_targets_for_item_v1(&state, state.stack.last().unwrap()),
+            Ok(vec![0])
+        );
+
+        // Now resolve Candelabra's ability: Stage is still a legal land target and untaps.
+        pass_until_stack_resolves(&mut state);
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.objects.get(stage).card_def, mountain_def);
+        assert!(
+            !state.objects.get(stage).tapped,
+            "Candelabra must untap Thespian's Stage after it became a copy of Mountain"
+        );
+    }
+
+    /// Issue #936 (CR 608.2b): when a multi-target creature spell targets both
+    /// a creature and a Thespian's Stage copying Dryad Arbor, and Stage becomes
+    /// a noncreature Mountain in response, the legal creature is affected while
+    /// the now-illegal Mountain is skipped even by incarnation-only checks.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn multi_target_creature_spell_skips_stage_that_becomes_noncreature_land() {
+        let mut state = ready_game_in_main1(0);
+        let stage = put_on_battlefield(&mut state, PlayerId::P1, "Thespian's Stage");
+        let arbor = put_on_battlefield(&mut state, PlayerId::P1, "Dryad Arbor");
+        let mountain = put_on_battlefield(&mut state, PlayerId::P1, "Mountain");
+        let epicure = put_on_battlefield(&mut state, PlayerId::P1, "Voldaren Epicure");
+        let cast_into_fire = put_in_hand(&mut state, PlayerId::P0, "Cast into the Fire");
+        let arbor_def = state.objects.get(arbor).card_def;
+        let mountain_def = state.objects.get(mountain).card_def;
+
+        // First have P1's Stage copy Dryad Arbor so it is a Land Creature.
+        state.players[1].mana_pool[mana::ManaColor::C.pool_index()] = 2;
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        step(&mut state, Action::ActivateAbility(stage, 0)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                step(&mut state, Action::ChooseTarget(Target::Object(arbor))).unwrap();
+            }
+            other => panic!("expected ChooseTargets for Stage -> Dryad Arbor, got {other:?}"),
+        }
+        pass_until_stack_resolves(&mut state);
+        assert_eq!(state.objects.get(stage).card_def, arbor_def);
+        assert!(object_has_type(&state, stage, CardType::Creature));
+
+        // Untap Stage and give P0 {1}{R} and P1 {2} so P1 can respond with Stage -> Mountain.
+        state.objects.get_mut(stage).tapped = false;
+        state.players[0].mana_pool[mana::ManaColor::R.pool_index()] = 1;
+        state.players[0].mana_pool[mana::ManaColor::C.pool_index()] = 1;
+        state.players[1].mana_pool[mana::ManaColor::C.pool_index()] = 2;
+
+        // P0 casts Cast into the Fire (mode 0 auto-selected with no artifacts)
+        // targeting Epicure (slot 0) and Stage (slot 1).
+        step(&mut state, Action::CastSpell(cast_into_fire)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                step(&mut state, Action::ChooseTarget(Target::Object(epicure))).unwrap();
+            }
+            other => panic!("expected ChooseTargets slot 0, got {other:?}"),
+        }
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(stage)));
+                step(&mut state, Action::ChooseTarget(Target::Object(stage))).unwrap();
+            }
+            other => panic!("expected ChooseTargets slot 1, got {other:?}"),
+        }
+
+        // P0 passes; P1 responds with Stage's retained ability targeting Mountain.
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        let retained_index = card_def::CARD_DEFS[usize::from(state.objects.get(stage).card_def)]
+            .activated_abilities
+            .len() as u8;
+        step(&mut state, Action::ActivateAbility(stage, retained_index)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                step(&mut state, Action::ChooseTarget(Target::Object(mountain))).unwrap();
+            }
+            other => panic!("expected ChooseTargets for Stage -> Mountain, got {other:?}"),
+        }
+        // Resolve Stage's ability so Stage becomes a noncreature Mountain.
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.objects.get(stage).card_def, mountain_def);
+        assert!(!object_has_type(&state, stage, CardType::Creature));
+
+        // Verify per-target CR 608.2b check before resolution: slot 0 legal, slot 1 illegal.
+        let top = state.stack.last().unwrap().clone();
+        assert_eq!(stack_target_legalities(&top, &state), Ok(vec![true, false]));
+        assert_eq!(copy_legal_targets_for_item_v1(&state, &top), Ok(vec![]));
+        let ctx = ExecCtx {
+            niv_damage_origin_v1: None,
+            stack_item_id: Some(top.v4.stack_item_id),
+            source: top.source,
+            controller: top.controller,
+            targets: top.targets.clone(),
+            target_contracts: top.v4.target_contracts.clone(),
+            copy_legal_targets_v1: vec![],
+            discarded: top.discarded.clone(),
+            paid_cost_refs: top.v4.paid_cost_refs.clone(),
+            hidden_ability_source: top.v4.hidden_ability_source,
+            ability_source_contract: top.v4.ability_source_contract,
+            cauldron_grant: top.v4.cauldron_grant,
+            kicked: top.kicked,
+            optional_additional_cost_paid: top.v4.optional_additional_cost_paid,
+            x_value: top.v4.x_value,
+        };
+        assert!(ctx.target_incarnation_matches(0, &state));
+        assert!(
+            !ctx.target_incarnation_matches(1, &state),
+            "incarnation check must skip a copy-changed target that became illegal"
+        );
+
+        // Forging copy_legal_targets_v1 on a continuation for an illegal, unchanged,
+        // or unsorted slot must be rejected by continuation validation.
+        for forged_slots in [vec![1], vec![0], vec![1, 0]] {
+            let mut forged = state.clone();
+            let mut forged_ctx = ctx.clone();
+            forged_ctx.copy_legal_targets_v1 = forged_slots;
+            forged.engine.pending_effect = Some(effect::EffectContinuation {
+                resolving_item: top.clone(),
+                ctx: forged_ctx,
+                frames: Vec::new(),
+                choice: None,
+                answered_choice_guard: None,
+            });
+            assert!(effect::validate_pending_effect_choice(&forged).is_err());
+        }
+
+        // Resolve Cast into the Fire: Epicure dies, Stage (Mountain) is untouched.
+        pass_until_stack_resolves(&mut state);
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.objects.get(epicure).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(stage).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(stage).damage, 0);
     }
 }
 

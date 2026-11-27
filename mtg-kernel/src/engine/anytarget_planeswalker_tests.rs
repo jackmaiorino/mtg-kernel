@@ -238,6 +238,7 @@ mod fdn {
                 controller: state.objects.get(source).controller,
                 targets: vec![target],
                 target_contracts: vec![contract],
+                copy_legal_targets_v1: vec![],
                 discarded: vec![],
                 paid_cost_refs: vec![],
                 hidden_ability_source: None,
