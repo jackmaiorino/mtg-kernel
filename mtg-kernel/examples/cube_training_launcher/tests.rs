@@ -464,7 +464,7 @@ fn resume_cli_accepts_lead_entry_and_refuses_merge_introduction() {
 
 impl PilotProvider for DyingWorker {
     fn uniform_pilot(&self) -> Arc<dyn GamePilot + Sync> {
-        let mut pilot = worker::SupervisedUniformPilot::new(Duration::from_secs(600));
+        let mut pilot = worker::SupervisedUniformPilot::new(Duration::from_secs(600), false);
         pilot.worker_command = Some(|| {
             let mut cmd = Command::new(if cfg!(windows) { "python" } else { "python3" });
             cmd.args(["-c", "import sys; sys.stdin.readline(); sys.exit(37)"]);

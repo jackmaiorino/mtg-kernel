@@ -403,7 +403,7 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
         &loaded.pool,
         &plan,
         &loaded.seats,
-        &SupervisedUniformPilot::new(Duration::from_secs(plan.caps.watchdog_seconds)),
+        &SupervisedUniformPilot::new(Duration::from_secs(plan.caps.watchdog_seconds), false),
         &run_opts,
     )
     .map_err(|e| e.to_string())?;
@@ -621,7 +621,7 @@ fn run_cli(args: &Args) -> Fallible<()> {
         .ok_or("--pod-start + --pods overflows u64")?;
 
     write_training_run_record(pod_use, &namespace, &run, workers, caps, &run_record_path)?;
-    let pilot = SupervisedUniformPilot::new(Duration::from_secs(watchdog_seconds));
+    let pilot = SupervisedUniformPilot::new(Duration::from_secs(watchdog_seconds), false);
     let records = if pod_use == PodUse::Client {
         let mut out = Vec::with_capacity(pods as usize);
         for pod_index in pod_start..pod_end {
@@ -700,10 +700,16 @@ fn run_cli(args: &Args) -> Fallible<()> {
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let result = match args.as_slice() {
-        [flag, path, interval] if flag == worker::FLAG => interval
+        [flag, path, interval] if flag == worker::FLAG || flag == worker::TYPED_FLAG => interval
             .parse::<u64>()
             .map_err(|error| format!("invalid heartbeat interval: {error}"))
-            .and_then(|ms| worker::run_worker(PathBuf::from(path), Duration::from_millis(ms))),
+            .and_then(|ms| {
+                worker::run_worker(
+                    PathBuf::from(path),
+                    Duration::from_millis(ms),
+                    flag == worker::TYPED_FLAG,
+                )
+            }),
         _ => Args::parse(args).and_then(|args| run_cli(&args)),
     };
     if let Err(error) = result {

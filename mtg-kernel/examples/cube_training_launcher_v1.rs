@@ -9,6 +9,7 @@
 //! Optional baseline contains pin (CensusBaselinePin)
 //! and summary, manifest and authorization paths for full mode.
 //! Preparing k1 can also supply builder_baseline for b1's earlier full-mode evidence.
+//! Append `--typed-uniform-pilot` to `run` to use the prototype in-process game transport.
 //!
 //! Prepare pins the manifest up to the new training_run heading. Use its exit
 //! receipt to append that entry with run_id, tripwire (the run.json object)
@@ -50,12 +51,15 @@ type Fallible<T> = Result<T, String>;
 mod tests;
 type ResultBox<T> = Result<T, Box<dyn std::error::Error>>;
 
-struct Supervised;
+struct Supervised {
+    typed_uniform_pilot: bool,
+}
 impl PilotProvider for Supervised {
     fn uniform_pilot(&self) -> Arc<dyn GamePilot + Sync> {
-        Arc::new(worker::SupervisedUniformPilot::new(Duration::from_secs(
-            mtg_kernel::cube_pod_runner_v1::DEFAULT_WATCHDOG_SECONDS,
-        )))
+        Arc::new(worker::SupervisedUniformPilot::new(
+            Duration::from_secs(mtg_kernel::cube_pod_runner_v1::DEFAULT_WATCHDOG_SECONDS),
+            self.typed_uniform_pilot,
+        ))
     }
     fn load_checkpoint(
         &self,
@@ -327,11 +331,12 @@ struct Args {
     inputs: PathBuf,
     threads: usize,
     resume: Option<(u64, PathBuf)>,
+    typed_uniform_pilot: bool,
 }
 impl Args {
     fn parse(args: &[String]) -> ResultBox<Self> {
         let [stage, root, run, inputs, threads_flag, threads, rest @ ..] = args else {
-            return Err("usage: prepare|run ROOT b<n>|k<n> INPUTS.json --threads N [--resume-entry SEQ --records-repository PATH]".into());
+            return Err("usage: prepare|run ROOT b<n>|k<n> INPUTS.json --threads N [--resume-entry SEQ --records-repository PATH] [--typed-uniform-pilot]".into());
         };
         let threads = threads.parse()?;
         if !matches!(stage.as_str(), "prepare" | "run")
@@ -341,6 +346,12 @@ impl Args {
         {
             return Err("invalid stage, segment or thread count".into());
         }
+        let (rest, typed_uniform_pilot) = match rest {
+            [options @ .., flag] if stage == "run" && flag == "--typed-uniform-pilot" => {
+                (options, true)
+            }
+            _ => (rest, false),
+        };
         let resume = match rest {
             [] => None,
             [flag, seq, repo, path]
@@ -357,6 +368,7 @@ impl Args {
             inputs: inputs.into(),
             threads,
             resume,
+            typed_uniform_pilot,
         })
     }
 }
@@ -453,7 +465,12 @@ fn advance(
 }
 
 fn launch(args: &Args) -> ResultBox<bool> {
-    launch_with_pilots(args, &Supervised)
+    launch_with_pilots(
+        args,
+        &Supervised {
+            typed_uniform_pilot: args.typed_uniform_pilot,
+        },
+    )
 }
 
 fn launch_with_pilots(args: &Args, pilots: &dyn PilotProvider) -> ResultBox<bool> {
@@ -654,12 +671,14 @@ fn execute(
 fn main() -> ExitCode {
     let argv: Vec<_> = env::args().skip(1).collect();
     if let [flag, path, interval] = argv.as_slice() {
-        if flag == worker::FLAG {
-            return match interval
-                .parse()
-                .map_err(|e| format!("{e}"))
-                .and_then(|ms| worker::run_worker(path.into(), Duration::from_millis(ms)))
-            {
+        if flag == worker::FLAG || flag == worker::TYPED_FLAG {
+            return match interval.parse().map_err(|e| format!("{e}")).and_then(|ms| {
+                worker::run_worker(
+                    path.into(),
+                    Duration::from_millis(ms),
+                    flag == worker::TYPED_FLAG,
+                )
+            }) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("{e}");
