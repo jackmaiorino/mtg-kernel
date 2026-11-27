@@ -55,7 +55,7 @@
 
 pub mod targets;
 
-use crate::card_def::{CardType, CostComponent, Keywords, Subtype, TargetSpec, CARD_DEFS};
+use crate::card_def::{CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
 use crate::effect::{
     EffectContinuation, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, PlayerRef,
 };
@@ -80,9 +80,6 @@ pub(crate) const BATROC_THE_LEAPER: &str = "Batroc the Leaper";
 pub(crate) const BLIGHTSTEEL_COLOSSUS: &str = "Blightsteel Colossus";
 pub(crate) const CRABOMINATION: &str = "Crabomination";
 pub(crate) const FEAR_OF_MISSING_OUT: &str = "Fear of Missing Out";
-
-/// Generic mana in Aang, Swift Savior's printed "Waterbend {8}".
-const AANG_WATERBEND_GENERIC: u8 = 8;
 
 /// Alternative cast cost granted by airbend: `{2}` rather than its mana cost.
 pub(crate) const AIRBEND_CAST_COST: Cost = Cost {
@@ -570,140 +567,8 @@ pub(crate) fn is_airbent_exile_cast(state: &GameState, source: ObjectId, player:
     c9a.airbent_exiled.contains(&exile_link)
 }
 
-fn waterbend_taps(components: &[CostComponent]) -> u8 {
-    components
-        .iter()
-        .find_map(|component| match component {
-            CostComponent::TapControlled { count, .. } => Some(*count),
-            _ => None,
-        })
-        .unwrap_or(0)
-}
-
-/// The printed cost every one of Aang, Swift Savior's Waterbend {8} payments
-/// starts from, or `None` for every other ability.
-pub(crate) fn waterbend_printed(
-    state: &GameState,
-    source: ObjectId,
-    components: &[CostComponent],
-) -> Option<Cost> {
-    (cfg!(feature = "eternal-fixtures")
-        && named_face(state, source, AANG_SWIFT_SAVIOR, 0)
-        && components
-            .iter()
-            .any(|component| matches!(component, CostComponent::Mana(_))))
-    .then_some(Cost {
-        pips: &[],
-        generic: AANG_WATERBEND_GENERIC,
-        x_count: 0,
-    })
-}
-
-/// The mana one of Aang's waterbend payments still needs once its waterbend
-/// taps paid their part of `total`.
-pub(crate) fn waterbend_taps_paid(
-    state: &GameState,
-    source: ObjectId,
-    components: &[CostComponent],
-    total: Cost,
-) -> Cost {
-    if waterbend_printed(state, source, components).is_none() {
-        return total;
-    }
-    Cost {
-        generic: total.generic.saturating_sub(waterbend_taps(components)),
-        ..total
-    }
-}
-
-fn waterbend_mana(state: &GameState, source: ObjectId, ability_index: usize) -> Option<Cost> {
-    let live = state.objects.try_get(source)?;
-    let ability = CARD_DEFS[usize::from(live.card_def)]
-        .activated_abilities
-        .get(ability_index)?;
-    crate::engine::activation_mana_payment(ability.cost, live.controller, source, state)
-}
-
-fn waterbend_cap(state: &GameState, source: ObjectId) -> u8 {
-    waterbend_mana(state, source, 0).map_or(AANG_WATERBEND_GENERIC, |total| {
-        total.generic.min(AANG_WATERBEND_GENERIC)
-    })
-}
-
-fn waterbend_tappable(state: &GameState, player: PlayerId, chosen: &[ObjectId]) -> Vec<ObjectId> {
-    state.players[player.index()]
-        .battlefield
-        .iter()
-        .copied()
-        .filter(|object| !chosen.contains(object))
-        .filter(|&object| {
-            let live = state.objects.get(object);
-            live.zone == Zone::Battlefield
-                && live.controller == player
-                && !live.tapped
-                && (crate::engine::object_has_type(state, object, CardType::Artifact)
-                    || crate::engine::object_has_type(state, object, CardType::Creature))
-        })
-        .collect()
-}
-
-fn waterbend_completion_exists(
-    state: &GameState,
-    player: PlayerId,
-    source: ObjectId,
-    cost: &Cost,
-    chosen: &[ObjectId],
-    more: usize,
-) -> bool {
-    let Some(plan) = crate::mana::plan_activation_mana_v1(cost, 0, player, state, source, chosen)
-    else {
-        return false;
-    };
-    let rest = waterbend_tappable(state, player, chosen);
-    if rest.len() < more {
-        return false;
-    }
-    let outside_plan = rest
-        .iter()
-        .filter(|&&object| !plan.taps.iter().any(|&(tapped, _)| tapped == object))
-        .count();
-    outside_plan >= more
-        || waterbend_completion_among(state, player, source, cost, chosen, &rest, more)
-}
-
-fn waterbend_completion_among(
-    state: &GameState,
-    player: PlayerId,
-    source: ObjectId,
-    cost: &Cost,
-    chosen: &[ObjectId],
-    among: &[ObjectId],
-    more: usize,
-) -> bool {
-    if more == 0 {
-        return crate::mana::plan_activation_mana_v1(cost, 0, player, state, source, chosen)
-            .is_some();
-    }
-    if among.len() < more {
-        return false;
-    }
-    among.iter().enumerate().any(|(index, &next)| {
-        let mut with = chosen.to_vec();
-        with.push(next);
-        waterbend_completion_among(
-            state,
-            player,
-            source,
-            cost,
-            &with,
-            &among[index + 1..],
-            more - 1,
-        )
-    })
-}
-
-/// Aang, Swift Savior's Waterbend {8}: only payments within `waterbend_cap`
-/// whose chosen taps leave the remaining mana payable are offered.
+/// Aang, Swift Savior's Waterbend {8}: only on face 0; tap cap and
+/// payability are enforced by `crate::waterbend_v1`.
 pub(crate) fn activation_allowed(
     state: &GameState,
     source: ObjectId,
@@ -719,72 +584,7 @@ pub(crate) fn activation_allowed(
     if live.zone != Zone::Battlefield || live.v4.face_index != 0 {
         return false;
     }
-    let Some(ability) = CARD_DEFS[usize::from(live.card_def)]
-        .activated_abilities
-        .get(ability_index)
-    else {
-        return true;
-    };
-    let taps = waterbend_taps(ability.cost);
-    if taps > waterbend_cap(state, source) {
-        return false;
-    }
-    let Some(cost) = waterbend_mana(state, source, ability_index) else {
-        return true;
-    };
-    waterbend_completion_exists(
-        state,
-        live.controller,
-        source,
-        &cost,
-        &[],
-        usize::from(taps),
-    )
-}
-
-/// Keeps only the waterbend taps after which the rest of Aang's pending
-/// Waterbend {8} payment can still be completed.
-pub(crate) fn retain_payable_waterbend_taps(
-    state: &GameState,
-    source: ObjectId,
-    already_chosen: &[EffectObjectBinding],
-    candidates: &mut Vec<EffectObjectBinding>,
-) {
-    if !cfg!(feature = "eternal-fixtures") {
-        return;
-    }
-    let Some(pending) = state
-        .engine
-        .pending_activation
-        .as_ref()
-        .filter(|pending| pending.source == source)
-    else {
-        return;
-    };
-    if !named_face(state, source, AANG_SWIFT_SAVIOR, 0) {
-        return;
-    }
-    let ability_index = usize::from(pending.ability_index);
-    let Some(ability) = CARD_DEFS[usize::from(state.objects.get(source).card_def)]
-        .activated_abilities
-        .get(ability_index)
-    else {
-        return;
-    };
-    let Some(cost) = waterbend_mana(state, source, ability_index) else {
-        return;
-    };
-    let taps = usize::from(waterbend_taps(ability.cost));
-    let chosen: Vec<ObjectId> = already_chosen
-        .iter()
-        .map(|binding| binding.object)
-        .collect();
-    let more = taps.saturating_sub(chosen.len() + 1);
-    candidates.retain(|candidate| {
-        let mut with = chosen.clone();
-        with.push(candidate.object);
-        waterbend_completion_exists(state, pending.controller, source, &cost, &with, more)
-    });
+    crate::waterbend_v1::activation_allowed(state, source, ability_index)
 }
 
 // ---- Hooks: Badgermole Cub (earthbend & triggered mana ability) ---------------------

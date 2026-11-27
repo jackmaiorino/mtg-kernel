@@ -7,6 +7,7 @@ use crate::eternal_catalog_v1::{in_parallel, play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
+use mtg_kernel::effect::{EffectFrame, EffectOp, PlayerRef};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -2224,6 +2225,145 @@ fn occult_epiphany_with_x_zero_or_a_hand_of_exactly_x_needs_no_choice() {
     assert_eq!(hand_len(&state, P0), 0);
     assert_eq!(state.players[P0.index()].graveyard.len(), 3);
     assert_eq!(spirits(&state, P0).len(), 2);
+}
+
+#[test]
+fn occult_epiphany_pauses_for_miracle_before_its_second_draw() {
+    let mut state = game(&["Metamorphosis Fanatic", "Sol Ring", "Island"]);
+    let miracle = state.players[0].library[0];
+    let second = state.players[0].library[1];
+    let keep = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let epiphany = put(&mut state, P0, "Occult Epiphany", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    cast_with_x(&mut state, epiphany, 2, &[]);
+
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            player: P0,
+            source,
+            option_count: 2,
+        }) if source == miracle
+    ));
+    assert_eq!(zone(&state, miracle), Zone::Hand);
+    assert_eq!(zone(&state, second), Zone::Library);
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert!(spirits(&state, P0).is_empty());
+
+    let snapshot = serde_json::to_vec(&state).unwrap();
+    let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+    act(&mut restored, Action::ChooseEffectOption(0));
+    settle_with(&mut restored, choose_cards(vec![miracle, second]));
+    assert_eq!(restored.players[0].draws_this_turn, 2);
+    assert_eq!(zone(&restored, miracle), Zone::Graveyard);
+    assert_eq!(zone(&restored, second), Zone::Graveyard);
+    assert_eq!(zone(&restored, keep), Zone::Hand);
+    assert_eq!(spirits(&restored, P0).len(), 2);
+}
+
+#[test]
+fn occult_epiphany_fixes_riddler_attempts_before_dredge_and_miracle() {
+    let mut state = game(&[
+        "Shenanigans",
+        "Island",
+        "Island",
+        "Island",
+        "Island",
+        "Metamorphosis Fanatic",
+        "Sol Ring",
+        "Island",
+    ]);
+    let shenanigans = state.players[0].library[0];
+    let miracle = state.players[0].library[5];
+    let later = state.players[0].library[6];
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    let epiphany = put(&mut state, P0, "Occult Epiphany", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    cast_with_x(&mut state, epiphany, 2, &[]);
+
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets == [Target::Object(imp)]
+    ));
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { legal_targets, can_finish: true, .. })
+            if legal_targets == [Target::Object(shenanigans)]
+    ));
+
+    let mut dredged_twice = state.clone();
+    act(
+        &mut dredged_twice,
+        Action::ChooseEffectTarget(Target::Object(shenanigans)),
+    );
+    settle_with(&mut dredged_twice, choose_cards(vec![imp, shenanigans]));
+    assert_eq!(dredged_twice.players[0].draws_this_turn, 1);
+    assert_eq!(zone(&dredged_twice, miracle), Zone::Graveyard);
+    assert_eq!(dredged_twice.players[0].hand, [later]);
+
+    act(&mut state, Action::FinishEffectSelection);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption { player: P0, source, option_count: 2 })
+            if source == miracle
+    ));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(zone(&state, later), Zone::Library);
+
+    let discard = state.engine.pending_effect.as_ref().unwrap().frames[0].clone();
+    let mut early = state.clone();
+    early.engine.pending_effect.as_mut().unwrap().frames = vec![discard.clone()];
+    let mut early = serde_json::to_value(early).unwrap();
+    assert!(early
+        .as_object_mut()
+        .unwrap()
+        .remove("eternal_owned_draw_progress_v1")
+        .is_some());
+    let mut early: GameState = serde_json::from_value(early).unwrap();
+    assert!(engine::step(&mut early, Action::ChooseEffectOption(0)).is_err());
+
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut restored, Action::ChooseEffectOption(0));
+    assert!(matches!(
+        settle(&mut restored),
+        Some(Decision::ChooseEffectTargets { legal_targets, can_finish: true, .. })
+            if legal_targets == [Target::Object(shenanigans)]
+    ));
+    act(&mut restored, Action::FinishEffectSelection);
+    assert!(matches!(
+        settle(&mut restored),
+        Some(Decision::ChooseEffectTargets {
+            min_targets: 2,
+            max_targets: 2,
+            ..
+        })
+    ));
+
+    let mut replay = restored.clone();
+    let pending = replay.engine.pending_effect.as_mut().unwrap();
+    pending.choice = None;
+    pending.frames = vec![
+        discard,
+        EffectFrame::Program {
+            op: EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+            path: Vec::new(),
+        },
+    ];
+    assert!(matches!(
+        engine::advance_until_decision(&mut replay),
+        Decision::Halted { .. }
+    ));
+    settle_with(&mut restored, choose_cards(vec![imp, miracle]));
+    assert_eq!(restored.players[0].draws_this_turn, 2);
+    assert_eq!(restored.players[0].hand, [later]);
+    assert_eq!(restored.players[0].library.len(), 1);
 }
 
 #[test]

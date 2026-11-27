@@ -13560,7 +13560,7 @@ fn plain_draw_instruction(
     state: &GameState,
     op: &EffectOp,
     ctx: &ExecCtx,
-) -> Option<(PlayerId, u32)> {
+) -> Option<(PlayerRef, u32)> {
     let (player, count) = match *op {
         EffectOp::DrawCards { player, count } => (player, count),
         EffectOp::DrawCardsDynamic { player, count } => (
@@ -13569,7 +13569,80 @@ fn plain_draw_instruction(
         ),
         _ => return None,
     };
-    Some((ctx.resolve_player(player, state), count))
+    Some((player, count))
+}
+
+fn occult_staged_draw(
+    leaf: &EffectOp,
+    path: &[u16],
+    pending: &EffectContinuation,
+    state: &GameState,
+) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
+    use crate::eternal_cards_v1::EternalOpV1;
+    use crate::eternal_cube_c1a_v1::C1aOpV1;
+    use crate::standard_cards_v1::StandardOpV1;
+
+    let item = &pending.resolving_item;
+    if !path.is_empty()
+        || item.kind != StackItemKind::Spell
+        || item.is_copy
+        || item.inline_effect.is_some()
+        || !matches!(
+            leaf,
+            EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C1aV1(
+                C1aOpV1::OccultEpiphanyV1
+            )))
+        )
+    {
+        return None;
+    }
+    leaf_staged_draw(leaf, path, &pending.ctx, state)
+}
+
+pub(crate) fn occult_draw_root(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
+    let root = validated_definition_owned_root_effect(state, pending).ok()?;
+    occult_staged_draw(&root, &[], pending, state)
+}
+
+#[cfg(feature = "eternal-fixtures")]
+struct MiracleDrawSite {
+    player: PlayerRef,
+    count: u32,
+    below: Vec<EffectFrame>,
+    staged: bool,
+}
+
+/// A printed draw or Occult Epiphany's native draw and following discard.
+/// Occult's printed count and discard frames are bound to the same resolution.
+#[cfg(feature = "eternal-fixtures")]
+fn miracle_draw_site(
+    state: &GameState,
+    pending: &EffectContinuation,
+    root: &EffectOp,
+    printed: &EffectOp,
+    path: &[u16],
+) -> Result<Option<MiracleDrawSite>, String> {
+    let plain = plain_draw_instruction(state, printed, &pending.ctx);
+    let (player, count, staged_below) = match plain {
+        Some((player, count)) => (player, count, Vec::new()),
+        None => {
+            let Some(draw) = occult_staged_draw(printed, path, pending, state) else {
+                return Ok(None);
+            };
+            draw
+        }
+    };
+    let mut below = nonland_sacrifice_payment_v1::remaining(root, path)?;
+    below.extend(staged_below);
+    Ok(Some(MiracleDrawSite {
+        player,
+        count,
+        below,
+        staged: plain.is_none(),
+    }))
 }
 
 /// The attempts a draw leaf at `path` makes, when the interpreter can
@@ -13588,23 +13661,27 @@ fn authenticated_draw_attempts(
     count: u32,
 ) -> Result<Option<u32>, String> {
     let root = validated_definition_owned_root_effect(state, continuation)?;
-    let attempts = match effect_op_at_structural_path(&root, path) {
-        Some(printed) if printed == leaf => {
-            count + event::draw_instruction_extra(state, player, count)
-        }
-        Some(printed)
-            if matches!(leaf, EffectOp::DrawCards { .. })
-                && plain_draw_instruction(state, printed, &continuation.ctx)
-                    .is_some_and(|(drawer, total)| drawer == player && total > count) =>
-        {
-            count
-        }
-        _ => return Ok(None),
+    let Some(printed) = effect_op_at_structural_path(&root, path) else {
+        return Ok(None);
     };
-    Ok(
-        (nonland_sacrifice_payment_v1::remaining(&root, path)? == continuation.frames)
-            .then_some(attempts),
-    )
+    let Some(site) = miracle_draw_site(state, continuation, &root, printed, path)? else {
+        return Ok(None);
+    };
+    if continuation.ctx.resolve_player(site.player, state) != player
+        || site.below != continuation.frames
+    {
+        return Ok(None);
+    }
+    let fixed_draw = matches!(leaf, EffectOp::DrawCards { .. });
+    if printed == leaf || (site.staged && fixed_draw && site.count == count) {
+        Ok(Some(
+            count + event::draw_instruction_extra(state, player, count),
+        ))
+    } else if fixed_draw && count < site.count {
+        Ok(Some(count))
+    } else {
+        Ok(None)
+    }
 }
 
 /// When the attempt just made drew its drawer's first card this turn and
@@ -13629,10 +13706,11 @@ pub(crate) fn suspend_miracle_draw(
     let authenticated = crate::eternal_legacy_e5b_v1::is_first_miracle_draw(state, player, card)
         && validated_definition_owned_root_effect(state, continuation).is_ok_and(|root| {
             effect_op_at_structural_path(&root, path)
-                .and_then(|op| plain_draw_instruction(state, op, &continuation.ctx))
-                .is_some_and(|(drawer, _)| drawer == player)
-                && nonland_sacrifice_payment_v1::remaining(&root, path)
-                    .is_ok_and(|below| below == continuation.frames)
+                .and_then(|op| miracle_draw_site(state, continuation, &root, op, path).ok()?)
+                .is_some_and(|site| {
+                    continuation.ctx.resolve_player(site.player, state) == player
+                        && site.below == continuation.frames
+                })
         });
     if !authenticated {
         return false;
@@ -13685,17 +13763,14 @@ fn miracle_draw_remainder(
 ) -> Result<(PlayerId, PlayerRef), String> {
     validate_effect_object_binding(state, drawn)?;
     let root = validated_definition_owned_root_effect(state, pending)?;
-    let printed = effect_op_at_structural_path(&root, path);
-    let player_ref = match printed {
-        Some(EffectOp::DrawCards { player, .. } | EffectOp::DrawCardsDynamic { player, .. }) => {
-            *player
-        }
-        _ => return Err("miracle draw lost its printed draw instruction".into()),
-    };
-    let (player, printed_count) = printed
-        .and_then(|op| plain_draw_instruction(state, op, &pending.ctx))
-        .filter(|&(_, count)| count > 0)
+    let printed = effect_op_at_structural_path(&root, path)
         .ok_or("miracle draw lost its printed draw instruction")?;
+    let site = miracle_draw_site(state, pending, &root, printed, path)?
+        .filter(|site| site.count > 0)
+        .ok_or("miracle draw lost its printed draw instruction")?;
+    let player_ref = site.player;
+    let player = pending.ctx.resolve_player(player_ref, state);
+    let printed_count = site.count;
     let first = crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, player);
     let Some((draw_at, _)) = first.filter(|&(_, card)| card == drawn.object) else {
         return Err("miracle draw lost its first-draw receipt".into());
@@ -13709,7 +13784,7 @@ fn miracle_draw_remainder(
                 printed_count,
                 0,
             ))
-        || tail != nonland_sacrifice_payment_v1::remaining(&root, path)?
+        || tail != site.below
     {
         return Err("miracle draw lost its first draw or the rest of its program".into());
     }
@@ -18267,6 +18342,11 @@ fn drive_resumable_in_departure_scope_v1(
             }
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cards_v1::owned_draws_v1::staged::begin(
+                        state, &mut continuation, player, count, &path,
+                    )? => {}
+            EffectOp::DrawCards { player, count }
+                if cfg!(feature = "eternal-fixtures")
                     && (crate::eternal_cards_v1::owned_draws_v1::draw_stage_matches(
                         state,
                         &continuation,
@@ -18332,6 +18412,7 @@ fn drive_resumable_in_departure_scope_v1(
             leaf => {
                 #[cfg(feature = "eternal-fixtures")]
                 if let Some((player, count)) = plain_draw_instruction(state, &leaf, &continuation.ctx)
+                    .map(|(player, count)| (continuation.ctx.resolve_player(player, state), count))
                     .filter(|&(player, count)| count > 0
                         && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player)
                         // A copied Paradoxical Outcome stages its own draws.

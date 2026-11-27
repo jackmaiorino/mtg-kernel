@@ -30,6 +30,7 @@ pub(crate) mod fixed;
 pub(crate) mod knowledge;
 pub(crate) mod portent;
 pub(crate) mod rooms;
+pub(crate) mod staged;
 pub(crate) mod standstill;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -97,6 +98,11 @@ enum InstructionV1 {
         begun_at: usize,
         drawer: PlayerId,
         count: u8,
+    },
+    StagedRootV1 {
+        player: PlayerRef,
+        drawer: PlayerId,
+        count: u32,
     },
 }
 
@@ -195,7 +201,9 @@ impl InstructionV1 {
                 super::e3::opponent_cast_blue_or_black_spell_this_turn(state, ctx.controller),
             ),
             Self::DragonEngine | Self::Standstill { .. } | Self::JewelCombat => 3,
-            Self::FixedRoot { count, .. } | Self::Outcome { count, .. } => count,
+            Self::FixedRoot { count, .. }
+            | Self::Outcome { count, .. }
+            | Self::StagedRootV1 { count, .. } => count,
             Self::Minsc { sacrifice } => minsc::count(state, ctx, sacrifice).unwrap_or(0),
             Self::Echo { .. } => 7,
             Self::Bonder { .. } | Self::Portent { .. } => 1,
@@ -218,7 +226,7 @@ impl InstructionV1 {
     fn draw_player(self, ctx: &ExecCtx) -> PlayerRef {
         match self {
             Self::FlameOfAnor { draw, .. } => PlayerRef::Target(draw),
-            Self::FixedRoot { player, .. } => player,
+            Self::FixedRoot { player, .. } | Self::StagedRootV1 { player, .. } => player,
             Self::JewelCombat => PlayerRef::Opponent,
             Self::Echo { drawer, .. }
             | Self::Bonder { drawer, .. }
@@ -239,6 +247,7 @@ impl InstructionV1 {
                 _ => None,
             },
             Self::FixedRoot { drawer, .. }
+            | Self::StagedRootV1 { drawer, .. }
             | Self::Echo { drawer, .. }
             | Self::Bonder { drawer, .. }
             | Self::Standstill { drawer, .. }
@@ -463,7 +472,10 @@ impl JournalV1 {
     fn start(self) -> Option<(StartedV1, u32)> {
         match self {
             Self::Started(started)
-                if matches!(started.instruction, InstructionV1::FixedRoot { .. }) =>
+                if matches!(
+                    started.instruction,
+                    InstructionV1::FixedRoot { .. } | InstructionV1::StagedRootV1 { .. }
+                ) =>
             {
                 None
             }
@@ -879,6 +891,7 @@ fn progress(
     let (started, attempts) = journal.start()?;
     let actual = match started.instruction {
         InstructionV1::FixedRoot { .. } => fixed::selected(state, pending),
+        InstructionV1::StagedRootV1 { .. } => staged::selected(state, pending),
         InstructionV1::Outcome { .. } => outcome::physical_spell_source(state, pending)
             .map(|source| (started.instruction, SourceV1::Spell(source))),
         InstructionV1::Denial { .. } => {
@@ -937,7 +950,7 @@ pub(crate) fn complete(
         progress(state, pending).ok_or("Eternal draw lost its native start")?;
     if ordinal != progress.completed
         || path != started.instruction.completion_path()
-        || !pending.frames.is_empty()
+        || !draw_tail_matches(state, pending, started.instruction, &pending.frames)
     {
         return Err("Eternal draw completed the wrong attempt".into());
     }
@@ -956,7 +969,9 @@ pub(crate) fn complete(
     let terminal = draw_won_game(state, drawer);
     if terminal || completed == attempts {
         state.eternal_owned_draw_progress_v1 = None;
-        if !terminal {
+        if terminal {
+            pending.frames.clear();
+        } else {
             match started.instruction {
                 InstructionV1::Knowledge {
                     paid_at,
@@ -1171,19 +1186,21 @@ fn validate_native_progress(
     if total != Some(started.total) {
         return Err("Eternal draw changed its original count".into());
     }
-    let vintage_instruction = match started.instruction {
-        InstructionV1::JewelCombat | InstructionV1::Outcome { .. } => true,
+    let reconstruct_starting_hand = match started.instruction {
+        InstructionV1::JewelCombat
+        | InstructionV1::Outcome { .. }
+        | InstructionV1::StagedRootV1 { .. } => true,
         InstructionV1::FixedRoot { player, count, .. } => {
             eternal_vintage_v1::is_coveted_jewel_entry_draw(ctx, player, count)
         }
         _ => false,
     };
-    if progress.completed == 0 || vintage_instruction {
+    if progress.completed == 0 || reconstruct_starting_hand {
         let drawer = started
             .instruction
             .drawer(ctx)
             .ok_or("Eternal draw lost its original drawer")?;
-        let hand_len = if vintage_instruction {
+        let hand_len = if reconstruct_starting_hand {
             initial_hand_len(state, drawer, tail)
                 .ok_or("Eternal draw lost its original hand size")?
         } else {
@@ -1228,6 +1245,20 @@ fn completed_attempts(events: &[CommittedEvent], start: usize) -> Option<u32> {
         })
 }
 
+fn draw_tail_matches(
+    state: &GameState,
+    pending: &EffectContinuation,
+    instruction: InstructionV1,
+    tail: &[EffectFrame],
+) -> bool {
+    if matches!(instruction, InstructionV1::StagedRootV1 { .. }) {
+        crate::effect::occult_draw_root(state, pending)
+            .is_some_and(|(_, _, expected)| tail == expected)
+    } else {
+        tail.is_empty()
+    }
+}
+
 pub(crate) fn draw_stage_matches(
     state: &GameState,
     pending: &EffectContinuation,
@@ -1238,7 +1269,10 @@ pub(crate) fn draw_stage_matches(
     progress(state, pending).is_some_and(|(progress, started, _)| {
         Some(drawer) == started.instruction.drawer(&pending.ctx)
             && path == started.instruction.draw_path()
-            && remaining == [completion(started.instruction, progress.completed)]
+            && remaining.split_last().is_some_and(|(last, tail)| {
+                *last == completion(started.instruction, progress.completed)
+                    && draw_tail_matches(state, pending, started.instruction, tail)
+            })
     })
 }
 
@@ -1306,6 +1340,9 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
     portent::validate_parent(state, pending)?;
     if state.eternal_owned_draw_progress_v1.is_none() {
+        if staged::validate_idle(state, pending)? {
+            return Ok(());
+        }
         if denial::validate_idle(state, pending)? {
             return Ok(());
         }
@@ -1343,6 +1380,7 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         }
     } else if selected(state, pending).is_none()
         && fixed::selected(state, pending).is_none()
+        && staged::selected(state, pending).is_none()
         && echo::selected(state, pending).is_none()
         && bonder::selected(state, pending).is_none()
         && outcome::physical_spell_source(state, pending).is_none()

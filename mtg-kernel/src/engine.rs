@@ -7953,13 +7953,10 @@ fn activation_total_mana_cost_with_x(
     );
     #[cfg(not(feature = "eternal-fixtures"))]
     let tax = 0_u8;
-    // Invasion Submersible's four waterbend payments (wave S1q), Aang, Swift
-    // Savior's nine (wave C9a) and Aang's Iceberg's four (wave C5c) all start
-    // from their printed waterbend cost.
+    // Waterbend payments (Aang's Iceberg, Invasion Submersible, Aang, Swift
+    // Savior) all start from their printed waterbend generic cost.
     #[cfg(feature = "eternal-fixtures")]
-    let waterbend = crate::eternal_sideboard_s1q_v1::waterbend_printed(state, source, components)
-        .or_else(|| crate::eternal_cube_c9a_v1::waterbend_printed(state, source, components))
-        .or_else(|| crate::eternal_cube_c5c_v1::waterbend_printed(state, source, components));
+    let waterbend = crate::waterbend_v1::printed_cost(state, source, components);
     #[cfg(feature = "eternal-fixtures")]
     let printed = waterbend.as_ref().or(printed);
     let mut total = match printed {
@@ -7980,15 +7977,9 @@ fn activation_total_mana_cost_with_x(
     );
     #[cfg(not(feature = "eternal-fixtures"))]
     let _ = x_value;
-    // Invasion Submersible's (wave S1q) and Aang, Swift Savior's (wave C9a)
-    // waterbend taps pay part of that total; the rest is this ability's mana.
+    // Waterbend taps pay part of that total; the rest is this ability's mana.
     #[cfg(feature = "eternal-fixtures")]
-    let total =
-        crate::eternal_sideboard_s1q_v1::waterbend_taps_paid(state, source, components, total);
-    #[cfg(feature = "eternal-fixtures")]
-    let total = crate::eternal_cube_c9a_v1::waterbend_taps_paid(state, source, components, total);
-    #[cfg(feature = "eternal-fixtures")]
-    let total = crate::eternal_cube_c5c_v1::waterbend_taps_paid(state, source, components, total);
+    let total = crate::waterbend_v1::taps_paid(state, source, components, total);
     Some(crate::standard_cards_v1::spend_as_any_color(
         state, player, source, total,
     ))
@@ -10579,28 +10570,11 @@ fn activation_controlled_cost_candidates(
             }
         })
         .collect::<Vec<_>>();
-    // Invasion Submersible's (wave S1q), Aang, Swift Savior's (wave C9a) and
-    // Aang's Iceberg's (wave C5c) waterbend taps leave their mana part payable.
+    // Waterbend taps (Aang's Iceberg, Invasion Submersible, Aang, Swift
+    // Savior) must leave their remaining mana part payable.
     #[cfg(feature = "eternal-fixtures")]
     if tap {
-        crate::eternal_sideboard_s1q_v1::retain_payable_waterbend_taps(
-            state,
-            source,
-            already_chosen,
-            &mut candidates,
-        );
-        crate::eternal_cube_c9a_v1::retain_payable_waterbend_taps(
-            state,
-            source,
-            already_chosen,
-            &mut candidates,
-        );
-        crate::eternal_cube_c5c_v1::retain_payable_waterbend_taps(
-            state,
-            source,
-            already_chosen,
-            &mut candidates,
-        );
+        crate::waterbend_v1::retain_payable_taps(state, source, already_chosen, &mut candidates);
     }
     candidates
 }
@@ -21452,9 +21426,9 @@ pub(crate) fn validate_pending_activation(
     {
         return Err("activation condition is not met".to_string());
     }
-    // Aang's Iceberg (wave C5c): the menu's waterbend tap cap binds a pending
-    // payment of its printed abilities too, before taps are offered or paid.
-    if !crate::eternal_cube_c5c_v1::waterbend_taps_within_cap(state, pending.source, ability.cost) {
+    // Waterbend: the menu's waterbend tap cap binds every pending waterbend
+    // payment too, before taps are offered or paid.
+    if !crate::waterbend_v1::taps_within_cap(state, pending.source, ability.cost) {
         return Err("pending waterbend payment taps more than its cap".to_string());
     }
     if ability.target_spec != pending.target_spec {
@@ -45724,34 +45698,252 @@ mod tests {
         assert!(!state.objects.get(zirda).tapped && !state.objects.get(pup).tapped);
     }
 
-    /// Review round 2, finding 3: the Iceberg's waterbend pricing applies
-    /// to its own printed waterbend abilities only, not to any cost an
-    /// Iceberg source pays (a granted ability, or a copy of a printed cost).
     #[cfg(feature = "eternal-fixtures")]
     #[test]
-    fn iceberg_waterbend_pricing_is_keyed_on_its_printed_abilities() {
+    fn iceberg_restored_one_tap_activation_under_zirda_completes_cleanly() {
         let mut state = ready_game_in_main1(0);
-        let iceberg = put_on_battlefield(&mut state, PlayerId::P0, "Aang's Iceberg");
-        let def = &card_def::CARD_DEFS[usize::from(state.objects.get(iceberg).card_def)];
-        for ability in def.activated_abilities {
-            assert!(
-                crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, ability.cost)
-                    .is_some()
-            );
+        let p = PlayerId::P0;
+        let iceberg = put_on_battlefield(&mut state, p, "Aang's Iceberg");
+        let zirda = put_on_battlefield(&mut state, p, "Zirda, the Dawnwaker");
+        let pup = put_on_battlefield(&mut state, p, "Jackal Pup");
+        begin_activation(&mut state, p, iceberg, 1);
+        assert!(validate_pending_activation(
+            &state,
+            state.engine.pending_activation.as_ref().unwrap()
+        )
+        .is_ok());
+        assert!(matches!(
+            drain_pending_activation_or_decide(&mut state),
+            Some(Decision::ChooseCostTargets { .. })
+        ));
+        apply_choose_cost_target(&mut state, pup).unwrap();
+        assert!(drain_pending_activation_or_decide(&mut state).is_none());
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.stack.len(), 1);
+        assert!(state.objects.get(pup).tapped);
+        assert!(!state.objects.get(zirda).tapped);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn submersible_restored_two_tap_activation_under_zirda_rejects_choices_and_payment() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        let submersible = put_on_battlefield(&mut state, p, "Invasion Submersible");
+        let zirda = put_on_battlefield(&mut state, p, "Zirda, the Dawnwaker");
+        let pup = put_on_battlefield(&mut state, p, "Jackal Pup");
+        let menu = available_activatable_abilities(p, &state);
+        assert!(menu.contains(&(submersible, 1)));
+        assert!(!menu.contains(&(submersible, 2)));
+        begin_activation(&mut state, p, submersible, 1);
+        assert!(validate_pending_activation(
+            &state,
+            state.engine.pending_activation.as_ref().unwrap()
+        )
+        .is_ok());
+        state
+            .engine
+            .pending_activation
+            .as_mut()
+            .unwrap()
+            .ability_index = 2;
+        let mut picker = state.clone();
+        assert!(matches!(
+            drain_pending_activation_or_decide(&mut picker),
+            Some(Decision::Halted { .. })
+        ));
+        assert!(apply_choose_cost_target(&mut state, pup).is_err());
+
+        let bindings = [zirda, pup]
+            .into_iter()
+            .map(|object| EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(object).zone_change_count,
+            })
+            .collect();
+        state
+            .engine
+            .pending_activation
+            .as_mut()
+            .unwrap()
+            .object_cost_chosen = bindings;
+        assert_eq!(state.players[p.index()].mana_pool, [0; 6]);
+        finalize_activation(&mut state);
+        assert!(
+            matches!(state.engine.halted, Some((UnsupportedMechanic::InvalidEffectContinuation, source)) if source == submersible)
+        );
+        assert!(state.stack.is_empty());
+        assert!(!state.objects.get(zirda).tapped && !state.objects.get(pup).tapped);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn submersible_restored_one_tap_activation_under_zirda_completes_cleanly() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        let submersible = put_on_battlefield(&mut state, p, "Invasion Submersible");
+        let zirda = put_on_battlefield(&mut state, p, "Zirda, the Dawnwaker");
+        let pup = put_on_battlefield(&mut state, p, "Jackal Pup");
+        begin_activation(&mut state, p, submersible, 1);
+        assert!(validate_pending_activation(
+            &state,
+            state.engine.pending_activation.as_ref().unwrap()
+        )
+        .is_ok());
+        assert!(matches!(
+            drain_pending_activation_or_decide(&mut state),
+            Some(Decision::ChooseCostTargets { .. })
+        ));
+        apply_choose_cost_target(&mut state, pup).unwrap();
+        assert!(drain_pending_activation_or_decide(&mut state).is_none());
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.stack.len(), 1);
+        assert!(state.objects.get(pup).tapped);
+        assert!(!state.objects.get(zirda).tapped);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn aang_swift_savior_restored_seven_tap_activation_under_zirda_rejects_choices_and_payment() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        let aang = put_on_battlefield(&mut state, p, "Aang, Swift Savior");
+        let zirda = put_on_battlefield(&mut state, p, "Zirda, the Dawnwaker");
+        let pups: Vec<ObjectId> = (0..5)
+            .map(|_| put_on_battlefield(&mut state, p, "Jackal Pup"))
+            .collect();
+        let all_tappable: Vec<ObjectId> = std::iter::once(aang)
+            .chain(std::iter::once(zirda))
+            .chain(pups.iter().copied())
+            .collect();
+        let menu = available_activatable_abilities(p, &state);
+        assert!(menu.contains(&(aang, 6)));
+        assert!(!menu.contains(&(aang, 7)));
+        assert!(!menu.contains(&(aang, 8)));
+        begin_activation(&mut state, p, aang, 6);
+        assert!(validate_pending_activation(
+            &state,
+            state.engine.pending_activation.as_ref().unwrap()
+        )
+        .is_ok());
+        state
+            .engine
+            .pending_activation
+            .as_mut()
+            .unwrap()
+            .ability_index = 7;
+        let mut picker = state.clone();
+        assert!(matches!(
+            drain_pending_activation_or_decide(&mut picker),
+            Some(Decision::Halted { .. })
+        ));
+        assert!(apply_choose_cost_target(&mut state, pups[0]).is_err());
+
+        let bindings = all_tappable
+            .iter()
+            .copied()
+            .map(|object| EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(object).zone_change_count,
+            })
+            .collect();
+        state
+            .engine
+            .pending_activation
+            .as_mut()
+            .unwrap()
+            .object_cost_chosen = bindings;
+        assert_eq!(state.players[p.index()].mana_pool, [0; 6]);
+        finalize_activation(&mut state);
+        assert!(
+            matches!(state.engine.halted, Some((UnsupportedMechanic::InvalidEffectContinuation, source)) if source == aang)
+        );
+        assert!(state.stack.is_empty());
+        assert!(all_tappable.iter().all(|&id| !state.objects.get(id).tapped));
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn aang_swift_savior_restored_six_tap_activation_under_zirda_completes_cleanly() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        let aang = put_on_battlefield(&mut state, p, "Aang, Swift Savior");
+        let zirda = put_on_battlefield(&mut state, p, "Zirda, the Dawnwaker");
+        let pups: Vec<ObjectId> = (0..5)
+            .map(|_| put_on_battlefield(&mut state, p, "Jackal Pup"))
+            .collect();
+        begin_activation(&mut state, p, aang, 6);
+        assert!(validate_pending_activation(
+            &state,
+            state.engine.pending_activation.as_ref().unwrap()
+        )
+        .is_ok());
+        let to_tap: Vec<ObjectId> = std::iter::once(zirda).chain(pups.iter().copied()).collect();
+        for &target in &to_tap {
+            assert!(matches!(
+                drain_pending_activation_or_decide(&mut state),
+                Some(Decision::ChooseCostTargets { .. })
+            ));
+            apply_choose_cost_target(&mut state, target).unwrap();
         }
+        assert!(drain_pending_activation_or_decide(&mut state).is_none());
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.stack.len(), 1);
+        assert!(to_tap.iter().all(|&id| state.objects.get(id).tapped));
+        assert!(!state.objects.get(aang).tapped);
+    }
+
+    /// Review round 2, finding 3 and issue #974: waterbend pricing applies to
+    /// each waterbend card's own printed waterbend abilities only, not to any
+    /// granted ability or copied cost slice.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn waterbend_pricing_is_keyed_on_printed_abilities_for_all_waterbend_cards() {
         const GRANTED_FOUR: &[CostComponent] = &[CostComponent::Mana(Cost {
             pips: &[],
             generic: 4,
             x_count: 0,
         })];
-        assert!(
-            crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, GRANTED_FOUR).is_none()
-        );
-        let copied: Vec<CostComponent> = def.activated_abilities[1].cost.to_vec();
-        assert!(
-            crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, &copied).is_none(),
-            "a cost equal to a printed one but not that ability"
-        );
+        for (card_name, expected_generic) in [
+            ("Aang's Iceberg", 3_u8),
+            ("Invasion Submersible", 3_u8),
+            ("Aang, Swift Savior", 8_u8),
+        ] {
+            let mut state = ready_game_in_main1(0);
+            let source = put_on_battlefield(&mut state, PlayerId::P0, card_name);
+            let def = &card_def::CARD_DEFS[usize::from(state.objects.get(source).card_def)];
+            for ability in def.activated_abilities {
+                assert_eq!(
+                    crate::waterbend_v1::printed_cost(&state, source, ability.cost)
+                        .map(|c| c.generic),
+                    Some(expected_generic),
+                    "{card_name} printed waterbend ability"
+                );
+            }
+            assert!(
+                crate::waterbend_v1::printed_cost(&state, source, GRANTED_FOUR).is_none(),
+                "{card_name} granted ability must not be repriced as waterbend"
+            );
+            let copied: Vec<CostComponent> = def.activated_abilities[1].cost.to_vec();
+            assert!(
+                crate::waterbend_v1::printed_cost(&state, source, &copied).is_none(),
+                "{card_name} copied cost slice must not be repriced as waterbend"
+            );
+            if card_name == "Aang, Swift Savior" {
+                state.objects.get_mut(source).v4.face_index = 1;
+                assert!(
+                    crate::waterbend_v1::printed_cost(
+                        &state,
+                        source,
+                        def.activated_abilities[0].cost
+                    )
+                    .is_none(),
+                    "transformed Aang back face has no waterbend ability"
+                );
+            }
+        }
     }
 
     /// A hand-cast Chain Lightning has no object payments: a payment record
