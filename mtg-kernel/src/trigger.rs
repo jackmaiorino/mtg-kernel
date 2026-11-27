@@ -6513,7 +6513,8 @@ fn triggers_from_events(
                                 ..
                             } if *object == id
                                 && uses_leave_lki
-                                && def.condition != TriggerCondition::DiesIfWasCreature
+                                && (def.condition != TriggerCondition::DiesIfWasCreature
+                                    || copied_departure.is_some())
                                 && !(*to == obj.zone
                                     && crate::eternal_cards_v1::arrival_condition(
                                         def.condition,

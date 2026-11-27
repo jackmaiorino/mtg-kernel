@@ -2874,3 +2874,175 @@ fn zirda_monolith_untap_activations_do_not_halt_without_a_session_stack_cap() {
         Decision::CastSpellOrPass { .. }
     ));
 }
+
+fn absorbing_man_copying_enduring_innocence() -> (GameState, ObjectId, ObjectId) {
+    let mut state = plains();
+    let ab_man = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+    let innocence = put(&mut state, P0, "Enduring Innocence", Zone::Battlefield);
+    let turn_start = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > turn_start
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { .. } => Some(Action::ChooseTarget(Target::Object(innocence))),
+            _ => None,
+        },
+    );
+    assert_eq!(state.objects.get(ab_man).card_def, id("Enduring Innocence"));
+    assert!(engine::object_has_type(&state, ab_man, CardType::Creature));
+    (state, ab_man, innocence)
+}
+
+#[test]
+fn absorbing_man_copying_enduring_innocence_dies_returns_as_enchantment_and_restores_cleanly() {
+    let (mut state, ab_man, _innocence) = absorbing_man_copying_enduring_innocence();
+    let battlefield_generation = state.objects.get(ab_man).zone_change_count;
+
+    // Kill Absorbing Man while it is a creature copy of Enduring Innocence.
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(ab_man, Zone::Graveyard),
+    );
+    let decision = engine::advance_until_decision(&mut state);
+    assert!(
+        matches!(decision, Decision::CastSpellOrPass { .. }),
+        "expected CastSpellOrPass with Enduring return trigger on stack, got {decision:?}"
+    );
+    assert_eq!(state.engine.halted, None);
+    let trigger = state
+        .stack
+        .iter()
+        .find(|item| {
+            item.source == ab_man && item.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
+        })
+        .expect("Absorbing Man's copied Enduring return trigger is on the stack");
+    let contract = trigger
+        .v4
+        .ability_source_contract
+        .expect("copied departure contract");
+    assert_eq!(contract.card_def, id("Enduring Innocence"));
+    assert_eq!(contract.zone, Zone::Battlefield);
+    assert_eq!(contract.zone_change_count, battlefield_generation);
+
+    // Snapshot and restore with the trigger on the stack; both live and restored
+    // states must validate and resolve identically.
+    let encoded = serde_json::to_string(&state).unwrap();
+    let mut restored: GameState = serde_json::from_str(&encoded).unwrap();
+    for branch in [&mut state, &mut restored] {
+        settled(branch);
+        assert_eq!(branch.engine.halted, None);
+        let returned = branch.objects.get(ab_man);
+        assert_eq!(returned.zone, Zone::Battlefield);
+        assert_eq!(returned.owner, P0);
+        assert_eq!(returned.controller, P0);
+        assert_eq!(returned.card_def, id("Absorbing Man"));
+        assert!(returned.v4.enduring_enchantment_v1);
+        assert!(engine::object_has_type(
+            branch,
+            ab_man,
+            CardType::Enchantment
+        ));
+        assert!(!engine::object_has_type(branch, ab_man, CardType::Creature));
+    }
+    assert_eq!(
+        serde_json::to_vec(&state).unwrap(),
+        serde_json::to_vec(&restored).unwrap()
+    );
+
+    // Exiling Absorbing Man from the graveyard before the trigger resolves
+    // prevents the return (CR 400.7).
+    let (mut exiled_state, exiled_ab, _) = absorbing_man_copying_enduring_innocence();
+    event::propose_and_commit(
+        &mut exiled_state,
+        ProposedEvent::zone_change(exiled_ab, Zone::Graveyard),
+    );
+    assert!(matches!(
+        engine::advance_until_decision(&mut exiled_state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    event::propose_and_commit(
+        &mut exiled_state,
+        ProposedEvent::zone_change(exiled_ab, Zone::Exile),
+    );
+    settled(&mut exiled_state);
+    assert_eq!(exiled_state.engine.halted, None);
+    assert_eq!(exiled_state.objects.get(exiled_ab).zone, Zone::Exile);
+}
+
+#[test]
+fn absorbing_man_copying_enduring_innocence_in_two_trigger_order_batch_resolves_cleanly() {
+    for perm in [vec![0, 1], vec![1, 0]] {
+        let (mut state, ab_man, innocence) = absorbing_man_copying_enduring_innocence();
+
+        // Both Absorbing Man (copying Enduring Innocence) and genuine Enduring
+        // Innocence die simultaneously, creating a 2-trigger OrderTriggers batch.
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(ab_man, Zone::Graveyard),
+                ProposedEvent::zone_change(innocence, Zone::Graveyard),
+            ],
+        );
+
+        let decision = engine::advance_until_decision(&mut state);
+        match &decision {
+            Decision::OrderTriggers { player, pending } => {
+                assert_eq!(*player, P0);
+                assert_eq!(pending.len(), 2);
+            }
+            other => panic!("expected 2-trigger OrderTriggers, got {other:?}"),
+        }
+
+        // Snapshot and restore while paused at OrderTriggers.
+        let encoded = serde_json::to_string(&state).unwrap();
+        let mut restored: GameState = serde_json::from_str(&encoded).unwrap();
+        for branch in [&mut state, &mut restored] {
+            engine::step(branch, Action::OrderTriggers(perm.clone()))
+                .expect("valid OrderTriggers must not fail placement validation");
+            assert_eq!(branch.engine.halted, None);
+            assert_eq!(branch.stack.len(), 2);
+
+            settled(branch);
+            assert_eq!(branch.engine.halted, None);
+            for returned_id in [ab_man, innocence] {
+                let returned = branch.objects.get(returned_id);
+                assert_eq!(returned.zone, Zone::Battlefield);
+                assert!(returned.v4.enduring_enchantment_v1);
+                assert!(engine::object_has_type(
+                    branch,
+                    returned_id,
+                    CardType::Enchantment
+                ));
+                assert!(!engine::object_has_type(
+                    branch,
+                    returned_id,
+                    CardType::Creature
+                ));
+            }
+            assert_eq!(branch.objects.get(ab_man).card_def, id("Absorbing Man"));
+            assert_eq!(
+                branch.objects.get(innocence).card_def,
+                id("Enduring Innocence")
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+
+        // Once returned as a noncreature enchantment, genuine Enduring Innocence
+        // dying again does not re-trigger its DiesIfWasCreature return.
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(innocence, Zone::Graveyard),
+        );
+        settled(&mut state);
+        assert_eq!(state.objects.get(innocence).zone, Zone::Graveyard);
+    }
+}
