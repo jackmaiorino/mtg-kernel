@@ -20,9 +20,10 @@ use crate::cube_learned_seat_v1::{
     LearnedSeatBuilder, LearnedSeatPicker, ModelSeatForward, SeatForward,
 };
 use crate::cube_pod_runner_v1::{
-    is_watchdog_end, pod_league_seed, training_roles_with_older, PilotInfo, PilotKind, PodPins,
-    PodRecord, PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef, StopAttemptReport,
-    TrainingChair, TrainingPodConfig, CLIENT_NAMESPACE,
+    is_watchdog_end, pod_league_seed, run_training_pod_with_slots, training_roles_with_older,
+    PilotInfo, PilotKind, PodPins, PodRecord, PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef,
+    StopAttemptReport, TrainingChair, TrainingPairSlots, TrainingPodConfig, TrainingPodSlot,
+    CLIENT_NAMESPACE,
 };
 use crate::cube_read_plan_v1::sha256_hex;
 use crate::cube_seat_v1::{
@@ -377,6 +378,9 @@ pub struct RunConfig {
     pub metadata: CheckpointMetadata,
     pub caps: crate::cube_pod_runner_v1::PodCaps,
     pub workers: usize,
+    /// Runtime-only scheduling preference for the uniform pilot's games.
+    #[serde(skip)]
+    pub fill_pod_tails: bool,
     pub liveness: String,
     pub marks: CheckpointMarks,
     pub boundary: Option<PickBoundary>,
@@ -455,6 +459,7 @@ impl RunConfig {
             metadata: CheckpointMetadata::default(),
             caps: crate::cube_pod_runner_v1::PodCaps::training_a2(),
             workers: 1,
+            fill_pod_tails: false,
             liveness: LIVENESS.to_owned(),
             // A6.17's four b1 dose marks and D0.21's six owner views.
             marks: match segment {
@@ -1610,6 +1615,20 @@ enum CollectFailure {
     Error(TrainingDriverError),
 }
 
+fn pod_thread_spawn_error(error: std::io::Error) -> CollectFailure {
+    CollectFailure::Error(PodRunnerError::Thread(error.to_string()).into())
+}
+
+fn join_collected_pod(
+    handle: std::thread::ScopedJoinHandle<'_, Result<PodRecord, PodRunnerError>>,
+) -> Result<PodRecord, PodRunnerError> {
+    handle.join().unwrap_or_else(|_| {
+        Err(PodRunnerError::Thread(
+            "training pod thread panicked".to_owned(),
+        ))
+    })
+}
+
 fn stop_from_failure(run: &str, update: u64, failure: BatchFailure) -> StopRecord {
     let pod = *failure.pod;
     let stop = pod.stop.clone();
@@ -2444,94 +2463,164 @@ impl TrainingDriver {
         pilot: &(dyn GamePilot + Sync),
         snapshots: &BTreeMap<String, Snapshot>,
     ) -> Result<Vec<PodRecord>, CollectFailure> {
-        let current: Arc<dyn SeatForward> = self.model.seat.clone();
         let mut completed = Vec::new();
-        for offset in 0..PODS_PER_UPDATE {
-            let pod_index = update * PODS_PER_UPDATE + offset;
-            let league_seed = pod_league_seed(&self.config.namespace, &self.config.run, pod_index)
-                .map_err(TrainingDriverError::from)
-                .map_err(CollectFailure::Error)?;
-            let mut stream = SplitMix64::seed(league_seed);
-            let first = uniform_index(&mut stream, SEATS);
-            let draw = uniform_index(&mut stream, SEATS - 1);
-            let second = if draw < first { draw } else { draw + 1 };
-            let older = [first.min(second), first.max(second)];
-            let roles = training_roles_with_older(older)
-                .map_err(TrainingDriverError::from)
-                .map_err(CollectFailure::Error)?;
-            let mut assignments = BTreeMap::new();
-            for chair in older {
-                let index = uniform_index(&mut stream, self.league.len());
-                assignments.insert(chair, self.league[index].pin.clone());
-            }
-            let pilot_info = match selection {
-                PilotSelection::Uniform => PilotInfo::uniform(),
-                PilotSelection::Checkpoint { pin } => PilotInfo {
-                    kind: PilotKind::Checkpoint,
-                    pin: Some(pin.checkpoint_sha256.clone()),
-                    decoding: pin.decoding.clone(),
-                },
-            };
-            let config = self.pod_config(pod_index, pilot_info);
-            let mut chairs: [TrainingChair; SEATS] = std::array::from_fn(|chair| {
-                let older_pin = assignments.get(&chair);
-                let forward = older_pin.map_or_else(
-                    || current.clone(),
-                    |pin| snapshots[pin].seat.clone() as Arc<dyn SeatForward>,
-                );
-                let picker: Box<dyn crate::cube_seat_v1::SeatPicker> =
-                    if self.config.segment == Segment::BuilderOnly {
-                        Box::new(UniformSeatPicker)
-                    } else {
-                        Box::new(LearnedSeatPicker::new(forward.clone()))
-                    };
-                let picker_ref = if self.config.segment == Segment::BuilderOnly {
-                    SeatRef::uniform()
-                } else {
-                    SeatRef {
-                        kind: SeatKind::Learned,
-                        pin: Some(older_pin.unwrap_or(&self.current_pin).clone()),
-                    }
+        let first_index = update * PODS_PER_UPDATE;
+        let indices = first_index..first_index + PODS_PER_UPDATE;
+        if self.config.fill_pod_tails
+            && self.config.workers > 1
+            && matches!(selection, PilotSelection::Uniform)
+        {
+            let mut indices = indices;
+            while let Some(first_index) = indices.next() {
+                let Some(second_index) = indices.next() else {
+                    let result =
+                        self.collect_pod(pool, first_index, selection, pilot, snapshots, None);
+                    self.persist_pod(update, result, &mut completed)?;
+                    break;
                 };
-                TrainingChair {
-                    role: roles[chair],
-                    picker_ref,
-                    picker,
-                    builder_ref: SeatRef {
-                        kind: SeatKind::Learned,
-                        pin: Some(older_pin.unwrap_or(&self.current_pin).clone()),
-                    },
-                    builder: Box::new(LearnedSeatBuilder::new(forward)),
-                }
-            });
-            match crate::cube_pod_runner_v1::run_training_pod(pool, &config, &mut chairs, pilot) {
-                Ok(record) => {
-                    let pending = self
-                        .config
-                        .root
-                        .join("pending")
-                        .join(update_name(update))
-                        .join("partial");
-                    fs::create_dir_all(&pending)
-                        .map_err(TrainingDriverError::from)
-                        .map_err(CollectFailure::Error)?;
-                    let bytes = json_bytes(&record).map_err(CollectFailure::Error)?;
-                    write_synced(&pending.join(format!("pod-{pod_index:06}.json")), &bytes)
-                        .map_err(CollectFailure::Error)?;
-                    completed.push(record);
-                }
-                Err(PodRunnerError::Stopped(record)) => {
-                    return Err(CollectFailure::Stop(BatchFailure {
-                        pod: record,
-                        completed,
-                    }));
-                }
-                Err(error) => {
-                    return Err(CollectFailure::Error(TrainingDriverError::from(error)));
-                }
+                let slots = TrainingPairSlots::new(self.config.workers);
+                std::thread::scope(|scope| {
+                    let first = std::thread::Builder::new()
+                        .spawn_scoped(scope, || {
+                            self.collect_pod(
+                                pool,
+                                first_index,
+                                selection,
+                                pilot,
+                                snapshots,
+                                Some((&slots, TrainingPodSlot::First)),
+                            )
+                        })
+                        .map_err(pod_thread_spawn_error)?;
+                    let second = std::thread::Builder::new()
+                        .spawn_scoped(scope, || {
+                            self.collect_pod(
+                                pool,
+                                second_index,
+                                selection,
+                                pilot,
+                                snapshots,
+                                Some((&slots, TrainingPodSlot::Second)),
+                            )
+                        })
+                        .map_err(pod_thread_spawn_error)?;
+                    // Durable partial records must keep the same prefix even
+                    // if a later pod finishes or sees a stop first.
+                    let first = self.persist_pod(update, join_collected_pod(first), &mut completed);
+                    if first.is_err() {
+                        slots.cancel_second();
+                    }
+                    let second = join_collected_pod(second);
+                    first?;
+                    self.persist_pod(update, second, &mut completed)
+                })?;
+            }
+        } else {
+            for pod_index in indices {
+                let result = self.collect_pod(pool, pod_index, selection, pilot, snapshots, None);
+                self.persist_pod(update, result, &mut completed)?;
             }
         }
         Ok(completed)
+    }
+
+    fn collect_pod(
+        &self,
+        pool: &CubePool,
+        pod_index: u64,
+        selection: &PilotSelection,
+        pilot: &(dyn GamePilot + Sync),
+        snapshots: &BTreeMap<String, Snapshot>,
+        pair: Option<(&TrainingPairSlots, TrainingPodSlot)>,
+    ) -> Result<PodRecord, PodRunnerError> {
+        let current: Arc<dyn SeatForward> = self.model.seat.clone();
+        let league_seed = pod_league_seed(&self.config.namespace, &self.config.run, pod_index)?;
+        let mut stream = SplitMix64::seed(league_seed);
+        let first = uniform_index(&mut stream, SEATS);
+        let draw = uniform_index(&mut stream, SEATS - 1);
+        let second = if draw < first { draw } else { draw + 1 };
+        let older = [first.min(second), first.max(second)];
+        let roles = training_roles_with_older(older)?;
+        let mut assignments = BTreeMap::new();
+        for chair in older {
+            let index = uniform_index(&mut stream, self.league.len());
+            assignments.insert(chair, self.league[index].pin.clone());
+        }
+        let pilot_info = match selection {
+            PilotSelection::Uniform => PilotInfo::uniform(),
+            PilotSelection::Checkpoint { pin } => PilotInfo {
+                kind: PilotKind::Checkpoint,
+                pin: Some(pin.checkpoint_sha256.clone()),
+                decoding: pin.decoding.clone(),
+            },
+        };
+        let config = self.pod_config(pod_index, pilot_info);
+        let mut chairs: [TrainingChair; SEATS] = std::array::from_fn(|chair| {
+            let older_pin = assignments.get(&chair);
+            let forward = older_pin.map_or_else(
+                || current.clone(),
+                |pin| snapshots[pin].seat.clone() as Arc<dyn SeatForward>,
+            );
+            let picker: Box<dyn crate::cube_seat_v1::SeatPicker> =
+                if self.config.segment == Segment::BuilderOnly {
+                    Box::new(UniformSeatPicker)
+                } else {
+                    Box::new(LearnedSeatPicker::new(forward.clone()))
+                };
+            let picker_ref = if self.config.segment == Segment::BuilderOnly {
+                SeatRef::uniform()
+            } else {
+                SeatRef {
+                    kind: SeatKind::Learned,
+                    pin: Some(older_pin.unwrap_or(&self.current_pin).clone()),
+                }
+            };
+            TrainingChair {
+                role: roles[chair],
+                picker_ref,
+                picker,
+                builder_ref: SeatRef {
+                    kind: SeatKind::Learned,
+                    pin: Some(older_pin.unwrap_or(&self.current_pin).clone()),
+                },
+                builder: Box::new(LearnedSeatBuilder::new(forward)),
+            }
+        });
+        run_training_pod_with_slots(pool, &config, &mut chairs, pilot, pair)
+    }
+
+    fn persist_pod(
+        &self,
+        update: u64,
+        result: Result<PodRecord, PodRunnerError>,
+        completed: &mut Vec<PodRecord>,
+    ) -> Result<(), CollectFailure> {
+        match result {
+            Ok(record) => {
+                let pending = self
+                    .config
+                    .root
+                    .join("pending")
+                    .join(update_name(update))
+                    .join("partial");
+                fs::create_dir_all(&pending)
+                    .map_err(TrainingDriverError::from)
+                    .map_err(CollectFailure::Error)?;
+                let bytes = json_bytes(&record).map_err(CollectFailure::Error)?;
+                write_synced(
+                    &pending.join(format!("pod-{:06}.json", record.pod_index)),
+                    &bytes,
+                )
+                .map_err(CollectFailure::Error)?;
+                completed.push(record);
+                Ok(())
+            }
+            Err(PodRunnerError::Stopped(pod)) => Err(CollectFailure::Stop(BatchFailure {
+                pod,
+                completed: std::mem::take(completed),
+            })),
+            Err(error) => Err(CollectFailure::Error(TrainingDriverError::from(error))),
+        }
     }
 
     fn abandon_error(

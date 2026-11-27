@@ -10,6 +10,7 @@
 //! and summary, manifest and authorization paths for full mode.
 //! Preparing k1 can also supply builder_baseline for b1's earlier full-mode evidence.
 //! Append `--typed-uniform-pilot` to `run` to use the prototype in-process game transport.
+//! Append `--fill-pod-tails` to let uniform games from a second pod use vacant game-worker slots.
 //!
 //! Prepare pins the manifest up to the new training_run heading. Use its exit
 //! receipt to append that entry with run_id, tripwire (the run.json object)
@@ -252,6 +253,7 @@ impl Inputs {
             parse_training_run(&args.run).ok_or("invalid stage, segment or thread count")?;
         let mut cfg = RunConfig::shakedown(args.root.join(&args.run), &args.run, segment);
         cfg.workers = args.threads;
+        cfg.fill_pod_tails = args.fill_pod_tails;
         if self.host.trim().is_empty() || self.build_profile.trim().is_empty() {
             return Err("host and build_profile must be supplied".into());
         }
@@ -332,11 +334,12 @@ struct Args {
     threads: usize,
     resume: Option<(u64, PathBuf)>,
     typed_uniform_pilot: bool,
+    fill_pod_tails: bool,
 }
 impl Args {
     fn parse(args: &[String]) -> ResultBox<Self> {
         let [stage, root, run, inputs, threads_flag, threads, rest @ ..] = args else {
-            return Err("usage: prepare|run ROOT b<n>|k<n> INPUTS.json --threads N [--resume-entry SEQ --records-repository PATH] [--typed-uniform-pilot]".into());
+            return Err("usage: prepare|run ROOT b<n>|k<n> INPUTS.json --threads N [--resume-entry SEQ --records-repository PATH] [--typed-uniform-pilot] [--fill-pod-tails]".into());
         };
         let threads = threads.parse()?;
         if !matches!(stage.as_str(), "prepare" | "run")
@@ -346,12 +349,19 @@ impl Args {
         {
             return Err("invalid stage, segment or thread count".into());
         }
-        let (rest, typed_uniform_pilot) = match rest {
-            [options @ .., flag] if stage == "run" && flag == "--typed-uniform-pilot" => {
-                (options, true)
+        let mut rest = rest;
+        let mut typed_uniform_pilot = false;
+        let mut fill_pod_tails = false;
+        if stage == "run" {
+            while let [options @ .., flag] = rest {
+                match flag.as_str() {
+                    "--typed-uniform-pilot" if !typed_uniform_pilot => typed_uniform_pilot = true,
+                    "--fill-pod-tails" if !fill_pod_tails => fill_pod_tails = true,
+                    _ => break,
+                }
+                rest = options;
             }
-            _ => (rest, false),
-        };
+        }
         let resume = match rest {
             [] => None,
             [flag, seq, repo, path]
@@ -369,6 +379,7 @@ impl Args {
             threads,
             resume,
             typed_uniform_pilot,
+            fill_pod_tails,
         })
     }
 }
