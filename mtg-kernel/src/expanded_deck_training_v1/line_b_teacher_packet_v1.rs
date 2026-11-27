@@ -11,7 +11,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::line_b_root_selection_v1::select_line_b_root_v1;
+use super::line_b_root_selection_v1::{
+    select_line_b_root_v1, select_line_b_root_v2, LineBRootSelectorV1,
+};
 use super::line_b_teacher_operator_v1::{
     line_b_root_status_v1, line_b_teacher_rollouts_v1, LineBRolloutOutcomeV1,
     LineBRolloutPoliciesV1, LineBRolloutRecordV1, LineBRootStatusV1, LineBTeacherRootInputV1,
@@ -62,6 +64,12 @@ pub struct LineBTeacherOptionsV1 {
     /// update on a CPU shadow with permuted targets, never published.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub permuted_control: bool,
+    /// Root selector rule: omitted by default (`line-b-root-selector-v1`),
+    /// keeping existing serialized recipes, packets, and goldens byte-identical.
+    /// Opt into `line-b-root-selector-v2` to restrict roots to learner-seat rows
+    /// (`actor == episode.learner_seat`) even in self-play episodes.
+    #[serde(default, skip_serializing_if = "LineBRootSelectorV1::is_v1")]
+    pub root_selector: LineBRootSelectorV1,
 }
 
 impl LineBTeacherOptionsV1 {
@@ -142,6 +150,8 @@ pub(super) struct LineBPacketOptionsV1 {
     pub(super) temperature: f64,
     pub(super) rollouts: u32,
     pub(super) games: Vec<Option<LineBGameSeedsV1>>,
+    #[serde(default, skip_serializing_if = "LineBRootSelectorV1::is_v1")]
+    pub(super) root_selector: LineBRootSelectorV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -191,7 +201,11 @@ pub(super) fn line_b_teach_v1(
     let mut roots = Vec::new();
     for (index, (trajectory, seeds)) in trajectories.iter().zip(&options.games).enumerate() {
         if let Some(seeds) = seeds {
-            if let Some(root) = select_line_b_root_v1(trajectory, seeds.root_seed)? {
+            let root = match options.root_selector {
+                LineBRootSelectorV1::V1 => select_line_b_root_v1(trajectory, seeds.root_seed)?,
+                LineBRootSelectorV1::V2 => select_line_b_root_v2(trajectory, seeds.root_seed)?,
+            };
+            if let Some(root) = root {
                 roots.push((index, root, seeds.clone()));
             }
         }
@@ -288,6 +302,7 @@ pub(super) fn line_b_teach_v1(
             temperature: options.temperature,
             rollouts: options.rollouts,
             games: options.games.clone(),
+            root_selector: options.root_selector,
         },
         student_state_sha256: student_state_sha256.into(),
         games,
@@ -490,7 +505,7 @@ pub(super) fn line_b_teacher_receipt_v1(
             "head_l2_ratio": ratio,
             "auxiliary_bias_residual": auxiliary.auxiliary_bias_residual})
     });
-    json!({"packet": packet_pin,
+    let mut receipt = json!({"packet": packet_pin,
         "schema": packet.schema,
         "operator": packet.operator,
         "target": packet.target,
@@ -500,7 +515,11 @@ pub(super) fn line_b_teacher_receipt_v1(
         "rollouts": packet.options.rollouts,
         "census": packet.census,
         "teacher_seconds": teacher_seconds,
-        "telemetry": telemetry})
+        "telemetry": telemetry});
+    if !packet.options.root_selector.is_v1() {
+        receipt["root_selector"] = json!(packet.options.root_selector);
+    }
+    receipt
 }
 
 /// The proposal's 12:51 rescore on each selected root, same root, full menu
@@ -625,6 +644,7 @@ mod tests {
                 temperature: 0.25,
                 rollouts: 16,
                 games: vec![None],
+                root_selector: LineBRootSelectorV1::V1,
             },
             student_state_sha256: String::new(),
             games: vec![LineBPacketGameV1::NoEligibleRoot {
@@ -674,5 +694,68 @@ mod tests {
         let mut reshaped = one.clone();
         reshaped[0].values.push(1.0);
         assert!(line_b_head_distance_from_parameters_v1(&reshaped, &one).is_err());
+    }
+
+    #[test]
+    fn root_selector_omitted_by_default_and_preserved_byte_for_byte_in_v1() {
+        let legacy_json = r#"{"direction":"reverse-kl","coefficient":0.1,"temperature":0.25,"rollouts":16,"workers":8,"games":[{"root_seed":11,"teacher_seed":21},null]}"#;
+        let parsed: LineBTeacherOptionsV1 = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(parsed.root_selector, LineBRootSelectorV1::V1);
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), legacy_json);
+
+        let mut v2 = parsed.clone();
+        v2.root_selector = LineBRootSelectorV1::V2;
+        let v2_json = serde_json::to_string(&v2).unwrap();
+        assert!(v2_json.contains("\"root_selector\":\"line-b-root-selector-v2\""));
+        assert_eq!(
+            serde_json::from_str::<LineBTeacherOptionsV1>(&v2_json).unwrap(),
+            v2
+        );
+
+        let v1_packet_options = LineBPacketOptionsV1 {
+            direction: LineBDivergenceV1::Reverse,
+            coefficient: 0.1,
+            temperature: 0.25,
+            rollouts: 16,
+            games: vec![None],
+            root_selector: LineBRootSelectorV1::V1,
+        };
+        let v1_value = serde_json::to_value(&v1_packet_options).unwrap();
+        assert!(v1_value.get("root_selector").is_none());
+
+        let v2_packet_options = LineBPacketOptionsV1 {
+            root_selector: LineBRootSelectorV1::V2,
+            ..v1_packet_options
+        };
+        let v2_value = serde_json::to_value(&v2_packet_options).unwrap();
+        assert_eq!(v2_value["root_selector"], "line-b-root-selector-v2");
+
+        let pin = PinnedFileV1 {
+            path: std::path::PathBuf::from("packet.json"),
+            sha256: "0".repeat(64),
+        };
+        let packet_v1 = LineBTeacherPacketV1 {
+            schema: "test",
+            operator: "test",
+            target: "test",
+            options: LineBPacketOptionsV1 {
+                direction: LineBDivergenceV1::Reverse,
+                coefficient: 0.1,
+                temperature: 0.25,
+                rollouts: 16,
+                games: vec![None],
+                root_selector: LineBRootSelectorV1::V1,
+            },
+            student_state_sha256: String::new(),
+            games: Vec::new(),
+            census: LineBCensusV1::default(),
+        };
+        let receipt_v1 = line_b_teacher_receipt_v1(&packet_v1, &pin, None, None, 0.0);
+        assert!(receipt_v1.get("root_selector").is_none());
+
+        let mut packet_v2 = packet_v1;
+        packet_v2.options.root_selector = LineBRootSelectorV1::V2;
+        let receipt_v2 = line_b_teacher_receipt_v1(&packet_v2, &pin, None, None, 0.0);
+        assert_eq!(receipt_v2["root_selector"], "line-b-root-selector-v2");
     }
 }
