@@ -23221,10 +23221,20 @@ fn execute_in_departure_scope_v1(
         EffectOp::ReturnSourceAsEnduringEnchantment => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {
                 let object = state.objects.get(contract.source);
+                let same_graveyard_incarnation = match contract.zone {
+                    Zone::Graveyard => object.zone_change_count == contract.zone_change_count,
+                    Zone::Battlefield => {
+                        contract.zone_change_count.checked_add(1) == Some(object.zone_change_count)
+                    }
+                    _ => false,
+                };
                 contract.source == ctx.source
+                    && !object.v4.is_token
                     && object.zone == Zone::Graveyard
-                    && object.zone == contract.zone
-                    && object.zone_change_count == contract.zone_change_count
+                    && state.players[object.owner.index()]
+                        .graveyard
+                        .contains(&ctx.source)
+                    && same_graveyard_incarnation
             });
             if !still_there {
                 return;

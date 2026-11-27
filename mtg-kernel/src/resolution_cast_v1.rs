@@ -242,6 +242,30 @@ pub(super) fn form_allowed_for(
     {
         return false;
     }
+    if method == CastMethodV4::Bestow
+        && state.objects.try_get(source).is_some_and(|object| {
+            let bestow =
+                supported_bestow(&card_def::CARD_DEFS[usize::from(object.card_def)]).is_some();
+            let from_library = object.zone == Zone::Library
+                || object
+                    .v4
+                    .spell_cast_origin
+                    .is_some_and(|origin| origin.origin_zone == Zone::Library);
+            bestow
+                && (free
+                    || (from_library
+                        && !crate::eternal_e5a_v1::permissions::library_bestow_allowed(
+                            state, controller, source,
+                        ))
+                    || state.engine.pending_cast.as_ref().is_some_and(|pending| {
+                        pending.spell == source
+                            && pending.controller == controller
+                            && pending.hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
+                    }))
+        })
+    {
+        return false;
+    }
     if graveyard_resolution_cast(state, source) {
         return graveyard_form_allowed(state, source, method);
     }
