@@ -6,10 +6,10 @@ use mtg_kernel::cube_pod_runner_v1::{
     SeatRef, SeatRule,
 };
 use mtg_kernel::cube_read_plan_v1::{
-    compute_plan_set_sha256, run_plan_set_execution, DeckRow, ExecutionReason, ManifestEntry,
-    ManifestExecutionEntry, ManifestKind, ManifestPodEntry, ManifestUnitEntry, PlanChair, PlanDeck,
-    PlanFamily, PlanGame, PlanInputs, PrepBuildSpec, PrepFamily, PrepRequest, ReadPlanV1,
-    SetManifest, READ_PLAN_SCHEMA,
+    compute_plan_set_sha256, run_plan_set_execution, supervise_plan_set_execution, DeckRow,
+    ExecutionReason, ManifestEntry, ManifestExecutionEntry, ManifestKind, ManifestPodEntry,
+    ManifestUnitEntry, PlanChair, PlanDeck, PlanFamily, PlanGame, PlanInputs, PrepBuildSpec,
+    PrepFamily, PrepRequest, ReadPlanV1, SetManifest, READ_PLAN_SCHEMA,
 };
 use mtg_kernel::cube_seat_v1::{UniformPilot, M4_INTERFACES_VERSION};
 use mtg_kernel::cube_training_driver_v1::{RunConfig, Segment, TrainingDriver};

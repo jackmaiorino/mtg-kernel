@@ -46,6 +46,9 @@ impl GamePilot for TwoActionPilot {
                 policy_steps: Some(1),
                 end: GameEnd::DecisionCap,
                 last_action_source: None,
+                first_player_seat: Some(spec.seats[0]),
+                last_acting_seat: Some(spec.seats[0]),
+                pilot_sample: None,
             };
         }
         let result = self.case.actions[0] as i8 - self.case.actions[1] as i8;
@@ -62,6 +65,9 @@ impl GamePilot for TwoActionPilot {
                 reason: "fixture".to_owned(),
             },
             last_action_source: None,
+            first_player_seat: Some(spec.seats[0]),
+            last_acting_seat: Some(spec.seats[0]),
+            pilot_sample: None,
         }
     }
 }
