@@ -4352,6 +4352,39 @@ pub(crate) fn observe_policy_v6_unhashed_for_flat_policy(
     })
 }
 
+/// Cube keeps the flat observation except when an extra turn needs the
+/// existing V23/common storage transport.
+pub(crate) fn observe_policy_v6_unhashed_for_cube_flat_policy(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV6> {
+    if state.extra_turn_v1.is_none() {
+        return observe_policy_v6_unhashed_for_flat_policy(
+            state,
+            surface,
+            acting_player,
+            step_index,
+            physical_decision_id,
+            substep_index,
+            substep_count,
+        );
+    }
+    Ok(extra_turn_observation_storage_v1(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?
+    .into_legacy())
+}
+
 fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<ObservationV6> {
     build_policy_observation_common_v6(request, false)
 }

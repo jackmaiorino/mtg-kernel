@@ -165,6 +165,7 @@ fn end_to_end_binary_and_learner_only_trajectories_match_json_state_sha256_bit_f
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,

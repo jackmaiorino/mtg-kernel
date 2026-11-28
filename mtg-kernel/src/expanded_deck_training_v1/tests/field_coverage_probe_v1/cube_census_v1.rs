@@ -54,6 +54,8 @@
 //!                                        (default none)
 //!   MTG_KERNEL_CUBE_CENSUS_OUT           also write the census JSON here
 //!   MTG_KERNEL_CUBE_FENCE                fence list (default none)
+//!   MTG_KERNEL_CUBE_CENSUS_CUBE_MODE     `1` opts episodes into CubeV1
+//!                                        (default `0`, the frozen V3 mode)
 
 use super::*;
 use crate::rl::{
@@ -66,6 +68,18 @@ use crate::rl_session::FastActorDecisionV1;
 /// admission check as a `configuration_refusal`. T1 has landed beside it: dealt
 /// games now carry `limited40-v1`.
 const CUBE_DECK_FORMAT: Option<&str> = Some("limited40-v1");
+
+fn cube_mode_opt_in_v1() -> bool {
+    match std::env::var("MTG_KERNEL_CUBE_CENSUS_CUBE_MODE") {
+        Err(std::env::VarError::NotPresent) => false,
+        Err(error) => panic!("MTG_KERNEL_CUBE_CENSUS_CUBE_MODE: {error}"),
+        Ok(value) => match value.as_str() {
+            "0" => false,
+            "1" => true,
+            _ => panic!("MTG_KERNEL_CUBE_CENSUS_CUBE_MODE must be 0 or 1"),
+        },
+    }
+}
 
 #[cfg(feature = "eternal-fixtures")]
 const CUBE_LIST: &str = "data/cube_v1/mtgo_vintage_cube_20261007.json";
@@ -453,6 +467,9 @@ fn census_episode_json_v1(
     }
     if let Some(format) = CUBE_DECK_FORMAT {
         episode["deck_format"] = json!(format);
+    }
+    if cube_mode_opt_in_v1() {
+        episode["cube_flat_action_contract"] = json!(true);
     }
     episode
 }
@@ -1051,7 +1068,7 @@ fn cube_coverage_census_v1() {
             rows.push(row);
         }
     }
-    let header = json!({
+    let mut header = json!({
         "inputs": inputs,
         "pool": pool.report,
         "deal_rule": {
@@ -1077,6 +1094,9 @@ fn cube_coverage_census_v1() {
         "panicked_seeds": panicked,
         "seconds": (started.elapsed().as_secs_f64() * 1000.0).round() / 1000.0,
     });
+    if cube_mode_opt_in_v1() {
+        header["cube_flat_action_contract"] = json!(true);
+    }
     let census = census_json_v1(header, &outcomes, results.len(), &rows);
     println!("{census}");
     if let Ok(path) = std::env::var("MTG_KERNEL_CUBE_CENSUS_OUT") {

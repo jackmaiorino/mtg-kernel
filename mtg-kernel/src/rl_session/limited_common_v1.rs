@@ -32,6 +32,11 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         )
     }
+
+    pub(super) fn is_cube_v1(&self) -> bool {
+        self.flat_action_contract_mode == FlatActionContractModeV1::CubeV1
+    }
+
     #[cfg(all(
         test,
         feature = "limited-fdn-fixtures",
