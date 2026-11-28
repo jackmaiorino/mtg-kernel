@@ -6,12 +6,13 @@ pub(crate) fn build_opening_state_v1(
     mainboards: &[Vec<u16>; 2],
     pair_environment_seed: u64,
     starting_player: PlayerId,
+    deck_format: Option<crate::sideboard::DeckFormatV1>,
 ) -> Result<(SessionDeckHashesV1, crate::state::GameState), String> {
     build_session_deck_pair_state_from_explicit_decks(
         mainboards,
         pair_environment_seed,
         Some(starting_player),
-        None,
+        deck_format,
     )
     .map_err(|error| error.to_string())
 }
@@ -19,15 +20,24 @@ pub(crate) fn build_opening_state_v1(
 impl FastActorSessionV1 {
     pub(crate) fn from_human_opening_v1(opening: HumanOpeningV1) -> Result<Self, String> {
         let parts = opening.into_ready_parts()?;
+        let surface = match parts.deck_format {
+            None => PolicySurfaceV5::new_for_session(),
+            Some(crate::sideboard::DeckFormatV1::Limited40V1) => {
+                PolicySurfaceV5::new_with_priority_mode_v1(
+                    crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                    SuppressionAuditMode::Off,
+                )
+            }
+        };
         let mut session = Self {
             deck_ids: parts.deck_ids,
             deck_hashes: parts.deck_hashes,
             episode_id: parts.episode_id,
             max_physical_decisions: parts.max_physical_decisions,
             max_policy_steps: parts.max_policy_steps,
-            max_stack_objects: None,
+            max_stack_objects: parts.max_stack_objects,
             state: parts.state,
-            surface: PolicySurfaceV5::new_for_session(),
+            surface,
             environment_revision: 0,
             policy_step_count: 0,
             physical_decision_count: 0,

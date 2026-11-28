@@ -12,6 +12,7 @@ use crate::event::{self, LibraryInsertVisibility, LibraryPlacement, ProposedEven
 use crate::ids::PlayerId;
 use crate::rl::PlayerSeatV1;
 use crate::rl_session::{FastActorSessionV1, SessionDeckHashesV1, SessionDeckIdsV1};
+use crate::sideboard::DeckFormatV1;
 use crate::state::{GameState, Step, Zone};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -63,6 +64,8 @@ pub struct HumanOpeningV1 {
     max_policy_steps: u64,
     deck_ids: SessionDeckIdsV1,
     deck_hashes: SessionDeckHashesV1,
+    deck_format: Option<DeckFormatV1>,
+    max_stack_objects: Option<u32>,
 }
 
 pub(crate) struct ReadyHumanOpeningPartsV1 {
@@ -72,6 +75,8 @@ pub(crate) struct ReadyHumanOpeningPartsV1 {
     pub(crate) max_policy_steps: u64,
     pub(crate) deck_ids: SessionDeckIdsV1,
     pub(crate) deck_hashes: SessionDeckHashesV1,
+    pub(crate) deck_format: Option<DeckFormatV1>,
+    pub(crate) max_stack_objects: Option<u32>,
 }
 
 impl HumanOpeningV1 {
@@ -86,6 +91,62 @@ impl HumanOpeningV1 {
         starting_player: PlayerId,
         human_seat: PlayerId,
     ) -> Result<Self, String> {
+        Self::new_with_format(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            human_seat,
+            None,
+            None,
+        )
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    pub fn new_cube_limited(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        caps: crate::cube_draft_v1::GameCaps,
+        mainboards: [Vec<u16>; 2],
+        human_seat: PlayerId,
+    ) -> Result<Self, String> {
+        if mainboards
+            .iter()
+            .any(|deck| deck.len() != crate::cube_draft_v1::DECK_CARDS as usize)
+            || caps.max_stack_objects.is_none()
+        {
+            return Err("Cube human games require two 40-card mainboards and a stack cap.".into());
+        }
+        Self::new_with_format(
+            episode_id,
+            pair_environment_seed,
+            caps.max_physical_decisions,
+            caps.max_policy_steps,
+            ["cube-play".to_owned(), "cube-draw".to_owned()],
+            mainboards,
+            PlayerId::P0,
+            human_seat,
+            Some(DeckFormatV1::Limited40V1),
+            caps.max_stack_objects,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_format(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        human_seat: PlayerId,
+        deck_format: Option<DeckFormatV1>,
+        max_stack_objects: Option<u32>,
+    ) -> Result<Self, String> {
         if human_seat.0 > 1 || starting_player.0 > 1 {
             return Err("invalid opening seat".into());
         }
@@ -96,8 +157,9 @@ impl HumanOpeningV1 {
             &mainboards,
             pair_environment_seed,
             starting_player,
+            deck_format,
         )?;
-        validate_opening_state(&state)?;
+        validate_opening_state(&state, deck_format)?;
         Ok(Self {
             state,
             human_seat,
@@ -108,6 +170,8 @@ impl HumanOpeningV1 {
             max_policy_steps,
             deck_ids,
             deck_hashes,
+            deck_format,
+            max_stack_objects,
         })
     }
 
@@ -195,7 +259,7 @@ impl HumanOpeningV1 {
         for _ in 0..7 {
             event::propose_and_commit(&mut candidate, ProposedEvent::draw(self.human_seat));
         }
-        validate_opening_state(&candidate)?;
+        validate_opening_state(&candidate, self.deck_format)?;
         if candidate.players[self.human_seat.index()].hand.len() != 7 {
             return Err("mulligan did not redraw seven cards".into());
         }
@@ -252,7 +316,7 @@ impl HumanOpeningV1 {
             change.library_insert_visibility = LibraryInsertVisibility::Owner;
             event::propose_and_commit(&mut candidate, proposal);
         }
-        validate_opening_state(&candidate)?;
+        validate_opening_state(&candidate, self.deck_format)?;
         if candidate.players[self.human_seat.index()].hand.len()
             != 7 - usize::from(self.mulligans_taken)
         {
@@ -270,7 +334,7 @@ impl HumanOpeningV1 {
     /// Trusted summary extraction only. This does not advance opening or expose
     /// a state through the human transport. The episode id binds its provenance.
     pub(crate) fn summary_state_v2(&self) -> Result<(&GameState, u64), String> {
-        validate_opening_state(&self.state)?;
+        validate_opening_state(&self.state, self.deck_format)?;
         Ok((&self.state, self.episode_id))
     }
 
@@ -278,7 +342,7 @@ impl HumanOpeningV1 {
         if self.phase != HumanOpeningPhaseV1::Ready {
             return Err("complete London opening before gameplay".into());
         }
-        validate_opening_state(&self.state)?;
+        validate_opening_state(&self.state, self.deck_format)?;
         // The engine starts at Untap but its first advance enters Upkeep,
         // bypassing Untap's normal turn-counter reset. Opening hands and London
         // redraws are not draws during turn one. Clear the setup event batch at
@@ -295,11 +359,20 @@ impl HumanOpeningV1 {
             max_policy_steps: self.max_policy_steps,
             deck_ids: self.deck_ids,
             deck_hashes: self.deck_hashes,
+            deck_format: self.deck_format,
+            max_stack_objects: self.max_stack_objects,
         })
     }
 }
 
-fn validate_opening_state(state: &GameState) -> Result<(), String> {
+fn validate_opening_state(
+    state: &GameState,
+    deck_format: Option<DeckFormatV1>,
+) -> Result<(), String> {
+    let mainboard_size = match deck_format {
+        None => 60,
+        Some(DeckFormatV1::Limited40V1) => 40,
+    };
     if state.turn != 1
         || state.step != Step::Untap
         || state.active_player != state.starting_player
@@ -307,14 +380,14 @@ fn validate_opening_state(state: &GameState) -> Result<(), String> {
         || !state.stack.is_empty()
         || !state.exile.is_empty()
         || !state.command.is_empty()
-        || state.objects.len() != 120
+        || state.objects.len() != mainboard_size * 2
     {
         return Err("opening state advanced or card conservation changed".into());
     }
     let mut all = BTreeSet::new();
     for seat in [PlayerId::P0, PlayerId::P1] {
         let player = &state.players[seat.index()];
-        if player.hand.len() + player.library.len() != 60
+        if player.hand.len() + player.library.len() != mainboard_size
             || !player.battlefield.is_empty()
             || !player.graveyard.is_empty()
         {
@@ -402,7 +475,7 @@ mod tests {
             opening.mulligan().unwrap();
             assert_eq!(opening.view().hand.len(), 7);
             assert_eq!(opening.view().mulligans_taken, count);
-            validate_opening_state(&opening.state).unwrap();
+            validate_opening_state(&opening.state, None).unwrap();
         }
         assert_eq!(opening.view().phase, HumanOpeningPhaseV1::Bottom);
         assert!(opening.mulligan().is_err());
@@ -441,7 +514,7 @@ mod tests {
             .state
             .known_library_cards(PlayerId::P1, PlayerId::P0)
             .is_empty());
-        validate_opening_state(&opening.state).unwrap();
+        validate_opening_state(&opening.state, None).unwrap();
     }
 
     #[test]

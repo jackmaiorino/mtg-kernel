@@ -10,12 +10,14 @@ use crate::cube_seat_v1::{
     canonical_deck, run_seat_draft, PickOutcome, SeatError, SeatPickView, SeatPicker,
 };
 use crate::state::SplitMix64;
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
+
+pub mod play;
 
 const MAX_REQUEST_BYTES: u64 = 16 * 1024;
 const MAX_CARD_TEXT_BYTES: u64 = 16 * 1024 * 1024;
@@ -69,6 +71,7 @@ enum Command {
 }
 
 struct DraftTransport<I, O> {
+    schema: &'static str,
     input: I,
     output: O,
     line: String,
@@ -79,7 +82,7 @@ impl<I: BufRead, O: Write> DraftTransport<I, O> {
         write_json_line(
             &mut self.output,
             &json!({
-                "schema": DRAFT_BUILD_RESPONSE_SCHEMA,
+                "schema": self.schema,
                 "event": event,
                 "view": view,
             }),
@@ -87,7 +90,7 @@ impl<I: BufRead, O: Write> DraftTransport<I, O> {
         .map_err(|_| "The client response could not be written.".into())
     }
 
-    fn command(&mut self) -> Result<Option<Command>, String> {
+    fn command<T: DeserializeOwned>(&mut self) -> Result<Option<T>, String> {
         self.line.clear();
         let bytes = (&mut self.input)
             .take(MAX_REQUEST_BYTES + 1)
@@ -272,6 +275,7 @@ pub fn serve_draft_build(
     )?;
 
     let mut transport = DraftTransport {
+        schema: DRAFT_BUILD_RESPONSE_SCHEMA,
         input,
         output,
         line: String::new(),
