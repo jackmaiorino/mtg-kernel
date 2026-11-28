@@ -376,8 +376,11 @@ mod tests {
             .iter()
             .filter(|line| line["event"] == "round_started");
         let public_standings = published.iter().filter(|line| line["event"] == "standings");
+        let public_rounds = published.iter().filter(|line| line["event"] == "round");
         let mut rounds = 0;
-        for (round, standings) in schedule.zip(public_standings) {
+        let mut last_standings = Vec::new();
+        for ((round, public_round), standings) in schedule.zip(public_rounds).zip(public_standings)
+        {
             let round = &round["payload"];
             assert_eq!(round["round"], rounds);
             rounds += 1;
@@ -391,6 +394,15 @@ mod tests {
                     chairs[1].as_u64().unwrap() as usize,
                 ];
                 if chairs.contains(&human_chair) {
+                    assert_eq!(
+                        public_round["view"],
+                        json!({
+                            "round": round["round"],
+                            "play_chair": chairs[0],
+                            "draw_chair": chairs[1],
+                            "human_seat": if chairs[0] == human_chair { "p0" } else { "p1" },
+                        }),
+                    );
                     let record = private
                         .iter()
                         .find(|line| {
@@ -438,8 +450,13 @@ mod tests {
                 standings["view"],
                 json!({"round": round["round"], "standings": expected})
             );
+            last_standings = expected;
         }
         assert_eq!(rounds, 3);
+        assert_eq!(
+            published.last().unwrap()["view"],
+            json!({"standings": last_standings})
+        );
         assert_eq!(private.last().unwrap()["event"], "pod_complete");
         std::fs::remove_dir_all(dir).unwrap();
     }

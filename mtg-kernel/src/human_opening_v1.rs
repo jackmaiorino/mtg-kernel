@@ -79,6 +79,21 @@ pub(crate) struct ReadyHumanOpeningPartsV1 {
     pub(crate) max_stack_objects: Option<u32>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum HumanOpeningErrorV1 {
+    InvalidChoice(&'static str),
+    Engine(String),
+}
+
+impl HumanOpeningErrorV1 {
+    fn into_message(self) -> String {
+        match self {
+            Self::InvalidChoice(message) => message.to_owned(),
+            Self::Engine(message) => message,
+        }
+    }
+}
+
 impl HumanOpeningV1 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -239,13 +254,22 @@ impl HumanOpeningV1 {
     }
 
     pub fn mulligan(&mut self) -> Result<(), String> {
+        self.mulligan_checked()
+            .map_err(HumanOpeningErrorV1::into_message)
+    }
+
+    pub(crate) fn mulligan_checked(&mut self) -> Result<(), HumanOpeningErrorV1> {
         if self.phase != HumanOpeningPhaseV1::Mulligan || self.mulligans_taken >= 7 {
-            return Err("mulligan is not available".into());
+            return Err(HumanOpeningErrorV1::InvalidChoice(
+                "mulligan is not available",
+            ));
         }
         let mut candidate = self.state.clone();
         let hand = candidate.players[self.human_seat.index()].hand.clone();
         if hand.len() != 7 {
-            return Err("opening hand is not seven cards".into());
+            return Err(HumanOpeningErrorV1::Engine(
+                "opening hand is not seven cards".into(),
+            ));
         }
         for object in hand {
             event::propose_and_commit(
@@ -255,13 +279,16 @@ impl HumanOpeningV1 {
         }
         candidate
             .shuffle_library(self.human_seat)
-            .map_err(|e| format!("opening shuffle: {e:?}"))?;
+            .map_err(|e| HumanOpeningErrorV1::Engine(format!("opening shuffle: {e:?}")))?;
         for _ in 0..7 {
             event::propose_and_commit(&mut candidate, ProposedEvent::draw(self.human_seat));
         }
-        validate_opening_state(&candidate, self.deck_format)?;
+        validate_opening_state(&candidate, self.deck_format)
+            .map_err(HumanOpeningErrorV1::Engine)?;
         if candidate.players[self.human_seat.index()].hand.len() != 7 {
-            return Err("mulligan did not redraw seven cards".into());
+            return Err(HumanOpeningErrorV1::Engine(
+                "mulligan did not redraw seven cards".into(),
+            ));
         }
         self.state = candidate;
         self.mulligans_taken += 1;
@@ -272,8 +299,13 @@ impl HumanOpeningV1 {
     }
 
     pub fn keep(&mut self) -> Result<(), String> {
+        self.keep_checked()
+            .map_err(HumanOpeningErrorV1::into_message)
+    }
+
+    pub(crate) fn keep_checked(&mut self) -> Result<(), HumanOpeningErrorV1> {
         if self.phase != HumanOpeningPhaseV1::Mulligan {
-            return Err("keep is not available".into());
+            return Err(HumanOpeningErrorV1::InvalidChoice("keep is not available"));
         }
         self.phase = if self.mulligans_taken == 0 {
             HumanOpeningPhaseV1::Ready
@@ -288,11 +320,23 @@ impl HumanOpeningV1 {
     /// All selections validate before any mutation; duplicate physical cards
     /// are distinguished by hand index even when names/card ids match.
     pub fn bottom(&mut self, ordered_hand_indices: &[u32]) -> Result<(), String> {
+        self.bottom_checked(ordered_hand_indices)
+            .map_err(HumanOpeningErrorV1::into_message)
+    }
+
+    pub(crate) fn bottom_checked(
+        &mut self,
+        ordered_hand_indices: &[u32],
+    ) -> Result<(), HumanOpeningErrorV1> {
         if self.phase != HumanOpeningPhaseV1::Bottom {
-            return Err("bottom selection is not available".into());
+            return Err(HumanOpeningErrorV1::InvalidChoice(
+                "bottom selection is not available",
+            ));
         }
         if ordered_hand_indices.len() != usize::from(self.mulligans_taken) {
-            return Err("bottom exactly one card per mulligan".into());
+            return Err(HumanOpeningErrorV1::InvalidChoice(
+                "bottom exactly one card per mulligan",
+            ));
         }
         let hand = &self.state.players[self.human_seat.index()].hand;
         let mut unique = BTreeSet::new();
@@ -300,7 +344,9 @@ impl HumanOpeningV1 {
             .iter()
             .any(|index| *index as usize >= hand.len() || !unique.insert(*index))
         {
-            return Err("bottom indexes must be unique cards in the kept hand".into());
+            return Err(HumanOpeningErrorV1::InvalidChoice(
+                "bottom indexes must be unique cards in the kept hand",
+            ));
         }
         let selected: Vec<_> = ordered_hand_indices
             .iter()
@@ -316,11 +362,14 @@ impl HumanOpeningV1 {
             change.library_insert_visibility = LibraryInsertVisibility::Owner;
             event::propose_and_commit(&mut candidate, proposal);
         }
-        validate_opening_state(&candidate, self.deck_format)?;
+        validate_opening_state(&candidate, self.deck_format)
+            .map_err(HumanOpeningErrorV1::Engine)?;
         if candidate.players[self.human_seat.index()].hand.len()
             != 7 - usize::from(self.mulligans_taken)
         {
-            return Err("bottoming did not produce the kept hand size".into());
+            return Err(HumanOpeningErrorV1::Engine(
+                "bottoming did not produce the kept hand size".into(),
+            ));
         }
         self.state = candidate;
         self.phase = HumanOpeningPhaseV1::Ready;
@@ -485,6 +534,33 @@ mod tests {
         assert_eq!(opening.view().phase, HumanOpeningPhaseV1::Ready);
         assert_eq!(opening.state.players[0].library.len(), 60);
         assert!(opening.into_session().is_ok());
+    }
+
+    #[test]
+    fn opening_choices_distinguish_bad_requests_from_engine_failures() {
+        let mut mulligan = opening(PlayerId::P0, PlayerId::P0, 23);
+        assert!(matches!(
+            mulligan.bottom_checked(&[]),
+            Err(HumanOpeningErrorV1::InvalidChoice(_))
+        ));
+        mulligan.state.players[0].hand.pop().unwrap();
+        assert!(matches!(
+            mulligan.mulligan_checked(),
+            Err(HumanOpeningErrorV1::Engine(_))
+        ));
+
+        let mut bottom = opening(PlayerId::P0, PlayerId::P0, 23);
+        bottom.mulligan_checked().unwrap();
+        bottom.keep_checked().unwrap();
+        assert!(matches!(
+            bottom.bottom_checked(&[7]),
+            Err(HumanOpeningErrorV1::InvalidChoice(_))
+        ));
+        bottom.state.players[0].library.pop().unwrap();
+        assert!(matches!(
+            bottom.bottom_checked(&[0]),
+            Err(HumanOpeningErrorV1::Engine(_))
+        ));
     }
 
     #[test]

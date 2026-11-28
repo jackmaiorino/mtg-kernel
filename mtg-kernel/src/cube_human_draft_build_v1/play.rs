@@ -4,7 +4,7 @@
 use super::{journal, DraftTransport, LocalCardText, PodJournal};
 use crate::cube_draft_v1::{uniform_index, Deck, GameCaps};
 use crate::human_bo3_v1::{HumanActionRequestV1, HumanDecisionErrorV1, HumanDecisionProjectorV1};
-use crate::human_opening_v1::{HumanOpeningPhaseV1, HumanOpeningV1};
+use crate::human_opening_v1::{HumanOpeningErrorV1, HumanOpeningPhaseV1, HumanOpeningV1};
 use crate::ids::PlayerId;
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
 use crate::rl_session::FastActorResponseV1;
@@ -157,10 +157,12 @@ pub fn serve_uniform_human_game(
         loop {
             let (accepted, payload) =
                 match bound_command(&mut transport, config.episode, prompt_seq)? {
-                    Command::Keep { .. } => (opening.keep(), json!({"kind": "keep"})),
-                    Command::Mulligan { .. } => (opening.mulligan(), json!({"kind": "mulligan"})),
+                    Command::Keep { .. } => (opening.keep_checked(), json!({"kind": "keep"})),
+                    Command::Mulligan { .. } => {
+                        (opening.mulligan_checked(), json!({"kind": "mulligan"}))
+                    }
                     Command::Bottom { order, .. } => (
-                        opening.bottom(&order),
+                        opening.bottom_checked(&order),
                         json!({"kind": "bottom", "order": order}),
                     ),
                     Command::Concede { .. } => {
@@ -173,13 +175,19 @@ pub fn serve_uniform_human_game(
                         );
                     }
                     Command::Action { .. } => (
-                        Err("Complete the opening before playing an action.".into()),
+                        Err(HumanOpeningErrorV1::InvalidChoice(
+                            "Complete the opening before playing an action.",
+                        )),
                         json!(null),
                     ),
                 };
-            if let Err(message) = accepted {
-                transport.error(&message)?;
-                continue;
+            match accepted {
+                Ok(()) => {}
+                Err(HumanOpeningErrorV1::InvalidChoice(message)) => {
+                    transport.error(message)?;
+                    continue;
+                }
+                Err(HumanOpeningErrorV1::Engine(message)) => return Err(message),
             }
             journal(
                 private,
