@@ -20,14 +20,16 @@ use crate::cube_learned_seat_v1::{
     LearnedSeatBuilder, LearnedSeatPicker, ModelSeatForward, SeatForward,
 };
 use crate::cube_pod_runner_v1::{
-    is_watchdog_end, pod_league_seed, run_training_pod_with_slots, training_roles_with_older,
-    PilotInfo, PilotKind, PodPins, PodRecord, PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef,
-    StopAttemptReport, TrainingChair, TrainingPairSlots, TrainingPodConfig, TrainingPodSlot,
-    CLIENT_NAMESPACE,
+    is_watchdog_end, pod_league_seed, run_training_pod_with_options, training_roles_with_older,
+    AttemptTiming, PilotInfo, PilotKind, PodPilotSample, PodPins, PodRecord, PodRecordVersion,
+    PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef, StopAttemptReport, TrainingChair,
+    TrainingPairSlots, TrainingPodConfig, TrainingPodOptions, TrainingPodOutput, TrainingPodSlot,
+    CLIENT_NAMESPACE, PILOT_PATH_SCHEMA_V1, TRAINING_TIMING_SCHEMA_V1,
 };
-use crate::cube_read_plan_v1::sha256_hex;
+use crate::cube_read_plan_v1::{sha256_hex, to_canonical_compact_json};
 use crate::cube_seat_v1::{
     GamePilot, UniformPilot, UniformSeatPicker, LEARNED_SAMPLER_ID, M4_INTERFACES_VERSION,
+    M4_INTERFACES_VERSION_V3,
 };
 use crate::cube_worker_liveness_v1::LIVENESS;
 use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
@@ -337,6 +339,71 @@ pub enum OpenIntent {
     ReadCompletedBuilder,
 }
 
+/// Policy governing how an authorized host-loss resume handles an interrupted
+/// uncommitted batch (`pending/update-NNNN` without `commit.json`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostLossPolicy {
+    /// D0/D8 shakedown rule: refuse to replay any batch that was already touched.
+    #[default]
+    AbandonTouchedBatch,
+    /// M5 L3 rule: promote committed updates once and cleanly replay an
+    /// interrupted uncommitted batch on its original seeds, while keeping
+    /// execution-0 watchdog retries strictly distinct.
+    ReplayInterruptedBatch,
+}
+
+fn is_abandon_touched_batch(policy: &HostLossPolicy) -> bool {
+    *policy == HostLossPolicy::AbandonTouchedBatch
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+fn is_v2_record_version(version: &PodRecordVersion) -> bool {
+    *version == PodRecordVersion::V2
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrainingTimingLine<'a> {
+    schema: &'static str,
+    update: u64,
+    execution: u8,
+    pod_index: u64,
+    game: u32,
+    attempt: u8,
+    elapsed_ms: u64,
+    host: &'a str,
+}
+
+/// Deterministic per-update sampled pilot-path offered/chosen sidecar
+/// (`m4-interfaces/v3` section 4), written outside `commit.json` and optimizer
+/// inputs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PilotPathUpdateSidecar {
+    pub schema: String,
+    pub namespace: String,
+    pub run: String,
+    pub segment: Segment,
+    pub update: u64,
+    pub pilot: PilotInfo,
+    pub sample_denom: u64,
+    pub total_games: u64,
+    pub sampled_games: u64,
+    pub sampled_attempts: u64,
+    pub sampled_decisions: u64,
+    pub sampled_refused_decisions: u64,
+    pub offered_decisions_null: u64,
+    pub offered_actions_null: u64,
+    pub chosen_null: u64,
+    pub offered_decisions_by_card: BTreeMap<String, u64>,
+    pub offered_actions_by_card: BTreeMap<String, u64>,
+    pub chosen_by_card: BTreeMap<String, u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunConfig {
@@ -378,12 +445,24 @@ pub struct RunConfig {
     pub metadata: CheckpointMetadata,
     pub caps: crate::cube_pod_runner_v1::PodCaps,
     pub workers: usize,
-    /// Runtime-only scheduling preference for the uniform pilot's games.
+    /// Runtime-only scheduling preference for overlapping two pods' tails.
+    /// Defaults to `false` until qualified on the frozen learned-pilot path.
     #[serde(skip)]
     pub fill_pod_tails: bool,
     pub liveness: String,
     pub marks: CheckpointMarks,
     pub boundary: Option<PickBoundary>,
+    /// Host-loss recovery policy (omitted on D0/D8 `run.json` for byte compatibility).
+    #[serde(default, skip_serializing_if = "is_abandon_touched_batch")]
+    pub host_loss_policy: HostLossPolicy,
+    /// Logical-ID denominator for the sampled pilot-path sidecar (`0` disables;
+    /// `16` for M5). Omitted when `0`.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub pilot_sample_denom: u64,
+    /// Pod record contract version (`v2` default for D0/D8; `v3` for M5). Omitted
+    /// when `v2`.
+    #[serde(default, skip_serializing_if = "is_v2_record_version")]
+    pub pod_record_version: PodRecordVersion,
 }
 
 impl RunConfig {
@@ -474,11 +553,37 @@ impl RunConfig {
                 },
             },
             boundary: None,
+            host_loss_policy: HostLossPolicy::AbandonTouchedBatch,
+            pilot_sample_denom: 0,
+            pod_record_version: PodRecordVersion::V2,
         }
     }
 
+    /// M5 training configuration (`m4-interfaces/v3`, L3 host-loss recovery,
+    /// 1/16 logical-ID pilot-path sampling, `--fill-pod-tails=false` default).
+    pub fn m5(
+        root: impl Into<PathBuf>,
+        run: impl Into<String>,
+        segment: Segment,
+        updates: u64,
+        pilot: PilotSchedule,
+    ) -> Self {
+        let mut cfg = Self::shakedown(root, run, segment);
+        cfg.interfaces = M4_INTERFACES_VERSION_V3.to_owned();
+        cfg.label = "m5".to_owned();
+        cfg.namespace = "m5-train".to_owned();
+        cfg.update_range = [0, updates];
+        cfg.pilot = pilot;
+        cfg.host_loss_policy = HostLossPolicy::ReplayInterruptedBatch;
+        cfg.pilot_sample_denom = 16;
+        cfg.pod_record_version = PodRecordVersion::V3;
+        cfg.marks = CheckpointMarks::default();
+        cfg
+    }
+
     fn validate(&self) -> Result<(), TrainingDriverError> {
-        if self.schema != RUN_SCHEMA || self.interfaces != M4_INTERFACES_VERSION {
+        if self.schema != RUN_SCHEMA || self.interfaces != self.pod_record_version.interfaces_str()
+        {
             return Err(invalid("run schema or interface version differs"));
         }
         if self.namespace == CLIENT_NAMESPACE
@@ -1050,6 +1155,9 @@ fn check_run_plan(saved: &RunConfig, proposed: &RunConfig) -> Result<(), Trainin
         || saved.marks != proposed.marks
         || saved.liveness != proposed.liveness
         || saved.boundary != proposed.boundary
+        || saved.host_loss_policy != proposed.host_loss_policy
+        || saved.pilot_sample_denom != proposed.pilot_sample_denom
+        || saved.pod_record_version != proposed.pod_record_version
         || !saved.pilot.compatible_resume(&proposed.pilot)
     {
         return Err(invalid("resume changed a run pin, plan or tripwire mode"));
@@ -1251,7 +1359,12 @@ fn read_commit(
         return Ok(None);
     };
     let required = ["pods.json", "checkpoint.json", "update.json"];
-    let optional = ["stop.json", "league.json", "execution-0.json"];
+    let optional = [
+        "stop.json",
+        "league.json",
+        "execution-0.json",
+        "pilot_path.json",
+    ];
     if commit.batch_index != update
         || required
             .iter()
@@ -1378,7 +1491,32 @@ fn record_process_death(
     Ok(())
 }
 
-fn recover(root: &Path) -> Result<(), TrainingDriverError> {
+fn restore_update_pilot_path(
+    root: &Path,
+    update_dir: &Path,
+    update: u64,
+) -> Result<(), TrainingDriverError> {
+    let source = update_dir.join("pilot_path.json");
+    if !source.exists() {
+        return Ok(());
+    }
+    let bytes = fs::read(&source)?;
+    let commit: CommitManifest = read_json(&update_dir.join("commit.json"))?;
+    if commit.files.get("pilot_path.json") != Some(&sha256_hex(&bytes)) {
+        return Err(invalid(
+            "published pilot_path.json differs from commit.json",
+        ));
+    }
+    let dir = root.join("pilot_path");
+    fs::create_dir_all(&dir)?;
+    let dest = dir.join(format!("{}.json", update_name(update)));
+    if dest.exists() && fs::read(&dest)? == bytes {
+        return Ok(());
+    }
+    replace_bytes(&dest, &bytes)
+}
+
+fn recover(root: &Path, replay_uncommitted_batch: Option<u64>) -> Result<(), TrainingDriverError> {
     let pending = root.join("pending");
     let updates = root.join("updates");
     fs::create_dir_all(&pending)?;
@@ -1407,10 +1545,13 @@ fn recover(root: &Path) -> Result<(), TrainingDriverError> {
             sync_directory(&pending)?;
             sync_directory(&updates)?;
             restore_update_league_snapshot(root, &destination)?;
+            restore_update_pilot_path(root, &destination, update)?;
             published_stop(root, &destination, update)?;
             continue;
         }
-        if ledger_path_for_update(root, update)?.is_none() {
+        if ledger_path_for_update(root, update)?.is_none()
+            && replay_uncommitted_batch != Some(update)
+        {
             return Err(invalid("unfinished batch has no stop ledger record"));
         }
         fs::remove_dir_all(&directory)?;
@@ -1421,9 +1562,10 @@ fn recover(root: &Path) -> Result<(), TrainingDriverError> {
         if !directory.is_dir() {
             continue;
         }
+        let update = index_from_update_path(&directory)?;
         restore_update_league_snapshot(root, &directory)?;
+        restore_update_pilot_path(root, &directory, update)?;
         if directory.join("stop.json").exists() {
-            let update = index_from_update_path(&directory)?;
             published_stop(root, &directory, update)?;
         }
     }
@@ -1620,8 +1762,8 @@ fn pod_thread_spawn_error(error: std::io::Error) -> CollectFailure {
 }
 
 fn join_collected_pod(
-    handle: std::thread::ScopedJoinHandle<'_, Result<PodRecord, PodRunnerError>>,
-) -> Result<PodRecord, PodRunnerError> {
+    handle: std::thread::ScopedJoinHandle<'_, Result<TrainingPodOutput, PodRunnerError>>,
+) -> Result<TrainingPodOutput, PodRunnerError> {
     handle.join().unwrap_or_else(|_| {
         Err(PodRunnerError::Thread(
             "training pod thread panicked".to_owned(),
@@ -2071,6 +2213,12 @@ impl TrainingDriver {
             }
         }
         let resume_receipt = check_resume(&config, &run_lock)?;
+        let replay_uncommitted_batch =
+            if config.host_loss_policy == HostLossPolicy::ReplayInterruptedBatch {
+                resume_receipt.as_ref().map(|receipt| receipt.batch_index)
+            } else {
+                None
+            };
         let run_path = config.root.join("run.json");
         let mut runner = None;
         if let Some(receipt) = resume_receipt {
@@ -2081,7 +2229,7 @@ impl TrainingDriver {
             check_run_plan(&saved, &config)?;
             runner = Some(RunnerMarker::open(&config.root, Some(receipt))?);
         }
-        recover(&config.root)?;
+        recover(&config.root, replay_uncommitted_batch)?;
         check_stop_ledger(&config.root)?;
         let indices = published_update_indices(&config.root)?;
         if config.segment == Segment::PickPhase {
@@ -2459,23 +2607,22 @@ impl TrainingDriver {
         &self,
         pool: &CubePool,
         update: u64,
+        execution: u8,
         selection: &PilotSelection,
         pilot: &(dyn GamePilot + Sync),
         snapshots: &BTreeMap<String, Snapshot>,
-    ) -> Result<Vec<PodRecord>, CollectFailure> {
+    ) -> Result<(Vec<PodRecord>, Option<PodPilotSample>), CollectFailure> {
         let mut completed = Vec::new();
+        let mut pilot_sample = (self.config.pilot_sample_denom > 0).then(PodPilotSample::default);
         let first_index = update * PODS_PER_UPDATE;
         let indices = first_index..first_index + PODS_PER_UPDATE;
-        if self.config.fill_pod_tails
-            && self.config.workers > 1
-            && matches!(selection, PilotSelection::Uniform)
-        {
+        if self.config.fill_pod_tails && self.config.workers > 1 {
             let mut indices = indices;
             while let Some(first_index) = indices.next() {
                 let Some(second_index) = indices.next() else {
                     let result =
                         self.collect_pod(pool, first_index, selection, pilot, snapshots, None);
-                    self.persist_pod(update, result, &mut completed)?;
+                    self.persist_pod(update, execution, result, &mut completed, &mut pilot_sample)?;
                     break;
                 };
                 let slots = TrainingPairSlots::new(self.config.workers);
@@ -2506,22 +2653,28 @@ impl TrainingDriver {
                         .map_err(pod_thread_spawn_error)?;
                     // Durable partial records must keep the same prefix even
                     // if a later pod finishes or sees a stop first.
-                    let first = self.persist_pod(update, join_collected_pod(first), &mut completed);
+                    let first = self.persist_pod(
+                        update,
+                        execution,
+                        join_collected_pod(first),
+                        &mut completed,
+                        &mut pilot_sample,
+                    );
                     if first.is_err() {
                         slots.cancel_second();
                     }
                     let second = join_collected_pod(second);
                     first?;
-                    self.persist_pod(update, second, &mut completed)
+                    self.persist_pod(update, execution, second, &mut completed, &mut pilot_sample)
                 })?;
             }
         } else {
             for pod_index in indices {
                 let result = self.collect_pod(pool, pod_index, selection, pilot, snapshots, None);
-                self.persist_pod(update, result, &mut completed)?;
+                self.persist_pod(update, execution, result, &mut completed, &mut pilot_sample)?;
             }
         }
-        Ok(completed)
+        Ok((completed, pilot_sample))
     }
 
     fn collect_pod(
@@ -2532,7 +2685,7 @@ impl TrainingDriver {
         pilot: &(dyn GamePilot + Sync),
         snapshots: &BTreeMap<String, Snapshot>,
         pair: Option<(&TrainingPairSlots, TrainingPodSlot)>,
-    ) -> Result<PodRecord, PodRunnerError> {
+    ) -> Result<TrainingPodOutput, PodRunnerError> {
         let current: Arc<dyn SeatForward> = self.model.seat.clone();
         let league_seed = pod_league_seed(&self.config.namespace, &self.config.run, pod_index)?;
         let mut stream = SplitMix64::seed(league_seed);
@@ -2586,17 +2739,97 @@ impl TrainingDriver {
                 builder: Box::new(LearnedSeatBuilder::new(forward)),
             }
         });
-        run_training_pod_with_slots(pool, &config, &mut chairs, pilot, pair)
+        let options = TrainingPodOptions {
+            record_version: self.config.pod_record_version,
+            pilot_sample_denom: self.config.pilot_sample_denom,
+            host: self.config.host.as_deref().unwrap_or("local"),
+        };
+        run_training_pod_with_options(pool, &config, &mut chairs, pilot, &options, pair)
+    }
+
+    fn write_timing_sidecar(
+        &self,
+        update: u64,
+        execution: u8,
+        pod_index: u64,
+        timings: &[AttemptTiming],
+    ) -> Result<(), TrainingDriverError> {
+        let dir = self.config.root.join("timing").join(update_name(update));
+        fs::create_dir_all(&dir)?;
+        let mut buf = String::new();
+        for entry in timings {
+            let line = TrainingTimingLine {
+                schema: TRAINING_TIMING_SCHEMA_V1,
+                update,
+                execution,
+                pod_index,
+                game: entry.game,
+                attempt: entry.attempt,
+                elapsed_ms: entry.elapsed_ms,
+                host: &entry.host,
+            };
+            let text = to_canonical_compact_json(&line).map_err(TrainingDriverError::Pod)?;
+            buf.push_str(&text);
+            buf.push('\n');
+        }
+        let path = dir.join(format!("pod-{pod_index:06}.jsonl"));
+        replace_bytes(&path, buf.as_bytes())
+    }
+
+    fn pilot_path_sidecar_bytes(
+        &self,
+        update: u64,
+        pilot: &PilotInfo,
+        sample: &PodPilotSample,
+    ) -> Result<Vec<u8>, TrainingDriverError> {
+        let sidecar = PilotPathUpdateSidecar {
+            schema: PILOT_PATH_SCHEMA_V1.to_owned(),
+            namespace: self.config.namespace.clone(),
+            run: self.config.run.clone(),
+            segment: self.config.segment,
+            update,
+            pilot: pilot.clone(),
+            sample_denom: self.config.pilot_sample_denom,
+            total_games: sample.total_games,
+            sampled_games: sample.sampled_games,
+            sampled_attempts: sample.sampled_attempts,
+            sampled_decisions: sample.counts.decisions,
+            sampled_refused_decisions: sample.counts.refused_decisions,
+            offered_decisions_null: sample.counts.offered_decisions_null,
+            offered_actions_null: sample.counts.offered_actions_null,
+            chosen_null: sample.counts.chosen_null,
+            offered_decisions_by_card: sample
+                .counts
+                .offered_decisions_by_card
+                .iter()
+                .map(|(k, &v)| (k.to_string(), v))
+                .collect(),
+            offered_actions_by_card: sample
+                .counts
+                .offered_actions_by_card
+                .iter()
+                .map(|(k, &v)| (k.to_string(), v))
+                .collect(),
+            chosen_by_card: sample
+                .counts
+                .chosen_by_card
+                .iter()
+                .map(|(k, &v)| (k.to_string(), v))
+                .collect(),
+        };
+        json_bytes(&sidecar)
     }
 
     fn persist_pod(
         &self,
         update: u64,
-        result: Result<PodRecord, PodRunnerError>,
+        execution: u8,
+        result: Result<TrainingPodOutput, PodRunnerError>,
         completed: &mut Vec<PodRecord>,
+        pilot_sample: &mut Option<PodPilotSample>,
     ) -> Result<(), CollectFailure> {
         match result {
-            Ok(record) => {
+            Ok(out) => {
                 let pending = self
                     .config
                     .root
@@ -2606,13 +2839,29 @@ impl TrainingDriver {
                 fs::create_dir_all(&pending)
                     .map_err(TrainingDriverError::from)
                     .map_err(CollectFailure::Error)?;
-                let bytes = json_bytes(&record).map_err(CollectFailure::Error)?;
+                let bytes = json_bytes(&out.record).map_err(CollectFailure::Error)?;
                 write_synced(
-                    &pending.join(format!("pod-{:06}.json", record.pod_index)),
+                    &pending.join(format!("pod-{:06}.json", out.record.pod_index)),
                     &bytes,
                 )
                 .map_err(CollectFailure::Error)?;
-                completed.push(record);
+                // Fail closed on timing-sidecar I/O failure on v3 (M5) runs so
+                // incomplete timing records are never silently dropped on a
+                // live host; v2 (D0/D8) runs omit timing sidecars to preserve
+                // bit-identical directory trees.
+                if self.config.pod_record_version.is_v3() {
+                    self.write_timing_sidecar(
+                        update,
+                        execution,
+                        out.record.pod_index,
+                        &out.timings,
+                    )
+                    .map_err(CollectFailure::Error)?;
+                }
+                if let (Some(agg), Some(pod_sample)) = (pilot_sample.as_mut(), &out.pilot_sample) {
+                    agg.merge_from(pod_sample);
+                }
+                completed.push(out.record);
                 Ok(())
             }
             Err(PodRunnerError::Stopped(pod)) => Err(CollectFailure::Stop(BatchFailure {
@@ -2768,12 +3017,27 @@ impl TrainingDriver {
         sync_directory(pending)?;
         sync_directory(&self.config.root.join("pending"))?;
 
-        let mut first_watchdog = None;
-        let mut void_execution = None;
+        // Under L3 host-loss replay, restore any persisted execution-0
+        // watchdog void so a host loss during execution 1 never resets the
+        // 1-rerun watchdog budget. Under D0/D8 AbandonTouchedBatch, start
+        // clean so conflicting pre-existing watchdog files fail at publish.
+        let (mut first_watchdog, mut void_execution) =
+            if self.config.host_loss_policy == HostLossPolicy::ReplayInterruptedBatch {
+                let first = first_watchdog(&self.config.root, update)?;
+                let void_bytes = if first.is_some() {
+                    Some(fs::read(watchdog_path(&self.config.root, update))?)
+                } else {
+                    None
+                };
+                (first, void_bytes)
+            } else {
+                (None, None)
+            };
         let partial = pending.join("partial");
-        let pods = loop {
-            match self.collect_batch(pool, update, selection, pilot, &self.snapshots) {
-                Ok(pods) => break pods,
+        let (pods, pilot_sample) = loop {
+            let execution = u8::from(void_execution.is_some());
+            match self.collect_batch(pool, update, execution, selection, pilot, &self.snapshots) {
+                Ok(result) => break result,
                 Err(CollectFailure::Error(error)) => {
                     self.abandon_error(update, pending, first_watchdog, &error, None)?;
                     if matches!(
@@ -2891,6 +3155,10 @@ impl TrainingDriver {
                 decoding: pin.decoding.clone(),
             },
         };
+        let pilot_path_bytes = pilot_sample
+            .as_ref()
+            .map(|sample| self.pilot_path_sidecar_bytes(update, &pilot_info, sample))
+            .transpose()?;
         let receipt = UpdateReceipt {
             before_state_sha256: before_state,
             after_state_sha256: state_pin.clone(),
@@ -2920,6 +3188,9 @@ impl TrainingDriver {
         write_synced(&pending.join("pods.json"), &pod_bytes)?;
         write_synced(&pending.join("checkpoint.json"), &json_bytes(&checkpoint)?)?;
         write_synced(&pending.join("update.json"), &json_bytes(&receipt)?)?;
+        if let Some(bytes) = &pilot_path_bytes {
+            write_synced(&pending.join("pilot_path.json"), bytes)?;
+        }
         if let Some(bytes) = &void_execution {
             write_synced(&pending.join("execution-0.json"), bytes)?;
         }
@@ -2957,6 +3228,7 @@ impl TrainingDriver {
         }
         let names = ["pods.json", "checkpoint.json", "update.json"]
             .into_iter()
+            .chain(pilot_path_bytes.is_some().then_some("pilot_path.json"))
             .chain(firing.is_some().then_some("stop.json"))
             .chain(league_snapshot_bytes.is_some().then_some("league.json"))
             .chain(void_execution.is_some().then_some("execution-0.json"));
@@ -2980,6 +3252,7 @@ impl TrainingDriver {
         sync_directory(&self.config.root.join("pending"))?;
         sync_directory(&self.config.root.join("updates"))?;
         restore_update_league_snapshot(&self.config.root, &published)?;
+        restore_update_pilot_path(&self.config.root, &published, update)?;
         published_stop(&self.config.root, &published, update)?;
         self.next_update += 1;
         self.model = model;

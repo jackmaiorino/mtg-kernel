@@ -577,6 +577,9 @@ impl GamePilot for Fixture {
                 reason: "fixture".into(),
             },
             last_action_source: None,
+            first_player_seat: Some(spec.seats[0]),
+            last_acting_seat: Some(spec.seats[0]),
+            pilot_sample: None,
         }
     }
 }

@@ -879,6 +879,10 @@ def _halts_and_lengths(read: str, records: dict[int, dict[str, Any]], plans: dic
         "draw": {"completed": 0, "halted": 0},
     }
     by_arm: dict[str, dict[str, int]] = {}
+    by_first_player_seat: dict[str, dict[str, int]] = {}
+    by_last_acting_seat: dict[str, dict[str, int]] = {}
+    by_last_acting_arm: dict[str, dict[str, int]] = {}
+    has_v3_attempt_fields = False
     completed_decisions: list[Fraction] = []
     over_8192 = 0
     for pid, gs in sorted(scoped.items()):
@@ -892,6 +896,15 @@ def _halts_and_lengths(read: str, records: dict[int, dict[str, Any]], plans: dic
             by_play_draw[pd]["halted" if halted else "completed"] += 1
             arm_bucket = by_arm.setdefault(arm, {"completed": 0, "halted": 0})
             arm_bucket["halted" if halted else "completed"] += 1
+            if "first_player_seat" in att:
+                has_v3_attempt_fields = True
+                status_key = "halted" if halted else "completed"
+                fp = "null" if att["first_player_seat"] is None else str(att["first_player_seat"])
+                by_first_player_seat.setdefault(fp, {"completed": 0, "halted": 0})[status_key] += 1
+                ls = "null" if att["last_acting_seat"] is None else str(att["last_acting_seat"])
+                by_last_acting_seat.setdefault(ls, {"completed": 0, "halted": 0})[status_key] += 1
+                la = "null" if att["last_acting_arm"] is None else str(att["last_acting_arm"])
+                by_last_acting_arm.setdefault(la, {"completed": 0, "halted": 0})[status_key] += 1
             cards_in_game = deck_cards.get(g["decks"][0], set()) | deck_cards.get(g["decks"][1], set())
             for cid in cards_in_game:
                 slot = by_card_present.setdefault(cid, [0, 0])
@@ -933,6 +946,10 @@ def _halts_and_lengths(read: str, records: dict[int, dict[str, Any]], plans: dic
         "decision_percentiles_completed": pcts,
         "completed_over_8192": over_8192,
     }
+    if has_v3_attempt_fields:
+        breakdown["by_first_player_seat"] = dict(sorted(by_first_player_seat.items()))
+        breakdown["by_last_acting_seat"] = dict(sorted(by_last_acting_seat.items()))
+        breakdown["by_last_acting_arm"] = dict(sorted(by_last_acting_arm.items()))
     return breakdown, warning
 
 

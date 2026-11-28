@@ -39,9 +39,9 @@ use crate::cube_pod_runner_v1::{
     AttemptTiming, BuilderKind, BuilderPin, BuilderRef, ChairRecord, ChairRole, DealtOrigin,
     DeckRecord, DeckSource, ExecOptions, GameCompleteHook, GameRole, GameTask, JsonParser,
     OrderedJson, PairedBuildKind, PairedBuildRecord, PilotInfo, PilotKind, PodCaps, PodGameRecord,
-    PodPins, PodRecord, PodRunnerError, PodSeeds, PodStatus, PodUse, SeatKind, SeatRef, SeatRule,
-    SeedPart, StopAttemptReport, StopReport, A2_GAME_CAPS, A2_MAX_STACK_OBJECTS,
-    DEFAULT_WATCHDOG_SECONDS, POD_RECORD_SCHEMA, READ_MAX_REPLAYS, WATCHDOG_STOP_KIND,
+    PodPilotSample, PodPins, PodRecord, PodRecordVersion, PodRunnerError, PodSeeds, PodStatus,
+    PodUse, SeatKind, SeatRef, SeatRule, SeedPart, StopAttemptReport, StopReport, A2_GAME_CAPS,
+    A2_MAX_STACK_OBJECTS, DEFAULT_WATCHDOG_SECONDS, READ_MAX_REPLAYS, WATCHDOG_STOP_KIND,
 };
 use crate::cube_seat_v1::{
     canonical_deck, run_seat_draft, BuildRows, DecisionKind, DecisionRow, GamePilot, SeatBuilder,
@@ -545,6 +545,18 @@ impl DeckRow {
             "k1_last" => Some(DeckRow::K1Last),
             "opponent" => Some(DeckRow::Opponent),
             _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            DeckRow::Candidate => "candidate",
+            DeckRow::Stated => "stated",
+            DeckRow::Current => "current",
+            DeckRow::Initial => "initial",
+            DeckRow::B1Last => "b1_last",
+            DeckRow::K1Last => "k1_last",
+            DeckRow::Opponent => "opponent",
         }
     }
 
@@ -1843,7 +1855,11 @@ fn parse_game_end_v1(value: &OrderedJson, path: &str) -> Result<GameEnd, String>
     }
 }
 
-fn parse_pod_game_record(value: &OrderedJson, path: &str) -> Result<PodGameRecord, String> {
+fn parse_pod_game_record(
+    value: &OrderedJson,
+    path: &str,
+    expected_v3: bool,
+) -> Result<PodGameRecord, String> {
     let g = expect_object_keys(
         value,
         path,
@@ -1899,26 +1915,63 @@ fn parse_pod_game_record(value: &OrderedJson, path: &str) -> Result<PodGameRecor
     let mut attempts = Vec::with_capacity(attempts_arr.len());
     for (idx, a_val) in attempts_arr.iter().enumerate() {
         let ap = format!("{path}.attempts[{idx}]");
-        let a = expect_object_keys(
-            a_val,
-            &ap,
-            &[
-                "attempt",
-                "deal_seed",
-                "env_seed",
-                "action_seed",
-                "decisions",
-                "physical_decisions",
-                "policy_steps",
-                "end",
-                "halted",
-                "stop_kind",
-                "last_action_source",
-            ],
-        )?;
+        let a_is_v3 = expected_v3;
+        let a = if a_is_v3 {
+            expect_object_keys(
+                a_val,
+                &ap,
+                &[
+                    "attempt",
+                    "deal_seed",
+                    "env_seed",
+                    "action_seed",
+                    "decisions",
+                    "physical_decisions",
+                    "policy_steps",
+                    "end",
+                    "halted",
+                    "stop_kind",
+                    "last_action_source",
+                    "first_player_seat",
+                    "last_acting_seat",
+                    "last_acting_arm",
+                ],
+            )?
+        } else {
+            expect_object_keys(
+                a_val,
+                &ap,
+                &[
+                    "attempt",
+                    "deal_seed",
+                    "env_seed",
+                    "action_seed",
+                    "decisions",
+                    "physical_decisions",
+                    "policy_steps",
+                    "end",
+                    "halted",
+                    "stop_kind",
+                    "last_action_source",
+                ],
+            )?
+        };
         let last_action_source = expect_opt_u64(&a[10].1, &format!("{ap}.last_action_source"))?
             .map(|n| u16::try_from(n).map_err(|_| format!("{ap}.last_action_source exceeds u16")))
             .transpose()?;
+        let (first_player_seat, last_acting_seat, last_acting_arm) = if a_is_v3 {
+            let first = expect_opt_u64(&a[11].1, &format!("{ap}.first_player_seat"))?
+                .map(|n| u8::try_from(n).map_err(|_| format!("{ap}.first_player_seat exceeds u8")))
+                .transpose()?;
+            let last = expect_opt_u64(&a[12].1, &format!("{ap}.last_acting_seat"))?
+                .map(|n| u8::try_from(n).map_err(|_| format!("{ap}.last_acting_seat exceeds u8")))
+                .transpose()?;
+            let arm =
+                expect_opt_str(&a[13].1, &format!("{ap}.last_acting_arm"))?.map(str::to_owned);
+            (first, last, arm)
+        } else {
+            (None, None, None)
+        };
         attempts.push(AttemptRecord {
             attempt: expect_u8(&a[0].1, &format!("{ap}.attempt"))?,
             deal_seed: expect_u64(&a[1].1, &format!("{ap}.deal_seed"))?,
@@ -1931,6 +1984,10 @@ fn parse_pod_game_record(value: &OrderedJson, path: &str) -> Result<PodGameRecor
             halted: expect_bool(&a[8].1, &format!("{ap}.halted"))?,
             stop_kind: expect_opt_str(&a[9].1, &format!("{ap}.stop_kind"))?.map(str::to_owned),
             last_action_source,
+            first_player_seat,
+            last_acting_seat,
+            last_acting_arm,
+            v3: a_is_v3,
         });
     }
     let scores = match &g[10].1 {
@@ -5344,6 +5401,8 @@ pub struct ReadPlanRunOptions<'a> {
     pub host: &'a str,
     pub watchdog_override: Option<Duration>,
     pub journal: Option<&'a PodProgressJournal>,
+    pub record_version: PodRecordVersion,
+    pub pilot_sample_denom: u64,
 }
 
 /// Result of executing a single [`ReadPlanV1`] pod.
@@ -5352,6 +5411,7 @@ pub struct ReadPlanPodOutput {
     pub record: PodRecord,
     pub timings: Vec<AttemptTiming>,
     pub watchdog_stopped: bool,
+    pub pilot_sample: Option<PodPilotSample>,
 }
 
 /// Executes one validated [`ReadPlanV1`] pod: redrafts and rebuilds (refusing
@@ -5376,6 +5436,19 @@ pub fn execute_read_plan_v1(
         journal.record_header(&header).map_err(PodRunnerError::Io)?;
     }
 
+    let is_a_family =
+        plan.family.is_a_mirror() || plan.family.is_one_seat() || plan.family.is_all_learned();
+    let deck_arm = |deck_id: u32, chair: Option<u8>| -> String {
+        let row = plan.decks[deck_id as usize].row.as_str();
+        if is_a_family {
+            let role = chair
+                .and_then(|c| plan.chairs.get(usize::from(c)))
+                .map_or("fixture", |ch| ch.role.as_str());
+            format!("{role}:{row}")
+        } else {
+            row.to_owned()
+        }
+    };
     let tasks: Vec<GameTask> = plan
         .games
         .iter()
@@ -5392,6 +5465,10 @@ pub fn execute_read_plan_v1(
                 decks: g.decks,
                 chairs: g.chairs,
                 seats,
+                arms: [
+                    deck_arm(g.decks[0], g.chairs[0]),
+                    deck_arm(g.decks[1], g.chairs[1]),
+                ],
                 seat_rule: SeatRule::Schedule,
                 game_seed: g.game_seed,
                 episode: g.episode,
@@ -5415,12 +5492,16 @@ pub fn execute_read_plan_v1(
 
     let stop_on_watchdog = options.execution == 1;
     let exec_opts = ExecOptions {
+        namespace: &plan.namespace,
+        run: &plan.run,
         pod_index: plan.pod_index,
         caps: plan.caps,
         watchdog_override: options.watchdog_override,
         workers: options.workers,
         host: options.host,
         stop_on_watchdog,
+        record_version: options.record_version,
+        pilot_sample_denom: options.pilot_sample_denom,
         on_game_complete,
     };
     let exec_out = execute_game_tasks_with_options(&tasks, &built_decks, pilot, &exec_opts)?;
@@ -5447,8 +5528,8 @@ pub fn execute_read_plan_v1(
         };
 
     let record = PodRecord {
-        schema: POD_RECORD_SCHEMA,
-        interfaces: M4_INTERFACES_VERSION,
+        schema: options.record_version.schema_str(),
+        interfaces: options.record_version.interfaces_str(),
         pod_use: plan.pod_use,
         namespace: plan.namespace.clone(),
         run: plan.run.clone(),
@@ -5471,6 +5552,7 @@ pub fn execute_read_plan_v1(
         record,
         timings: exec_out.timings,
         watchdog_stopped,
+        pilot_sample: exec_out.pilot_sample,
     })
 }
 
@@ -5485,6 +5567,25 @@ pub fn finalize_stopped_record_from_journal(
     journal_path: &Path,
     fallback_header: Option<PodJournalHeader>,
 ) -> Result<(PodRecord, Vec<AttemptTiming>), PodRunnerError> {
+    finalize_stopped_record_from_journal_with_version(
+        plan,
+        journal_path,
+        fallback_header,
+        PodRecordVersion::V2,
+    )
+}
+
+/// Version-aware variant of [`finalize_stopped_record_from_journal`] that
+/// preserves the execution's declared [`PodRecordVersion`] even when process
+/// death occurred before game 0 finished (empty journal prefix) and rejects
+/// mixed-version journal entries.
+pub fn finalize_stopped_record_from_journal_with_version(
+    plan: &ReadPlanV1,
+    journal_path: &Path,
+    fallback_header: Option<PodJournalHeader>,
+    record_version: PodRecordVersion,
+) -> Result<(PodRecord, Vec<AttemptTiming>), PodRunnerError> {
+    let expected_v3 = record_version == PodRecordVersion::V3;
     let mut header: Option<PodJournalHeader> = None;
     let mut completed_by_game: BTreeMap<u32, (PodGameRecord, Vec<AttemptTiming>)> = BTreeMap::new();
 
@@ -5552,9 +5653,13 @@ pub fn finalize_stopped_record_from_journal(
                     else {
                         break;
                     };
-                    let Ok(game) = parse_pod_game_record(&g[1].1, "journal.game.game") else {
-                        break;
-                    };
+                    let game = parse_pod_game_record(&g[1].1, "journal.game.game", expected_v3)
+                        .map_err(|err| {
+                            plan_err(format!(
+                                "journal game record failed v{} validation: {err}",
+                                if expected_v3 { 3 } else { 2 }
+                            ))
+                        })?;
                     let Ok(t_arr) = expect_array(&g[2].1, "journal.game.timings") else {
                         break;
                     };
@@ -5621,9 +5726,10 @@ pub fn finalize_stopped_record_from_journal(
         }
     };
 
+    let version = record_version;
     let record = PodRecord {
-        schema: POD_RECORD_SCHEMA,
-        interfaces: M4_INTERFACES_VERSION,
+        schema: version.schema_str(),
+        interfaces: version.interfaces_str(),
         pod_use: plan.pod_use,
         namespace: plan.namespace.clone(),
         run: plan.run.clone(),
@@ -5806,6 +5912,98 @@ fn preflight_plan_set_execution(
     })
 }
 
+/// Options controlling record schema version and pilot-path sampling for
+/// plan-set executions (`m4-interfaces/v3` r2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadPlanSetOptions {
+    pub record_version: PodRecordVersion,
+    pub pilot_sample_denom: u64,
+}
+
+impl Default for ReadPlanSetOptions {
+    fn default() -> Self {
+        Self {
+            record_version: PodRecordVersion::V2,
+            pilot_sample_denom: 0,
+        }
+    }
+}
+
+/// Deterministic per-pod pilot-path sidecar for read sets (`m4-interfaces/v3` r2
+/// section 4, mandatory whenever `sample_denom > 0`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadPilotPathSidecar {
+    pub schema: String,
+    pub namespace: String,
+    pub run: String,
+    pub segment: Option<String>,
+    pub update: Option<u64>,
+    pub pilot: PilotInfo,
+    pub sample_denom: u64,
+    pub total_games: u64,
+    pub sampled_games: u64,
+    pub sampled_attempts: u64,
+    pub sampled_decisions: u64,
+    pub sampled_refused_decisions: u64,
+    pub offered_decisions_null: u64,
+    pub offered_actions_null: u64,
+    pub chosen_null: u64,
+    pub offered_decisions_by_card: BTreeMap<String, u64>,
+    pub offered_actions_by_card: BTreeMap<String, u64>,
+    pub chosen_by_card: BTreeMap<String, u64>,
+}
+
+/// Writes `<exec_dir>/pilot_path/pod-<pod_index:06>.json` atomically.
+pub fn write_read_pilot_path_sidecar(
+    path: &Path,
+    plan: &ReadPlanV1,
+    sample_denom: u64,
+    sample: &PodPilotSample,
+) -> Result<(), PodRunnerError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", parent.display())))?;
+    }
+    let sidecar = ReadPilotPathSidecar {
+        schema: crate::cube_pod_runner_v1::PILOT_PATH_SCHEMA_V1.to_owned(),
+        namespace: plan.namespace.clone(),
+        run: plan.run.clone(),
+        segment: None,
+        update: None,
+        pilot: plan.pilot.clone(),
+        sample_denom,
+        total_games: sample.total_games,
+        sampled_games: sample.sampled_games,
+        sampled_attempts: sample.sampled_attempts,
+        sampled_decisions: sample.counts.decisions,
+        sampled_refused_decisions: sample.counts.refused_decisions,
+        offered_decisions_null: sample.counts.offered_decisions_null,
+        offered_actions_null: sample.counts.offered_actions_null,
+        chosen_null: sample.counts.chosen_null,
+        offered_decisions_by_card: sample
+            .counts
+            .offered_decisions_by_card
+            .iter()
+            .map(|(k, &v)| (k.to_string(), v))
+            .collect(),
+        offered_actions_by_card: sample
+            .counts
+            .offered_actions_by_card
+            .iter()
+            .map(|(k, &v)| (k.to_string(), v))
+            .collect(),
+        chosen_by_card: sample
+            .counts
+            .chosen_by_card
+            .iter()
+            .map(|(k, &v)| (k.to_string(), v))
+            .collect(),
+    };
+    let text = to_canonical_pretty_json(&sidecar)?;
+    write_new_bytes(path, text.as_bytes())
+}
+
 /// Runs a complete plan-set execution in `set_dir/exec-<execution>/`, writing
 /// `records/pod-<pod_index>.json`, `timing/pod-<pod_index>.jsonl`, and
 /// `execution.json` last.
@@ -5820,14 +6018,48 @@ pub fn run_plan_set_execution(
     workers: usize,
     watchdog_override: Option<Duration>,
 ) -> Result<PlanExecutionReceipt, PodRunnerError> {
+    run_plan_set_execution_with_options(
+        pool,
+        set_dir,
+        execution,
+        seats,
+        pilot,
+        verification,
+        workers,
+        watchdog_override,
+        ReadPlanSetOptions::default(),
+    )
+}
+
+/// Runs a complete plan-set execution with explicit [`ReadPlanSetOptions`]
+/// (`m4-interfaces/v3` r2 record version and mandatory `pilot_path/` sidecar
+/// when `pilot_sample_denom > 0`).
+#[allow(clippy::too_many_arguments)]
+pub fn run_plan_set_execution_with_options(
+    pool: &CubePool,
+    set_dir: &Path,
+    execution: u64,
+    seats: &dyn SeatFactory,
+    pilot: &(dyn GamePilot + Sync),
+    verification: &RuntimeVerification,
+    workers: usize,
+    watchdog_override: Option<Duration>,
+    set_options: ReadPlanSetOptions,
+) -> Result<PlanExecutionReceipt, PodRunnerError> {
     let preflight = preflight_plan_set_execution(set_dir, execution, verification, seats)?;
     let exec_dir = set_dir.join(format!("exec-{execution}"));
     let records_dir = exec_dir.join("records");
     let timing_dir = exec_dir.join("timing");
+    let pilot_path_dir = exec_dir.join("pilot_path");
     fs::create_dir_all(&records_dir)
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", records_dir.display())))?;
     fs::create_dir_all(&timing_dir)
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", timing_dir.display())))?;
+    if set_options.pilot_sample_denom > 0 {
+        fs::create_dir_all(&pilot_path_dir).map_err(|error| {
+            PodRunnerError::Io(format!("{}: {error}", pilot_path_dir.display()))
+        })?;
+    }
 
     let mut records = Vec::with_capacity(preflight.plans.len());
     let mut ended = PlanExecutionEnded::Complete;
@@ -5839,6 +6071,8 @@ pub fn run_plan_set_execution(
             host: &verification.host,
             watchdog_override,
             journal: None,
+            record_version: set_options.record_version,
+            pilot_sample_denom: set_options.pilot_sample_denom,
         };
         let out = execute_read_plan_v1(pool, plan, seats, pilot, &run_opts)?;
         let record_text = to_canonical_pretty_json(&out.record)?;
@@ -5847,6 +6081,21 @@ pub fn run_plan_set_execution(
         let timing_path = timing_dir.join(format!("pod-{}.jsonl", pod_entry.pod_index));
         write_new_bytes(&record_path, record_text.as_bytes())?;
         write_timing_jsonl(&timing_path, &out.timings)?;
+        if set_options.pilot_sample_denom > 0 {
+            let sample = out.pilot_sample.as_ref().ok_or_else(|| {
+                plan_err(format!(
+                    "read pod {} missing required pilot_path sample for denom {}",
+                    pod_entry.pod_index, set_options.pilot_sample_denom
+                ))
+            })?;
+            let sidecar_path = pilot_path_dir.join(format!("pod-{:06}.json", pod_entry.pod_index));
+            write_read_pilot_path_sidecar(
+                &sidecar_path,
+                plan,
+                set_options.pilot_sample_denom,
+                sample,
+            )?;
+        }
         records.push(ExecutionRecordEntry {
             pod_index: pod_entry.pod_index,
             sha256: record_sha,
@@ -5986,6 +6235,30 @@ pub fn supervise_plan_set_execution(
     verification: &RuntimeVerification,
     launcher: &dyn PodWorkerLauncher,
 ) -> Result<PlanExecutionReceipt, PodRunnerError> {
+    supervise_plan_set_execution_with_options(
+        pool,
+        set_dir,
+        execution,
+        seats,
+        verification,
+        launcher,
+        ReadPlanSetOptions::default(),
+    )
+}
+
+/// Version-aware variant of [`supervise_plan_set_execution`] that preserves
+/// `set_options.record_version` on stopped records even when a worker dies
+/// before game 0 finishes, and creates `exec-<e>/pilot_path/` when
+/// `pilot_sample_denom > 0`.
+pub fn supervise_plan_set_execution_with_options(
+    pool: &CubePool,
+    set_dir: &Path,
+    execution: u64,
+    seats: &dyn SeatFactory,
+    verification: &RuntimeVerification,
+    launcher: &dyn PodWorkerLauncher,
+    set_options: ReadPlanSetOptions,
+) -> Result<PlanExecutionReceipt, PodRunnerError> {
     let preflight = preflight_plan_set_execution(set_dir, execution, verification, seats)?;
     let exec_dir = set_dir.join(format!("exec-{execution}"));
     let records_dir = exec_dir.join("records");
@@ -5995,6 +6268,12 @@ pub fn supervise_plan_set_execution(
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", records_dir.display())))?;
     fs::create_dir_all(&timing_dir)
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", timing_dir.display())))?;
+    if set_options.pilot_sample_denom > 0 {
+        let pilot_path_dir = exec_dir.join("pilot_path");
+        fs::create_dir_all(&pilot_path_dir).map_err(|error| {
+            PodRunnerError::Io(format!("{}: {error}", pilot_path_dir.display()))
+        })?;
+    }
     fs::create_dir_all(&journal_dir)
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", journal_dir.display())))?;
 
@@ -6032,11 +6311,21 @@ pub fn supervise_plan_set_execution(
                 if timing_path.exists() {
                     let _ = fs::remove_file(&timing_path);
                 }
+                let stale_pilot_path = exec_dir
+                    .join("pilot_path")
+                    .join(format!("pod-{:06}.json", pod_entry.pod_index));
+                if stale_pilot_path.exists() {
+                    let _ = fs::remove_file(&stale_pilot_path);
+                }
                 let fallback_header = prepare_read_plan_decks(pool, plan, seats)
                     .ok()
                     .map(|(header, _)| header);
-                let (stopped_record, timings) =
-                    finalize_stopped_record_from_journal(plan, &journal_path, fallback_header)?;
+                let (stopped_record, timings) = finalize_stopped_record_from_journal_with_version(
+                    plan,
+                    &journal_path,
+                    fallback_header,
+                    set_options.record_version,
+                )?;
                 let record_text = to_canonical_pretty_json(&stopped_record)?;
                 let record_sha = sha256_hex(record_text.as_bytes());
                 write_new_bytes(&record_path, record_text.as_bytes())?;
