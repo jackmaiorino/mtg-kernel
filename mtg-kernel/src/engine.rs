@@ -3240,11 +3240,38 @@ fn authenticated_spell_cast_receipt(
             disguised: face.disguised,
         },
     );
-    if receipt.spell != item.source
+    // `infoset_v1` exports rewrite a `PublishedCastIdentityV1` receipt whose
+    // pre-cast origin generation precedes the viewer's tracking span (e.g. a
+    // spell cast from an opponent's hidden hand) into an unzoned `Zone::Command`
+    // generation-0 tombstone with zeroed receipt generations while keeping the
+    // adjacent `SpellCast` event linked to `item.source` and preserving owner,
+    // controller, origin zone, stack item id, and `public_identity`.
+    let is_infoset_tombstone = receipt.spell != item.source
+        && receipt.origin_zone_change_count == 0
+        && receipt.stack_zone_change_count == 0
+        && state.objects.try_get(receipt.spell).is_some_and(|tomb| {
+            tomb.zone == Zone::Command
+                && tomb.zone_change_count == 0
+                && !state.command.contains(&receipt.spell)
+                && tomb.owner == source.owner
+                && tomb.controller == source.owner
+                && !tomb.tapped
+                && !tomb.summoning_sick
+                && tomb.damage == 0
+                && tomb.attachments.is_empty()
+                && !tomb.v4.is_token
+                && tomb.v4.face_down_v1.is_none()
+                && tomb.v4.spell_cast_origin.is_none()
+                && tomb.spell_copy_origin.is_none()
+                && tomb.plotted_turn.is_none()
+        });
+    let spell_incarnation_matches = (receipt.spell == item.source
+        && receipt.origin_zone_change_count == origin.origin_zone_change_count
+        && receipt.stack_zone_change_count == source.zone_change_count)
+        || is_infoset_tombstone;
+    if !spell_incarnation_matches
         || receipt.owner != source.owner
         || receipt.origin_zone != origin.origin_zone
-        || receipt.origin_zone_change_count != origin.origin_zone_change_count
-        || receipt.stack_zone_change_count != source.zone_change_count
         || receipt.public_identity != expected_public_identity
         || u64::try_from(cast_at).ok() != Some(receipt.spell_cast_history_index)
         || history.get(cast_at)
@@ -33357,9 +33384,28 @@ fn spell_copy_parent_payment_matches_object(
     let Some(live) = state.objects.try_get(card.object) else {
         return false;
     };
+    // CR 707.2 / 400.7: require live definition equality while the paid card
+    // has not moved. Once it has moved (e.g. a Shifting Woodland discarded to
+    // Retrace, returned to the battlefield by Titania, and turned into a copy
+    // of another card), compare against its physical definition with copy
+    // effects removed, never against a copied definition.
+    let card_def_matches = if live.zone_change_count == card.zone_change_count {
+        card.card_def == live.card_def
+    } else if live.zone == Zone::Battlefield {
+        crate::standard_cards_v1::archived_copy_printing(
+            state,
+            ObjectLinkV4 {
+                object: card.object,
+                zone_change_count: live.zone_change_count,
+            },
+            live.card_def,
+        ) == Some(card.card_def)
+    } else {
+        card.card_def == live.card_def
+    };
     !live.v4.is_token
         && card.object != parent.source
-        && card.card_def == live.card_def
+        && card_def_matches
         && card.owner == caster
         && live.owner == caster
         && card.controller == caster
@@ -47083,6 +47129,217 @@ mod tests {
 
         // 3. Unchanged genuine escaped Chain Lightning copy offer stays accepted.
         assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Issue #987 review round 2, finding 1: a paid card that later moves to
+    /// the battlefield and becomes a copy of another permanent (Shifting
+    /// Woodland discarded for Retrace, returned by Titania blinked with
+    /// Ephemerate, then copying Gurmag Angler) must match its physical printing
+    /// with copy effects removed so Chain Lightning's copy offer proceeds,
+    /// while forging the payment record to the copied definition or a wrong
+    /// generation is still refused.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_retrace_paid_woodland_returned_and_copied_offers_copy() {
+        let woodland_def = card_id_by_name("Shifting Woodland").unwrap();
+        let forest_def = card_id_by_name("Forest").unwrap();
+        let angler_def = card_id_by_name("Gurmag Angler").unwrap();
+        assert_ne!(woodland_def, angler_def);
+
+        let mut state = GameState::new_from_libraries(
+            &[woodland_def],
+            &[forest_def; 4],
+            |def| card_def::CARD_DEFS[usize::from(def)].name.into(),
+            9873,
+        );
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        crate::eternal_vintage_e7b_v1::e7b_state(&mut state).wrenn_emblems[0] = 1;
+
+        let titania = put_on_battlefield(&mut state, PlayerId::P0, "Titania, Protector of Argoth");
+        put_on_battlefield(&mut state, PlayerId::P0, "Forest");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+
+        // Four card types (creature, instant, artifact, land) remain in P0's
+        // graveyard even after Shifting Woodland returns to the battlefield.
+        let angler = put_in_graveyard(&mut state, PlayerId::P0, "Gurmag Angler");
+        put_in_graveyard(&mut state, PlayerId::P0, "Lightning Bolt");
+        put_in_graveyard(&mut state, PlayerId::P0, "Mind Stone");
+        put_in_graveyard(&mut state, PlayerId::P0, "Island");
+
+        // Draw Shifting Woodland so its hand incarnation has generation 1.
+        event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
+        let woodland = *state.players[0]
+            .hand
+            .last()
+            .expect("drawn Shifting Woodland");
+        assert_eq!(state.objects.get(woodland).card_def, woodland_def);
+        assert_eq!(state.objects.get(woodland).zone, Zone::Hand);
+        assert_eq!(state.objects.get(woodland).zone_change_count, 1);
+
+        let ephemerate = put_in_hand(&mut state, PlayerId::P0, "Ephemerate");
+        let chain = put_in_graveyard(&mut state, PlayerId::P0, "Chain Lightning");
+
+        // 1. Retrace Chain Lightning targeting P1, discarding Shifting Woodland.
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { .. } => step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(PlayerId::P1)),
+                )
+                .unwrap(),
+                Decision::ChooseCostTargets { candidates, .. } => {
+                    assert!(candidates.contains(&woodland));
+                    step(&mut state, Action::ChooseCostTarget(woodland)).unwrap();
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision retracing Chain Lightning: {other:?}"),
+            }
+        }
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.objects.get(woodland).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(woodland).zone_change_count, 2);
+        assert_eq!(
+            state.stack[0].v4.paid_cost_refs[0].card_def, woodland_def,
+            "payment ref records Shifting Woodland's physical definition"
+        );
+        assert_eq!(state.stack[0].v4.paid_cost_refs[0].zone_change_count, 2);
+
+        // 2. Holding priority, cast Ephemerate blinking Titania so her ETB
+        //    returns Shifting Woodland to the battlefield.
+        assert_eq!(state.priority_player, PlayerId::P0);
+        state.players[0].mana_pool[ManaColor::W.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(ephemerate)).unwrap();
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { .. } => {
+                    step(&mut state, Action::ChooseTarget(Target::Object(titania))).unwrap()
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision casting Ephemerate: {other:?}"),
+            }
+        }
+        assert_eq!(state.stack.len(), 2);
+
+        // Resolve Ephemerate; Titania's ETB trigger asks for a land card in
+        // P0's graveyard and returns Shifting Woodland to the battlefield.
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert!(legal_targets.contains(&Target::Object(woodland)));
+                    step(&mut state, Action::ChooseTarget(Target::Object(woodland))).unwrap();
+                    assert!(matches!(
+                        advance_until_decision(&mut state),
+                        Decision::CastSpellOrPass { .. }
+                    ));
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => step(&mut state, Action::Pass).unwrap(),
+                other => panic!("unexpected decision resolving Ephemerate: {other:?}"),
+            }
+        }
+        assert_eq!(state.stack.len(), 2);
+        while state.stack.len() > 1 {
+            match advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } if state.stack.len() > 1 => {
+                    step(&mut state, Action::Pass).unwrap();
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision resolving Titania ETB: {other:?}"),
+            }
+        }
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.objects.get(woodland).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(woodland).zone_change_count, 3);
+
+        // 3. With Chain Lightning still on the stack, activate Shifting
+        //    Woodland ({2}{G}{G}, delirium) to copy Gurmag Angler.
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        let decision = advance_until_decision(&mut state);
+        assert!(
+            matches!(
+                decision,
+                Decision::CastSpellOrPass {
+                    player: PlayerId::P0,
+                    ..
+                }
+            ),
+            "expected P0 priority before activating Shifting Woodland, got {decision:?}"
+        );
+        step(&mut state, Action::ActivateAbility(woodland, 0)).unwrap();
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert!(legal_targets.contains(&Target::Object(angler)));
+                    step(&mut state, Action::ChooseTarget(Target::Object(angler))).unwrap();
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision activating Shifting Woodland: {other:?}"),
+            }
+        }
+        assert_eq!(state.stack.len(), 2);
+        while state.stack.len() > 1 {
+            match advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } if state.stack.len() > 1 => {
+                    step(&mut state, Action::Pass).unwrap();
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision resolving Shifting Woodland copy: {other:?}"),
+            }
+        }
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.objects.get(woodland).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(woodland).zone_change_count, 3);
+        assert_eq!(
+            state.objects.get(woodland).card_def,
+            angler_def,
+            "Shifting Woodland is now a copy of Gurmag Angler on the battlefield"
+        );
+
+        // 4. Chain Lightning resolves and makes the copy offer (must not halt).
+        let decision = pass_until_stack_resolves(&mut state);
+        assert_eq!(state.engine.halted, None);
+        assert!(
+            matches!(decision, Decision::ChooseSpellCopyPayment { .. }),
+            "expected Chain Lightning copy offer, got {decision:?}"
+        );
+
+        // 5. Forging the payment ref to the copied definition (Gurmag Angler)
+        //    is refused without mutating state.
+        let mut forged_copied_def = state.clone();
+        forged_copied_def
+            .stack
+            .last_mut()
+            .unwrap()
+            .v4
+            .paid_cost_refs[0]
+            .card_def = angler_def;
+        let before_copied_def = forged_copied_def.clone();
+        assert!(step(
+            &mut forged_copied_def,
+            Action::ChooseSpellCopyPayment(false)
+        )
+        .is_err());
+        assert_eq!(forged_copied_def, before_copied_def);
+
+        // 6. Round 2 generation binding remains enforced (forging down to 1 or
+        //    up to 3 is refused without mutating state).
+        for forged_zcc in [1, 3] {
+            let mut forged = state.clone();
+            forged.stack.last_mut().unwrap().v4.paid_cost_refs[0].zone_change_count = forged_zcc;
+            let before = forged.clone();
+            assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+            assert_eq!(forged, before);
+        }
+
+        // 7. Genuine copy offer completes normally.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+        assert_eq!(state.engine.halted, None);
     }
 
     #[cfg(feature = "eternal-fixtures")]
