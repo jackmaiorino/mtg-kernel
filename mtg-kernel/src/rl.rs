@@ -1208,7 +1208,7 @@ pub struct PublicEscapeCostGroupV1 {
     /// Whether this group is the escape cost's "exile other cards from your
     /// graveyard". Otherwise it is a printed cost paid with the escape.
     pub escape: bool,
-    /// Exactly this many objects. Absent for Nethergoyf's escape.
+    /// Exactly this many objects. Absent for variable graveyard exile or battlefield taps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u8>,
     /// Nethergoyf's escape: any number of other graveyard cards with at least
@@ -1218,7 +1218,7 @@ pub struct PublicEscapeCostGroupV1 {
     /// The objects chosen so far, in order. Each stays where it is until the
     /// whole cost is paid.
     pub selected: Vec<CardStableRefV1>,
-    /// Nethergoyf's escape: the caster stopped exiling further cards.
+    /// The caster finished choosing a variable number of graveyard cards or battlefield taps.
     #[serde(default, skip_serializing_if = "engine::bool_is_false")]
     pub finished: bool,
 }
@@ -1286,6 +1286,7 @@ fn public_staged_escape_v1(
                     let over = match (group.count, group.min_card_types) {
                         (Some(count), None) => selected.len() > usize::from(count),
                         (None, Some(_)) => !group.escape,
+                        (None, None) => group.escape || group.kind != CostKind::TapPermanents,
                         _ => true,
                     };
                     if over {

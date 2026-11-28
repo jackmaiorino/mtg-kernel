@@ -6175,3 +6175,205 @@ fn public_escape_refuses_forged_overload_form_snapshot() {
         Decision::Halted { .. }
     ));
 }
+
+/// Enter Breach's escape through the public menu, including Hogaak's competing
+/// printed graveyard permission. Choose the three specified graveyard cards.
+fn breach_tap_cast(state: &mut GameState, spell: ObjectId, exile: &[ObjectId]) {
+    cast(state, spell, &[]);
+    if let Decision::ChooseEffectOption { .. } = next(state) {
+        let stage = staged_escape(state);
+        let routes = stage["stage"]["routes"].as_array().unwrap();
+        let index = routes.iter().position(|r| r == "breach_escape").unwrap();
+        act(state, Action::ChooseEffectOption(index as u16));
+    }
+    for &card in exile {
+        payment_pick(state, CostKind::ExileFromGraveyard, card);
+    }
+    assert!(matches!(next(state), Decision::ChooseEffectTargets { .. }));
+    assert_eq!(staged_escape(state)["stage"]["breach_escape"], true);
+}
+
+fn tap_menu_action(state: &mut GameState, action: Action) {
+    use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
+    let decision = next(state);
+    let rows =
+        mtg_kernel::rl::legal_action_candidates_v1(&SurfaceDecision::Decision(decision), state)
+            .unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row.surface_action == SurfaceAction::Action(action.clone())),
+        "{action:?}"
+    );
+    act(state, action);
+}
+
+#[test]
+fn public_escape_hogaak_convokes_and_delves_separately_from_breach() {
+    let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Hogaak, Arisen Necropolis", Zone::Graveyard);
+    let elves = [0, 1].map(|_| put(&mut state, P0, "Llanowar Elves", Zone::Battlefield));
+    let wrong = put(&mut state, P0, "Mishra's Bauble", Zone::Battlefield);
+    let mut fuel = (0..7)
+        .map(|_| put(&mut state, P0, "Island", Zone::Graveyard))
+        .collect::<Vec<_>>();
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::B], 5);
+    let mana_before = state.players[0].mana_pool;
+    // With one card missing, only Hogaak's own permission is payable.
+    let mut short = state.clone();
+    cast(&mut short, spell, &[]);
+    assert!(matches!(
+        next(&mut short),
+        Decision::ChooseEffectTargets { .. }
+    ));
+    assert_ne!(
+        short
+            .engine
+            .pending_cast
+            .as_ref()
+            .unwrap()
+            .source_contract
+            .cast_method,
+        mtg_kernel::state::CastMethodV4::Escape
+    );
+    fuel.push(put(&mut state, P0, "Island", Zone::Graveyard));
+    // Selecting the oldest three for Escape catches a Delve planner that
+    // reuses those same cards when committing the chosen convokers.
+    breach_tap_cast(&mut state, spell, &fuel[..3]);
+    assert!(engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(wrong))
+    )
+    .is_err());
+    tap_menu_action(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(elves[0])),
+    );
+    let groups = &staged_escape(&state)["stage"]["cost_groups"];
+    assert_eq!(groups[0]["selected"].as_array().unwrap().len(), 3);
+    assert_eq!(groups[1]["selected"][0]["arena_id"], elves[0].0);
+    assert!(!state.objects.get(elves[0]).tapped);
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(public_observation(&restored), public_observation(&state));
+    assert_eq!(next(&mut restored), next(&mut state));
+    let mut forged = restored.clone();
+    forged
+        .engine
+        .pending_cast
+        .as_mut()
+        .unwrap()
+        .convoke_finished = true;
+    assert!(public_observation(&forged).is_err());
+    assert!(engine::step(&mut restored, Action::FinishEffectSelection).is_err());
+    tap_menu_action(
+        &mut restored,
+        Action::ChooseEffectTarget(Target::Object(elves[1])),
+    );
+    tap_menu_action(&mut restored, Action::FinishEffectSelection);
+    next(&mut restored);
+    assert!(restored.engine.pending_cast.is_none());
+    assert_eq!(zone(&restored, spell), Zone::Stack);
+    assert!(fuel
+        .iter()
+        .all(|&card| zone(&restored, card) == Zone::Exile));
+    assert!(elves.iter().all(|&card| restored.objects.get(card).tapped));
+    assert_eq!(restored.players[0].mana_pool, mana_before);
+    settle_first(&mut restored);
+    assert_eq!(zone(&restored, spell), Zone::Battlefield);
+}
+
+#[test]
+fn public_escape_kappa_improvises_or_finishes_with_zero_artifacts() {
+    for use_artifact in [true, false] {
+        let mut state = plains();
+        mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let spell = put(&mut state, P0, "Kappa Cannoneer", Zone::Graveyard);
+        let artifact = put(&mut state, P0, "Mishra's Bauble", Zone::Battlefield);
+        let tapped = put(&mut state, P0, "Mishra's Bauble", Zone::Battlefield);
+        state.objects.get_mut(tapped).tapped = true;
+        put(&mut state, P1, "Mishra's Bauble", Zone::Battlefield);
+        put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+        let fuel = (0..4)
+            .map(|_| put(&mut state, P0, "Island", Zone::Graveyard))
+            .collect::<Vec<_>>();
+        pool(&mut state, P0, &[ManaColor::U], 3);
+        assert!(!castable(&mut state, spell));
+        pool(&mut state, P0, &[], if use_artifact { 1 } else { 2 });
+        breach_tap_cast(&mut state, spell, &fuel[..3]);
+        let Decision::ChooseEffectTargets {
+            min_targets,
+            can_finish,
+            legal_targets,
+            ..
+        } = next(&mut state)
+        else {
+            panic!("tap menu")
+        };
+        assert_eq!(min_targets, 0);
+        assert_eq!(can_finish, !use_artifact);
+        assert_eq!(legal_targets, [Target::Object(artifact)]);
+        if use_artifact {
+            assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+            tap_menu_action(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(artifact)),
+            );
+        }
+        tap_menu_action(&mut state, Action::FinishEffectSelection);
+        next(&mut state);
+        assert!(state.engine.pending_cast.is_none());
+        assert_eq!(zone(&state, spell), Zone::Stack);
+        assert_eq!(state.objects.get(artifact).tapped, use_artifact);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+        assert!(fuel[..3]
+            .iter()
+            .all(|&card| zone(&state, card) == Zone::Exile));
+        assert_eq!(zone(&state, fuel[3]), Zone::Graveyard);
+        settle_first(&mut state);
+        assert_eq!(zone(&state, spell), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn public_escape_kappa_cannot_improvise_with_its_only_blue_source() {
+    let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Kappa Cannoneer", Zone::Graveyard);
+    let seat = put(&mut state, P0, "Seat of the Synod", Zone::Battlefield);
+    let fuel = (0..4)
+        .map(|_| put(&mut state, P0, "Island", Zone::Graveyard))
+        .collect::<Vec<_>>();
+    pool(&mut state, P0, &[], 4);
+    assert!(!castable(&mut state, spell));
+    let bauble = put(&mut state, P0, "Mishra's Bauble", Zone::Battlefield);
+    breach_tap_cast(&mut state, spell, &fuel[..3]);
+    let mut unfunded = state.clone();
+    unfunded.players[0].mana_pool = [0; 6];
+    assert!(public_observation(&unfunded).is_err());
+    assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(seat))).is_err());
+    tap_menu_action(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(bauble)),
+    );
+    let mut stale = state.clone();
+    stale.objects.get_mut(bauble).zone_change_count += 1;
+    assert!(public_observation(&stale).is_err());
+    let mut early = state.clone();
+    early
+        .engine
+        .pending_cast
+        .as_mut()
+        .unwrap()
+        .sacrifice_chosen
+        .pop();
+    assert!(public_observation(&early).is_err());
+    tap_menu_action(&mut state, Action::FinishEffectSelection);
+    next(&mut state);
+    assert_eq!(zone(&state, spell), Zone::Stack);
+    assert!(state.objects.get(seat).tapped && state.objects.get(bauble).tapped);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
