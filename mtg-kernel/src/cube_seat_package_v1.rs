@@ -346,7 +346,15 @@ pub(crate) mod tests {
     pub(crate) fn uniform_manifest(directory: &Path, fenced: bool) -> Value {
         let basics = basic_land_ids().unwrap();
         let pool: Vec<_> = (0..CARD_DEFS.len() as u16)
-            .filter(|id| !basics.contains(id))
+            .filter(|id| {
+                !basics.contains(id)
+                    && crate::card_def::preflight_fully_supported_deck(&[*id]).is_ok()
+                    && crate::rl::require_declared_cards_for_scope(
+                        crate::rl::CommonProjectionScopeV42::ExistingV40,
+                        &[*id],
+                    )
+                    .is_ok()
+            })
             .take(SEATS * POOL_CARDS + usize::from(fenced))
             .collect();
         let mut index = pool.clone();
