@@ -46847,18 +46847,84 @@ mod tests {
     ))]
     #[test]
     fn zero_target_special_specs_remain_illegal_at_resolution() {
+        // Fiery Annihilation (CreatureThenUpToOneAttachedEquipment)
         let mut state = ready_game_in_main1(0);
-        for name in ["Fiery Annihilation", "Run Away Together"] {
-            let spell = put_in_hand(&mut state, PlayerId::P0, name);
-            let item = StackItem {
-                source: spell,
-                controller: PlayerId::P0,
-                kind: StackItemKind::Spell,
-                ..StackItem::default()
-            };
-            assert_eq!(stack_target_legalities(&item, &state), Ok(vec![false]));
-            assert_eq!(stack_targets_still_legal(&item, &state), Ok(false));
+        let p0_creature = put_on_battlefield(&mut state, PlayerId::P0, "Voldaren Epicure");
+        let p1_creature = put_on_battlefield(&mut state, PlayerId::P1, "Voldaren Epicure");
+        let fiery = put_in_hand(&mut state, PlayerId::P0, "Fiery Annihilation");
+        state.players[0].mana_pool[mana::ManaColor::C.pool_index()] = 2;
+        state.players[0].mana_pool[mana::ManaColor::R.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(fiery)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Object(p1_creature)),
+                )
+                .unwrap();
+            }
+            other => panic!("expected ChooseTargets for Fiery Annihilation, got {other:?}"),
         }
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                step(&mut state, Action::FinishEffectSelection).unwrap();
+                match advance_until_decision(&mut state) {
+                    Decision::CastSpellOrPass { .. } => {}
+                    other => {
+                        panic!("expected CastSpellOrPass after Fiery Annihilation, got {other:?}")
+                    }
+                }
+            }
+            Decision::CastSpellOrPass { .. } => {}
+            other => panic!(
+                "expected CastSpellOrPass or optional ChooseTargets for Fiery Annihilation, got {other:?}"
+            ),
+        }
+        let item = state.stack.last().unwrap().clone();
+        assert_eq!(stack_target_legalities(&item, &state), Ok(vec![true]));
+        assert_eq!(stack_targets_still_legal(&item, &state), Ok(true));
+        let mut malformed = state.clone();
+        malformed.stack.last_mut().unwrap().targets.clear();
+        malformed
+            .stack
+            .last_mut()
+            .unwrap()
+            .v4
+            .target_contracts
+            .clear();
+        let bad = malformed.stack.last().unwrap().clone();
+        assert!(stack_target_legalities(&bad, &malformed).is_err());
+        assert!(stack_targets_still_legal(&bad, &malformed).is_err());
+
+        // Run Away Together (TwoCreaturesWithDifferentControllers)
+        let run_away = put_in_hand(&mut state, PlayerId::P0, "Run Away Together");
+        state.players[0].mana_pool[mana::ManaColor::C.pool_index()] = 1;
+        state.players[0].mana_pool[mana::ManaColor::U.pool_index()] = 1;
+        let _ = advance_until_decision(&mut state);
+        step(&mut state, Action::CastSpell(run_away)).unwrap();
+        for target in [p0_creature, p1_creature] {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { .. } => {
+                    step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+                }
+                other => panic!("expected ChooseTargets for Run Away Together, got {other:?}"),
+            }
+        }
+        let item = state.stack.last().unwrap().clone();
+        assert_eq!(stack_target_legalities(&item, &state), Ok(vec![true, true]));
+        assert_eq!(stack_targets_still_legal(&item, &state), Ok(true));
+        let mut malformed = state.clone();
+        malformed.stack.last_mut().unwrap().targets.clear();
+        malformed
+            .stack
+            .last_mut()
+            .unwrap()
+            .v4
+            .target_contracts
+            .clear();
+        let bad = malformed.stack.last().unwrap().clone();
+        assert!(stack_target_legalities(&bad, &malformed).is_err());
+        assert!(stack_targets_still_legal(&bad, &malformed).is_err());
     }
 }
 
