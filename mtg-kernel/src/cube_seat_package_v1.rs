@@ -67,7 +67,7 @@ struct PlayPin {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Seats {
-    UniformStandIn,
+    UniformStandIn {},
     ShakedownStandIn {
         draft_build: DraftBuildPin,
     },
@@ -178,7 +178,7 @@ impl SeatPackage {
         check_pin("ordered pool", &manifest.ordered_pool_sha256, &pool_sha256)?;
 
         let (kind, draft_build, play) = match manifest.seats {
-            Seats::UniformStandIn => (SeatPackageKind::UniformStandIn, None, None),
+            Seats::UniformStandIn {} => (SeatPackageKind::UniformStandIn, None, None),
             Seats::ShakedownStandIn { draft_build } => (
                 SeatPackageKind::ShakedownStandIn,
                 Some(load_draft_build(
@@ -278,6 +278,20 @@ fn load_draft_build(
     {
         return Err("draft/build checkpoint inference metadata mismatch".into());
     }
+    let trained_under_uniform = checkpoint.lineage.iter().any(|segment| {
+        segment
+            .pilots
+            .contains(&crate::cube_pod_runner_v1::PilotKind::Uniform)
+    });
+    if checkpoint.lineage.is_empty()
+        || checkpoint
+            .lineage
+            .iter()
+            .any(|segment| segment.pilots.is_empty())
+        || release == trained_under_uniform
+    {
+        return Err("draft/build checkpoint pilot lineage does not match the package kind".into());
+    }
     let heads = header.head_updates;
     if release
         && [
@@ -323,11 +337,11 @@ mod tests {
         json!({ "path": name, "sha256": sha256_hex(bytes) })
     }
 
-    fn uniform_manifest(directory: &Path) -> Value {
+    fn uniform_manifest(directory: &Path, fenced: bool) -> Value {
         let basics = basic_land_ids().unwrap();
         let pool: Vec<_> = (0..CARD_DEFS.len() as u16)
             .filter(|id| !basics.contains(id))
-            .take(SEATS * POOL_CARDS)
+            .take(SEATS * POOL_CARDS + usize::from(fenced))
             .collect();
         let mut index = pool.clone();
         index.extend(basics);
@@ -348,12 +362,17 @@ mod tests {
                 "card_id": id, "name": CARD_DEFS[id as usize].name, "vector": [3],
             })).collect::<Vec<_>>(),
         });
+        let fence = if fenced {
+            json!([{"name": CARD_DEFS[pool[0] as usize].name, "reason": "fixture"}])
+        } else {
+            json!([])
+        };
         json!({
             "schema": SEAT_PACKAGE_SCHEMA_V1,
             "binary_sha256": "a".repeat(64),
             "cube_list": write_pinned(directory, "cube.json", &serde_json::to_vec(&cube).unwrap()),
-            "fence": write_pinned(directory, "fence.json", b"[]"),
-            "ordered_pool_sha256": crate::cube_owner_view_v1::ordered_pool_sha256(&pool),
+            "fence": write_pinned(directory, "fence.json", &serde_json::to_vec(&fence).unwrap()),
+            "ordered_pool_sha256": crate::cube_owner_view_v1::ordered_pool_sha256(&pool[usize::from(fenced)..]),
             "cube_table": write_pinned(directory, "table.json", &serde_json::to_vec(&table).unwrap()),
             "card_index_sha256": CardIndexV1::from_ids(index).unwrap().pin_sha256(),
             "dense_fields": ["cost:generic"],
@@ -369,8 +388,7 @@ mod tests {
         SeatPackage::load_bound(&path, &sha256_hex(&bytes), &"a".repeat(64))
     }
 
-    #[test]
-    fn loads_labelled_uniform_fixture_and_refuses_pin_mismatches() {
+    fn test_directory() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "cube-seat-package-test-{}-{}",
             std::process::id(),
@@ -380,7 +398,13 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir(&dir).unwrap();
-        let manifest = uniform_manifest(&dir);
+        dir
+    }
+
+    #[test]
+    fn loads_labelled_uniform_fixture_and_refuses_pin_mismatches() {
+        let dir = test_directory();
+        let manifest = uniform_manifest(&dir, false);
         let loaded = load_manifest(&dir, &manifest).unwrap();
         assert_eq!(loaded.kind().label(), "Uniform stand-in");
         assert_eq!(loaded.pool().card_count(), SEATS * POOL_CARDS);
@@ -423,13 +447,150 @@ mod tests {
             );
         }
 
-        fs::write(&dir.join("fence.json"), b"{").unwrap();
+        for field in ["draft_build", "play"] {
+            let mut changed = manifest.clone();
+            changed["seats"][field] = json!({});
+            let result = load_manifest(&dir, &changed);
+            assert!(
+                matches!(result, Err(message) if message.contains("unknown field")),
+                "{field}"
+            );
+        }
+
+        fs::write(dir.join("fence.json"), b"{").unwrap();
         assert!(
             matches!(load_manifest(&dir, &manifest), Err(message) if message == "fence SHA-256 mismatch")
         );
         let result =
             SeatPackage::load_bound(&dir.join("package.json"), &"b".repeat(64), &"a".repeat(64));
         assert!(matches!(result, Err(message) if message == "manifest SHA-256 mismatch"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn verifies_fenced_learned_packages_and_rejects_mixed_artifacts() {
+        use crate::cube_owner_view_v1::HeadUpdates;
+        use crate::cube_pilot_adapter_v1::{D9DecodingMode, M3_SAMPLE_TEMP1_WIDE_V1};
+        use crate::cube_pod_runner_v1::PilotKind;
+        use crate::cube_seat_v1::LEARNED_SAMPLER_ID;
+        use crate::cube_training_driver_v1::{seat_package_fixture_checkpoint, PilotPin};
+
+        let dir = test_directory();
+        let mut manifest = uniform_manifest(&dir, true);
+        let list = fs::read_to_string(dir.join("cube.json")).unwrap();
+        let index = CardIndexV1::full_v1(&list).unwrap();
+        let table = CubeTableV1::load_v1(
+            &dir.join("table.json"),
+            manifest["cube_table"]["sha256"].as_str().unwrap(),
+            &index,
+        )
+        .unwrap();
+        let heads = HeadUpdates {
+            pick: 1,
+            value: 1,
+            count: 1,
+            pointer: 1,
+            type_set: 1,
+            split: 1,
+        };
+        let play = b"synthetic pilot input; native decoder is a separate boundary";
+        let pilot = D9PilotConfig::for_compiled_kernel(
+            PilotPin {
+                checkpoint_sha256: sha256_hex(play),
+                after_state_sha256: "1".repeat(64),
+                table_sha256: "2".repeat(64),
+                card_database_sha256: format!("{KERNEL_CARDDB_HASH:016x}"),
+                training_math: "portable-math-v1".into(),
+                source_binary_sha256: "3".repeat(64),
+                decoding: M3_SAMPLE_TEMP1_WIDE_V1.into(),
+            },
+            D9DecodingMode::SampleTemp1Wide,
+            0.0,
+        );
+        fs::write(dir.join("play.ckpt"), play).unwrap();
+
+        let make_pin = |name: &str, kind: PilotKind, heads: HeadUpdates| {
+            let checkpoint = seat_package_fixture_checkpoint(&dir, &table, kind, heads);
+            json!({
+                "state_sha256": checkpoint.state_sha256,
+                "sampler": LEARNED_SAMPLER_ID,
+                "checkpoint": write_pinned(&dir, name, &serde_json::to_vec(&checkpoint).unwrap()),
+            })
+        };
+        let shakedown_pin = make_pin("shakedown.json", PilotKind::Uniform, heads);
+        let release_pin = make_pin("release.json", PilotKind::Checkpoint, heads);
+        let untrained_pin = make_pin(
+            "untrained.json",
+            PilotKind::Checkpoint,
+            HeadUpdates::default(),
+        );
+        manifest["seats"] = json!({"kind": "shakedown_stand_in", "draft_build": shakedown_pin});
+        let loaded = load_manifest(&dir, &manifest).unwrap();
+        assert_eq!(loaded.kind(), SeatPackageKind::ShakedownStandIn);
+        assert!(loaded.play_input().is_none());
+        let expected: Vec<_> = index
+            .ids()
+            .iter()
+            .copied()
+            .filter(|id| !basic_land_ids().unwrap().contains(id))
+            .skip(1)
+            .collect();
+        assert_eq!(loaded.pool().ids(), expected);
+
+        manifest["seats"] = json!({
+            "kind": "release",
+            "draft_build": release_pin,
+            "play": {"checkpoint": "play.ckpt", "config": pilot},
+        });
+        let loaded = load_manifest(&dir, &manifest).unwrap();
+        assert_eq!(loaded.kind(), SeatPackageKind::Release);
+        assert_eq!(loaded.play_input().unwrap().checkpoint, play);
+        assert_eq!(loaded.play_input().unwrap().config, pilot);
+
+        for (key, sample, error) in [
+            (
+                "/seats/draft_build/state_sha256",
+                json!("f".repeat(64)),
+                "checkpoint state SHA-256 mismatch",
+            ),
+            (
+                "/seats/draft_build/sampler",
+                json!("greedy"),
+                "checkpoint inference metadata mismatch",
+            ),
+            (
+                "/seats/draft_build",
+                untrained_pin,
+                "untrained inference head",
+            ),
+            ("/seats/draft_build", shakedown_pin, "pilot lineage"),
+            (
+                "/seats/play/config/pin/decoding",
+                json!("greedy"),
+                "decoding",
+            ),
+        ] {
+            let mut changed = manifest.clone();
+            *changed.pointer_mut(key).unwrap() = sample;
+            let result = load_manifest(&dir, &changed);
+            assert!(
+                matches!(result, Err(message) if message.contains(error)),
+                "{key}"
+            );
+        }
+
+        fs::write(dir.join("play.ckpt"), b"wrong").unwrap();
+        let result = load_manifest(&dir, &manifest);
+        assert!(matches!(result, Err(message) if message == "play checkpoint SHA-256 mismatch"));
+        fs::write(dir.join("play.ckpt"), play).unwrap();
+        let checkpoint = dir.join("release.json");
+        let mut bytes = fs::read(&checkpoint).unwrap();
+        bytes.push(b' ');
+        fs::write(checkpoint, bytes).unwrap();
+        let result = load_manifest(&dir, &manifest);
+        assert!(
+            matches!(result, Err(message) if message == "draft/build checkpoint SHA-256 mismatch")
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 }
