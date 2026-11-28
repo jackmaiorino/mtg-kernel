@@ -477,6 +477,7 @@ pub(crate) struct OwnerV1 {
     expected: StackItem,
     root: EffectOp,
     initial: bool,
+    copy_legal_targets_v1: Vec<u16>,
     gorehorn: Option<crate::gorehorn_damage_v1::OwnerV1>,
     drakuseth: Option<crate::drakuseth_damage_source_v76::OwnerV76>,
     equipment: Option<crate::equipment_damage_source_v4::OwnerV4>,
@@ -1506,6 +1507,11 @@ pub(crate) fn acquire_owner(
     {
         return Err("Crystal resume lost its published owner".into());
     }
+    let copy_legal_targets_v1 = if initial {
+        crate::engine::copy_legal_targets_for_item_v1(state, item)?
+    } else {
+        Vec::new()
+    };
     let gorehorn = crate::gorehorn_damage_v1::acquire_owner(state, item)?;
     let drakuseth = crate::drakuseth_damage_source_v76::acquire_owner(state, item)?;
     let equipment = crate::equipment_damage_source_v4::acquire_owner(state, item)?;
@@ -1517,6 +1523,7 @@ pub(crate) fn acquire_owner(
         expected,
         root,
         initial,
+        copy_legal_targets_v1,
     }))
 }
 fn boundaries(state: &GameState) -> impl Iterator<Item = &BoundaryV1> {
@@ -2127,13 +2134,11 @@ pub(crate) fn begin_owned(
     ctx: &ExecCtx,
     owner: &OwnerV1,
 ) -> Result<ResumableProgress, String> {
-    let expected_copy_slots =
-        crate::engine::copy_legal_targets_for_item_v1(state, &owner.original)?;
     if !owner.initial
         || *op != owner.root
         || !ctx.same_except_niv_damage_origin_v1(&context(&owner.original))
         || !niv_origin_matches_saved_item(state, &owner.original, ctx)
-        || ctx.copy_legal_targets_v1 != expected_copy_slots
+        || ctx.copy_legal_targets_v1 != owner.copy_legal_targets_v1
         || state.engine.pending_effect.is_some()
         || state
             .stack
@@ -3540,6 +3545,7 @@ pub(crate) fn answer_discard(state: &mut GameState, target: Option<Target>) -> R
         expected: before.resolving_item.clone(),
         root: boundary.root.clone(),
         initial: false,
+        copy_legal_targets_v1: Vec::new(),
         gorehorn: None,
         drakuseth: None,
         equipment: None,
@@ -5625,6 +5631,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         expected: item,
         root,
         initial: false,
+        copy_legal_targets_v1: Vec::new(),
         gorehorn: None,
         drakuseth: None,
         equipment: None,
@@ -5858,6 +5865,7 @@ pub(crate) fn answer_program_choice(state: &mut GameState, option: u16) -> Resul
         expected: before.resolving_item.clone(),
         root: boundary.root,
         initial: false,
+        copy_legal_targets_v1: Vec::new(),
         gorehorn: None,
         drakuseth: None,
         equipment: None,

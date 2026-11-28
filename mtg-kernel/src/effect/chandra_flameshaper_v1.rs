@@ -367,7 +367,11 @@ pub(super) fn damage_allocations(state: &GameState, ctx: &ExecCtx) -> Result<Vec
         return Err("Chandra damage lost unique paid row".into());
     };
     validate_published(state, input, item)?;
-    if item.inline_effect != Some(minus_four()) || original_context(item, state) != *ctx {
+    super::validate_historical_copy_legal_targets_v1(state, item, &ctx.copy_legal_targets_v1)?;
+    let mut expected = super::crystal_prevention_v1::context(item);
+    expected.niv_damage_origin_v1 = event::niv_damage_origin_for_saved_item_v1(state, item);
+    expected.copy_legal_targets_v1 = ctx.copy_legal_targets_v1.clone();
+    if item.inline_effect != Some(minus_four()) || expected != *ctx {
         return Err("Chandra damage changed original whole context".into());
     }
     Ok(input
@@ -823,13 +827,6 @@ pub(crate) fn cleanup(state: &mut GameState) -> Result<(), String> {
         );
     }
     Ok(())
-}
-fn original_context(item: &StackItem, state: &GameState) -> ExecCtx {
-    let mut ctx = super::crystal_prevention_v1::context(item);
-    ctx.niv_damage_origin_v1 = event::niv_damage_origin_for_saved_item_v1(state, item);
-    ctx.copy_legal_targets_v1 =
-        crate::engine::copy_legal_targets_for_item_v1(state, item).unwrap_or_default();
-    ctx
 }
 pub(crate) fn validate_pending(state: &GameState) -> Result<(), String> {
     for (input, j) in rows(state) {
