@@ -43,7 +43,7 @@ fn is_minsc(source: AbilitySourceContractV4) -> bool {
 
 fn journal(state: &GameState, at: usize) -> Option<JournalV1> {
     match state.engine.event_history.get(at)? {
-        CommittedEvent::EternalOwnedDrawV1 { journal } => Some(**journal),
+        CommittedEvent::EternalOwnedDrawV1 { journal } => Some((**journal).clone()),
         _ => None,
     }
 }

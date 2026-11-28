@@ -621,6 +621,38 @@ fn peer_into_the_abyss_draws_half_the_library_and_loses_half_the_life() {
     assert_eq!(life(&state, P1), 3, "lost four of seven");
 }
 
+#[test]
+fn peer_miracle_preserves_the_original_library_count_and_life_loss() {
+    let mut state = game(&[
+        "Metamorphosis Fanatic",
+        "Plains",
+        "Island",
+        "Island",
+        "Island",
+    ]);
+    let miracle = state.players[1].library[0];
+    let later = state.players[1].library[1];
+    let peer = put(&mut state, P0, "Peer into the Abyss", Zone::Hand);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B],
+        4,
+    );
+    cast(&mut state, peer, &[Target::Player(P1)]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { player: P1, source, .. }) if source == miracle)
+    );
+    assert_eq!(state.objects.get(later).zone, Zone::Library);
+    assert_eq!(life(&state, P1), 20);
+    let mut state: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(state.players[1].draws_this_turn, 3);
+    assert_eq!(life(&state, P1), 10);
+}
+
 // ---- Damage ----------------------------------------------------------------------------
 
 #[test]

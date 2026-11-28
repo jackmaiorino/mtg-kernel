@@ -1346,19 +1346,14 @@ pub(crate) fn execute(op: &P1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         P1aOpV1::GravebornMuseV1 => {
-            let zombies = battlefield(state)
-                .filter(|&object| {
-                    state.objects.get(object).controller == ctx.controller
-                        && crate::engine::has_effective_subtype(state, object, Subtype::Zombie)
-                })
-                .count();
+            let zombies = graveborn_draw_count(state, ctx.controller);
             if zombies == 0 {
                 return;
             }
             crate::effect::execute(
                 &EffectOp::DrawCards {
                     player: PlayerRef::Controller,
-                    count: u32::try_from(zombies).unwrap_or(u32::MAX),
+                    count: zombies,
                 },
                 ctx,
                 state,
@@ -1882,13 +1877,7 @@ pub(crate) fn drive(
             Ok(false)
         }
         P1aOpV1::GravebornMuseV1 => {
-            let zombies = battlefield(state)
-                .filter(|&object| {
-                    state.objects.get(object).controller == controller
-                        && crate::engine::has_effective_subtype(state, object, Subtype::Zombie)
-                })
-                .count();
-            let zombies = u32::try_from(zombies).unwrap_or(u32::MAX);
+            let zombies = graveborn_draw_count(state, controller);
             push_draw_then_lose(continuation, zombies, zombies, path);
             Ok(false)
         }
@@ -1901,6 +1890,16 @@ pub(crate) fn drive(
             Ok(false)
         }
     }
+}
+
+pub(crate) fn graveborn_draw_count(state: &GameState, controller: PlayerId) -> u32 {
+    let count = battlefield(state)
+        .filter(|&object| {
+            state.objects.get(object).controller == controller
+                && crate::engine::has_effective_subtype(state, object, Subtype::Zombie)
+        })
+        .count();
+    u32::try_from(count).unwrap_or(u32::MAX)
 }
 
 /// Stages "draw `draw` cards, then lose `lose` life" for the controller as

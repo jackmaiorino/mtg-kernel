@@ -119,7 +119,10 @@ pub(super) fn return_targets(state: &mut GameState, ctx: &ExecCtx) -> ReturnBatc
     }
 }
 
-fn spell_source(state: &GameState, pending: &EffectContinuation) -> Option<StackSourceContractV4> {
+pub(crate) fn spell_source(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Option<StackSourceContractV4> {
     let item = &pending.resolving_item;
     if item.kind != StackItemKind::Spell || item.inline_effect.is_some() {
         return None;
@@ -131,16 +134,6 @@ fn spell_source(state: &GameState, pending: &EffectContinuation) -> Option<Stack
         && StackSourceContractV4::capture(state, item.source, source.cast_method) == source
         && (def.spell_effect)().as_ref() == Some(&paradoxical_outcome()))
     .then_some(source)
-}
-
-pub(crate) fn physical_spell_source(
-    state: &GameState,
-    pending: &EffectContinuation,
-) -> Option<StackSourceContractV4> {
-    if pending.resolving_item.is_copy {
-        return None;
-    }
-    spell_source(state, pending)
 }
 
 pub(crate) fn native_return_count(
@@ -199,9 +192,7 @@ pub(crate) fn begin(
     {
         return Err("Paradoxical Outcome lost its original return stage".into());
     }
-    if !pending.resolving_item.is_copy {
-        owned_draws_v1::require_new_instruction(state, pending)?;
-    }
+    owned_draws_v1::require_new_instruction(state, pending)?;
     let returned = return_targets(state, &pending.ctx);
     if state.engine.halted.is_some() {
         return Err("Paradoxical Outcome return batch halted".into());
@@ -209,20 +200,9 @@ pub(crate) fn begin(
     if returned.arrivals.is_empty() {
         return Ok(());
     }
-    if !pending.resolving_item.is_copy {
-        let count = u32::try_from(returned.arrivals.len())
-            .map_err(|_| "Paradoxical Outcome draw count overflow")?;
-        owned_draws_v1::begin_outcome(state, pending, source, returned.start, count);
-    } else {
-        state.paradoxical_outcome_draw_progress_v1 = Some(DrawProgressV1 {
-            item: pending.resolving_item.v4.stack_item_id,
-            source,
-            controller: pending.resolving_item.controller,
-            returned,
-            completed: 0,
-        });
-        stage(pending, 0);
-    }
+    let count = u32::try_from(returned.arrivals.len())
+        .map_err(|_| "Paradoxical Outcome draw count overflow")?;
+    owned_draws_v1::begin_outcome(state, pending, source, returned.start, count);
     Ok(())
 }
 
@@ -286,7 +266,6 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     if owned_draws_v1::has_started(state, pending.resolving_item.v4.stack_item_id) {
         if state.eternal_owned_draw_progress_v1.is_some()
             && state.paradoxical_outcome_draw_progress_v1.is_none()
-            && !pending.resolving_item.is_copy
         {
             return Ok(()); // The shared owned-draw validator checks the native instruction.
         }

@@ -551,6 +551,40 @@ fn decree_of_pain_offers_dredge_for_a_dredge_creature_it_destroyed_itself() {
 }
 
 #[test]
+fn decree_of_pain_miracle_waits_after_destruction_and_before_the_second_draw() {
+    let mut state = turn_of(P0);
+    let later = state.players[0].library[0];
+    let miracle = put(&mut state, P0, "Terminus", Zone::Library);
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Battlefield);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Decree of Pain", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 6);
+    cast(&mut state, spell, &[]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. })
+        if legal_targets == [Target::Object(imp)])
+    );
+    act(&mut state, Action::FinishEffectSelection);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == miracle)
+    );
+    assert_eq!(zone(&state, elves), Zone::Graveyard);
+    assert_eq!(zone(&state, later), Zone::Library);
+    let mut state: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. })
+        if legal_targets == [Target::Object(imp)])
+    );
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(zone(&state, imp), Zone::Hand);
+    assert_eq!(zone(&state, later), Zone::Graveyard);
+}
+
+#[test]
 fn decree_of_pain_waits_for_ordered_graveyard_batch_before_drawing_both_seats() {
     for seat in [P0, P1] {
         let mut state = ordered_turn_of(seat);

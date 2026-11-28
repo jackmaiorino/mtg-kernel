@@ -12,10 +12,11 @@ pub(super) fn selected(
 ) -> Option<(InstructionV1, SourceV1)> {
     let item = &pending.resolving_item;
     let source = match item.kind {
-        StackItemKind::Spell if !item.is_copy && item.inline_effect.is_none() => {
+        StackItemKind::Spell if item.inline_effect.is_none() => {
             let source = item.v4.source_contract?;
             state.objects.try_get(item.source)?;
-            if source.zone != Zone::Stack
+            if (item.is_copy && source.spell_copy_origin.is_none())
+                || source.zone != Zone::Stack
                 || StackSourceContractV4::capture(state, item.source, source.cast_method) != source
             {
                 return None;

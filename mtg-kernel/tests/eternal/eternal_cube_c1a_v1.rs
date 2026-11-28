@@ -2262,6 +2262,158 @@ fn occult_epiphany_pauses_for_miracle_before_its_second_draw() {
 }
 
 #[test]
+fn careful_study_miracle_after_declining_dredge_keeps_one_riddler_adjustment() {
+    let mut state = game(&[
+        "Metamorphosis Fanatic",
+        "Island",
+        "Plains",
+        "Mountain",
+        "Island",
+        "Island",
+    ]);
+    let miracle = state.players[0].library[0];
+    let later = state.players[0].library[1];
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    let dredger = put(&mut state, P0, "Shenanigans", Zone::Graveyard);
+    let spell = put(&mut state, P0, "Careful Study", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, spell, &[]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. })
+        if legal_targets == [Target::Object(dredger)])
+    );
+    act(&mut state, Action::FinishEffectSelection);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == miracle)
+    );
+    assert_eq!(zone(&state, later), Zone::Library);
+    let mut state: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut state, Action::ChooseEffectOption(0));
+    settle_first(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 3);
+    assert_eq!(state.players[0].hand.len(), 1);
+}
+
+#[test]
+fn lutri_copied_occult_epiphany_pauses_for_miracle_and_retains_x() {
+    let mut state = game(&[
+        "Metamorphosis Fanatic",
+        "Island",
+        "Plains",
+        "Swamp",
+        "Mountain",
+        "Island",
+        "Island",
+        "Island",
+    ]);
+    let miracle = state.players[0].library[0];
+    let later = state.players[0].library[1];
+    let spell = put(&mut state, P0, "Occult Epiphany", Zone::Hand);
+    let lutri = put(&mut state, P0, "Lutri, the Spellchaser", Zone::Hand);
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::U, ManaColor::U, ManaColor::U],
+        3,
+    );
+    cast_with_x(&mut state, spell, 2, &[]);
+    cast(&mut state, lutri, &[]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseTargets { legal_targets, .. })
+        if legal_targets == [Target::Object(spell)])
+    );
+    act(&mut state, Action::ChooseTarget(Target::Object(spell)));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == miracle)
+    );
+    assert!(
+        state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .resolving_item
+            .is_copy
+    );
+    assert_eq!(zone(&state, later), Zone::Library);
+    let mut state: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets {
+            min_targets: 2,
+            max_targets: 2,
+            ..
+        })
+    ));
+    assert_eq!(state.players[0].draws_this_turn, 3);
+    assert_eq!(zone(&state, spell), Zone::Stack);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, spell), Zone::Graveyard);
+    assert_eq!(state.players[0].draws_this_turn, 6);
+}
+
+#[test]
+fn lutri_copied_paradoxical_outcome_pauses_for_miracle_on_adjusted_draw() {
+    let mut state = game(&["Metamorphosis Fanatic", "Island", "Plains", "Swamp"]);
+    let miracle = state.players[0].library[0];
+    let later = state.players[0].library[1];
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Paradoxical Outcome", Zone::Hand);
+    let lutri = put(&mut state, P0, "Lutri, the Spellchaser", Zone::Hand);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::U, ManaColor::U, ManaColor::U],
+        4,
+    );
+    cast(&mut state, spell, &[Target::Object(ring)]);
+    if matches!(
+        next(&mut state),
+        Decision::ChooseTargets {
+            can_finish: true,
+            ..
+        }
+    ) {
+        act(&mut state, Action::FinishEffectSelection);
+    }
+    cast(&mut state, lutri, &[]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseTargets { legal_targets, .. })
+        if legal_targets == [Target::Object(spell)])
+    );
+    act(&mut state, Action::ChooseTarget(Target::Object(spell)));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == lutri)
+    );
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == miracle)
+    );
+    assert_eq!(zone(&state, ring), Zone::Hand);
+    assert_eq!(zone(&state, later), Zone::Library);
+    assert!(
+        state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .resolving_item
+            .is_copy
+    );
+    let mut state: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 2);
+    assert_eq!(zone(&state, later), Zone::Hand);
+}
+
+#[test]
 fn occult_epiphany_fixes_riddler_attempts_before_dredge_and_miracle() {
     let mut state = game(&[
         "Shenanigans",

@@ -193,7 +193,7 @@ pub(crate) fn forces_resumable(
         op if !is_copy && *op == coveted_jewel_changes_hands() => {
             Some((ctx.controller.opponent(), 3))
         }
-        op if !is_copy && *op == paradoxical_outcome() => {
+        op if *op == paradoxical_outcome() => {
             // A return can change which Riddlers apply. Route for a possible
             // second attempt, then check the actual count after the batch.
             let possible_attempts = if ctx.targets.is_empty() { 0 } else { 2 };
@@ -213,14 +213,6 @@ pub(crate) fn forces_resumable(
                     && [PlayerId::P0, PlayerId::P1]
                         .into_iter()
                         .any(|player| may_draw_miracle_after_shuffle(state, player)))
-                // A copied Paradoxical Outcome stages one draw of one card
-                // per returned permanent, so it is staged for a miracle only
-                // while no draw-count replacement applies.
-                || (is_copy
-                    && *program == paradoxical_outcome()
-                    && !ctx.targets.is_empty()
-                    && event::draw_instruction_extra(state, ctx.controller, 2) == 0
-                    && owned_draw_needs_stage(state, ctx.controller, 2))
         }
     };
     (needs_choice || crate::effect::program_may_draw_miracle(state, program, ctx))

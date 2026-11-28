@@ -380,7 +380,7 @@ pub struct StartedV1 {
 
 /// Native resolution evidence. A completed attempt can produce no Draw or
 /// Treasure event because replacement can prevent both.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum JournalV1 {
     Started(StartedV1),
@@ -477,11 +477,17 @@ pub enum JournalV1 {
         player: PlayerId,
         draw_at: usize,
     },
+    /// The generated draw count and its definition path before replacements begin.
+    StartedLeafV1 {
+        started: StartedV1,
+        extra: u32,
+        path: Vec<u16>,
+    },
 }
 
 impl JournalV1 {
-    fn start(self) -> Option<(StartedV1, u32)> {
-        match self {
+    fn start(&self) -> Option<(StartedV1, u32)> {
+        match *self {
             Self::Started(started)
                 if matches!(
                     started.instruction,
@@ -491,18 +497,26 @@ impl JournalV1 {
                 None
             }
             Self::Started(started) => Some((started, started.total)),
-            Self::StartedWithRiddlerV1 { started, extra } if started.total != 0 && extra != 0 => {
+            Self::StartedLeafV1 { started, .. }
+                if !matches!(started.instruction, InstructionV1::StagedRootV1 { .. }) =>
+            {
+                None
+            }
+            Self::StartedLeafV1 { started, extra, .. }
+            | Self::StartedWithRiddlerV1 { started, extra }
+                if started.total != 0 && extra != 0 =>
+            {
                 Some((started, started.total.checked_add(extra)?))
             }
             _ => None,
         }
     }
 
-    fn started_item(self) -> Option<StackItemId> {
-        match self {
-            Self::Started(started) | Self::StartedWithRiddlerV1 { started, .. } => {
-                Some(started.item)
-            }
+    fn started_item(&self) -> Option<StackItemId> {
+        match *self {
+            Self::Started(started)
+            | Self::StartedWithRiddlerV1 { started, .. }
+            | Self::StartedLeafV1 { started, .. } => Some(started.item),
             Self::CurieDrawCount { item, .. }
             | Self::MinscDamageCompleted { item, .. }
             | Self::EchoShuffledV1 { item, .. }
@@ -513,8 +527,8 @@ impl JournalV1 {
         }
     }
 
-    fn room_tail_item(self) -> Option<StackItemId> {
-        match self {
+    fn room_tail_item(&self) -> Option<StackItemId> {
+        match *self {
             Self::RoomDrawRevealedV1 { item, .. }
             | Self::RoomDrawFinishedV1 { item, .. }
             | Self::RoomDrawAnsweredV1 { item, .. } => Some(item),
@@ -866,6 +880,23 @@ fn start_instruction(
     total: u32,
     extra: u32,
 ) {
+    start_with(state, pending, instruction, source, total, |started| {
+        if extra == 0 {
+            JournalV1::Started(started)
+        } else {
+            JournalV1::StartedWithRiddlerV1 { started, extra }
+        }
+    });
+}
+
+fn start_with(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    instruction: InstructionV1,
+    source: SourceV1,
+    total: u32,
+    journal: impl FnOnce(StartedV1) -> JournalV1,
+) {
     let started_at = state.engine.event_history.len();
     let started = StartedV1 {
         item: pending.resolving_item.v4.stack_item_id,
@@ -876,12 +907,7 @@ fn start_instruction(
         initial_library_len: (instruction == InstructionV1::Tamiyo)
             .then_some(state.players[pending.ctx.controller.index()].library.len()),
     };
-    let journal = if extra == 0 {
-        JournalV1::Started(started)
-    } else {
-        JournalV1::StartedWithRiddlerV1 { started, extra }
-    };
-    record(state, journal);
+    record(state, journal(started));
     state.eternal_owned_draw_progress_v1 = Some(ProgressV1 {
         started_at,
         completed: 0,
@@ -902,8 +928,12 @@ fn progress(
     let (started, attempts) = journal.start()?;
     let actual = match started.instruction {
         InstructionV1::FixedRoot { .. } => fixed::selected(state, pending),
-        InstructionV1::StagedRootV1 { .. } => staged::selected(state, pending),
-        InstructionV1::Outcome { .. } => outcome::physical_spell_source(state, pending)
+        InstructionV1::StagedRootV1 { count, .. } => match journal.as_ref() {
+            JournalV1::StartedLeafV1 { path, .. } => staged::leaf(state, pending, path, count)
+                .map(|(instruction, source, _)| (instruction, source)),
+            _ => staged::selected(state, pending),
+        },
+        InstructionV1::Outcome { .. } => outcome::spell_source(state, pending)
             .map(|source| (started.instruction, SourceV1::Spell(source))),
         InstructionV1::Denial { .. } => {
             denial::matches_start(state, pending, started, progress.started_at)
@@ -1263,6 +1293,15 @@ fn draw_tail_matches(
     tail: &[EffectFrame],
 ) -> bool {
     if matches!(instruction, InstructionV1::StagedRootV1 { .. }) {
+        if let Some(CommittedEvent::EternalOwnedDrawV1 { journal }) = state
+            .eternal_owned_draw_progress_v1
+            .and_then(|p| state.engine.event_history.get(p.started_at))
+        {
+            if let JournalV1::StartedLeafV1 { started, path, .. } = journal.as_ref() {
+                return staged::leaf(state, pending, path, started.total)
+                    .is_some_and(|(_, _, expected)| tail == expected);
+            }
+        }
         crate::effect::occult_draw_root(state, pending)
             .is_some_and(|(_, _, expected)| tail == expected)
     } else {
@@ -1392,9 +1431,10 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
     } else if selected(state, pending).is_none()
         && fixed::selected(state, pending).is_none()
         && staged::selected(state, pending).is_none()
+        && staged::leaf_starts(state, pending).next().is_none()
         && echo::selected(state, pending).is_none()
         && bonder::selected(state, pending).is_none()
-        && outcome::physical_spell_source(state, pending).is_none()
+        && outcome::spell_source(state, pending).is_none()
         && knowledge::selected(state, pending).is_none()
         && denial::selected(state, pending).is_none()
     {

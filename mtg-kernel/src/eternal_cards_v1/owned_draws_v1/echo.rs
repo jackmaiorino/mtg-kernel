@@ -175,7 +175,7 @@ fn journal(state: &GameState, at: usize) -> Option<JournalV1> {
     let CommittedEvent::EternalOwnedDrawV1 { journal } = state.engine.event_history.get(at)? else {
         return None;
     };
-    Some(**journal)
+    Some((**journal).clone())
 }
 
 pub(super) fn matches_start(
@@ -245,14 +245,15 @@ pub(super) fn matches_start(
     if drawer == first {
         return started_at == first_at
             && journal(state, first_at)
-                .and_then(JournalV1::start)
+                .and_then(|journal| journal.start())
                 .map(|(_, count)| count)
                 == Some(expected_first_count);
     }
     if drawer != first.opponent() || started_at <= first_at {
         return false;
     }
-    let Some((first_start, first_count)) = journal(state, first_at).and_then(JournalV1::start)
+    let Some((first_start, first_count)) =
+        journal(state, first_at).and_then(|journal| journal.start())
     else {
         return false;
     };
