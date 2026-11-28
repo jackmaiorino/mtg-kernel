@@ -44,8 +44,9 @@ fn serve_pod(
     mut input: impl BufRead,
     mut output: impl Write,
 ) -> Result<(), String> {
-    let mut swiss = ClientSwiss::new(config.run, config.pod_index).map_err(|e| e.to_string())?;
     let human_chair = config.human_chair;
+    let mut swiss =
+        ClientSwiss::new(config.run, config.pod_index, human_chair).map_err(|e| e.to_string())?;
     let draft = serve_draft_build(package, config, card_text, &mut input, &mut output)?;
     let decks = draft.decks;
     let private = draft.journal;
@@ -75,13 +76,9 @@ fn serve_pod(
         let (_, environment_seed, action_seed) = attempt_seeds(human_table.game_seed, 0);
         let (human, bots) = std::thread::scope(|scope| {
             let games = scope.spawn(|| {
-                swiss.play_bot_tables(
-                    &round,
-                    human_chair,
-                    &decks,
-                    &TypedUniformPilot,
-                    &|game, _| journal(&private, "bot_game", json!(game)),
-                )
+                swiss.play_bot_tables(&round, &decks, &TypedUniformPilot, &|game, _| {
+                    journal(&private, "bot_game", json!(game))
+                })
             });
             let human = serve_uniform_human_game(
                 HumanGameConfig {
@@ -104,43 +101,20 @@ fn serve_pod(
             (human, bots)
         });
 
-        let results = match (human, bots) {
-            (Ok(human), Ok(bots)) => {
-                let mut results = [SwissResult::Draw; 4];
-                for (index, table) in round.tables.iter().enumerate() {
-                    results[index] = if table.game == human_table.game {
-                        match human {
-                            HumanGameResult::Win {
-                                winner: PlayerSeatV1::P0,
-                            } => SwissResult::Win {
-                                chair: table.chairs[0],
-                            },
-                            HumanGameResult::Win {
-                                winner: PlayerSeatV1::P1,
-                            } => SwissResult::Win {
-                                chair: table.chairs[1],
-                            },
-                            HumanGameResult::Draw => SwissResult::Draw,
-                        }
-                    } else {
-                        let bot = bots
-                            .iter()
-                            .find(|game| game.game == table.game)
-                            .ok_or("A bot table result is missing.")?;
-                        match bot.scores {
-                            Some([1, -1]) => SwissResult::Win {
-                                chair: table.chairs[0],
-                            },
-                            Some([-1, 1]) => SwissResult::Win {
-                                chair: table.chairs[1],
-                            },
-                            Some([0, 0]) => SwissResult::Draw,
-                            _ => return Err("Invalid bot table result.".into()),
-                        }
-                    }
-                }
-                results
-            }
+        let human_result = match (human, bots) {
+            (Ok(human), Ok(_)) => match human {
+                HumanGameResult::Win {
+                    winner: PlayerSeatV1::P0,
+                } => SwissResult::Win {
+                    chair: human_table.chairs[0],
+                },
+                HumanGameResult::Win {
+                    winner: PlayerSeatV1::P1,
+                } => SwissResult::Win {
+                    chair: human_table.chairs[1],
+                },
+                HumanGameResult::Draw => SwissResult::Draw,
+            },
             (human, bots) => {
                 journal(
                     &private,
@@ -155,7 +129,7 @@ fn serve_pod(
             }
         };
         swiss
-            .finish_round(&round, results)
+            .finish_round(&round, human_result)
             .map_err(|e| e.to_string())?;
         let standings = json!({"round": round.round, "standings": swiss.standings()});
         journal(&private, "round_complete", standings.clone())?;
