@@ -43,6 +43,7 @@ pub struct ClientSwiss {
     pod_index: u64,
     pod_seed: u64,
     round: u8,
+    bot_tables_started: bool,
     points: [u8; SEATS],
     plays: [u8; SEATS],
     opponents: [u8; SEATS],
@@ -58,6 +59,7 @@ impl ClientSwiss {
             pod_index,
             pod_seed: pod_play_seed(Self::NAMESPACE, run, pod_index)?,
             round: 0,
+            bot_tables_started: false,
             points: [0; SEATS],
             plays: [0; SEATS],
             opponents: [0; SEATS],
@@ -109,9 +111,10 @@ impl ClientSwiss {
     /// Executes the three private bot tables using the normal runner's A2
     /// caps and attempt-seed ledger. The human table is played by the
     /// fixed-seat human service. Three retries are available for an ordinary
-    /// bot halt. A watchdog expiry stops the round.
+    /// bot halt. A watchdog expiry stops the round. Dispatch is single-use
+    /// even if execution or the completion hook fails.
     pub fn play_bot_tables(
-        &self,
+        &mut self,
         round: &SwissRound,
         human_chair: usize,
         decks: &[Deck; SEATS],
@@ -121,6 +124,12 @@ impl ClientSwiss {
         if human_chair >= SEATS || self.next_round()?.as_ref() != Some(round) {
             return Err(invalid("invalid chair or stale Swiss round"));
         }
+        if self.bot_tables_started {
+            return Err(invalid(
+                "bot tables already dispatched for this Swiss round",
+            ));
+        }
+        self.bot_tables_started = true;
         let tasks: Vec<_> = round
             .tables
             .iter()
@@ -193,6 +202,7 @@ impl ClientSwiss {
             self.opponents[second] |= 1 << first;
         }
         self.round += 1;
+        self.bot_tables_started = false;
         Ok(())
     }
 
@@ -328,24 +338,30 @@ mod tests {
             }
         }
 
-        let swiss = ClientSwiss::new("fixture", 0).unwrap();
+        let mut swiss = ClientSwiss::new("fixture", 0).unwrap();
         let round = swiss.next_round().unwrap().unwrap();
+        let expected: Vec<_> = round
+            .tables
+            .iter()
+            .filter(|table| !table.chairs.contains(&0))
+            .map(|table| (table.game, table.chairs.map(|chair| Some(chair as u8))))
+            .collect();
         let pilot = RetryPilot(round.tables.map(|t| attempt_seeds(t.game_seed, 0).1));
+        let decks = std::array::from_fn(|_| Deck::default());
         let observed = Mutex::new(Vec::new());
+        let hook = |record: &PodGameRecord, _: &[AttemptTiming]| {
+            observed.lock().unwrap().push(record.game);
+            Ok(())
+        };
         let games = swiss
-            .play_bot_tables(
-                &round,
-                0,
-                &std::array::from_fn(|_| Deck::default()),
-                &pilot,
-                &|record, _| {
-                    observed.lock().unwrap().push(record.game);
-                    Ok(())
-                },
-            )
+            .play_bot_tables(&round, 0, &decks, &pilot, &hook)
             .unwrap();
-        assert_eq!(games.len(), 3);
-        assert!(games.iter().all(|game| !game.chairs.contains(&Some(0))));
+        assert_eq!(expected.len(), 3);
+        let actual: Vec<_> = games.iter().map(|game| (game.game, game.chairs)).collect();
+        assert_eq!(actual, expected);
+        assert!(swiss
+            .play_bot_tables(&round, 0, &decks, &pilot, &hook)
+            .is_err());
         for game in &games {
             assert_eq!(game.attempts.len(), 2);
             assert!(game.attempts[0].halted);
@@ -358,9 +374,23 @@ mod tests {
         }
         let mut emitted = observed.into_inner().unwrap();
         emitted.sort_unstable();
-        assert_eq!(
-            emitted,
-            games.iter().map(|game| game.game).collect::<Vec<_>>()
-        );
+        let expected_ids: Vec<_> = expected.iter().map(|(id, _)| *id).collect();
+        assert_eq!(emitted, expected_ids);
+
+        let mut failed_swiss = ClientSwiss::new("fixture", 0).unwrap();
+        let failed_calls = Mutex::new(Vec::new());
+        let failing_hook = |record: &PodGameRecord, _: &[AttemptTiming]| {
+            failed_calls.lock().unwrap().push(record.game);
+            Err("journal failure".into())
+        };
+        assert!(failed_swiss
+            .play_bot_tables(&round, 0, &decks, &pilot, &failing_hook)
+            .is_err());
+        let after_failure = failed_calls.lock().unwrap().len();
+        assert!(after_failure > 0);
+        assert!(failed_swiss
+            .play_bot_tables(&round, 0, &decks, &pilot, &failing_hook)
+            .is_err());
+        assert_eq!(failed_calls.lock().unwrap().len(), after_failure);
     }
 }
