@@ -8,7 +8,7 @@ use crate::cube_owner_view_v1::{
     LearnedCheckpointSeats, OwnerViewSeatFactory,
 };
 use crate::cube_pilot_adapter_v1::D9PilotConfig;
-use crate::cube_pod_runner_v1::is_sha256_hex;
+use crate::cube_pod_runner_v1::{is_sha256_hex, PilotKind};
 use crate::cube_read_plan_v1::sha256_hex;
 use crate::cube_seat_v1::{SeatBuilder, SeatPicker, UniformFourStepBuilder, UniformSeatPicker};
 use crate::cube_training_driver_v1::{load_checkpoint_read_only_bytes_v1, CheckpointMetadata};
@@ -96,8 +96,13 @@ pub struct SeatPackage {
     manifest_sha256: String,
     kind: SeatPackageKind,
     pool: CubePool,
-    draft_build: Option<LearnedCheckpointSeats>,
+    draft_build: Option<LoadedDraftBuild>,
     play: Option<PinnedPlayInput>,
+}
+
+struct LoadedDraftBuild {
+    seats: LearnedCheckpointSeats,
+    pick_trained: bool,
 }
 
 /// Bytes for the release pilot loader. The pilot loader must still verify
@@ -243,14 +248,14 @@ impl SeatPackage {
 
     pub fn make_picker(&self) -> Box<dyn SeatPicker> {
         match &self.draft_build {
-            Some(seats) => seats.make_learned_picker(),
-            None => Box::new(UniformSeatPicker),
+            Some(loaded) if loaded.pick_trained => loaded.seats.make_learned_picker(),
+            _ => Box::new(UniformSeatPicker),
         }
     }
 
     pub fn make_builder(&self) -> Box<dyn SeatBuilder> {
         match &self.draft_build {
-            Some(seats) => seats.make_learned_builder(),
+            Some(loaded) => loaded.seats.make_learned_builder(),
             None => Box::new(UniformFourStepBuilder),
         }
     }
@@ -263,7 +268,7 @@ fn load_draft_build(
     dense_fields: &[String],
     column_scales: &[u32],
     release: bool,
-) -> Result<LearnedCheckpointSeats, String> {
+) -> Result<LoadedDraftBuild, String> {
     let bytes = pin.checkpoint.read(directory, "draft/build checkpoint")?;
     let text = std::str::from_utf8(&bytes).map_err(|e| format!("draft/build checkpoint: {e}"))?;
     validate_head_updates_raw_json(text).map_err(|e| e.to_string())?;
@@ -284,17 +289,18 @@ fn load_draft_build(
     {
         return Err("draft/build checkpoint inference metadata mismatch".into());
     }
-    let trained_under_uniform = checkpoint.lineage.iter().any(|segment| {
-        segment
-            .pilots
-            .contains(&crate::cube_pod_runner_v1::PilotKind::Uniform)
-    });
     if checkpoint.lineage.is_empty()
-        || checkpoint
-            .lineage
-            .iter()
-            .any(|segment| segment.pilots.is_empty())
-        || release == trained_under_uniform
+        || checkpoint.lineage.iter().any(|segment| {
+            if release {
+                segment.pilots.is_empty()
+                    || segment
+                        .pilots
+                        .iter()
+                        .any(|&pilot| pilot != PilotKind::Checkpoint)
+            } else {
+                segment.pilots != [PilotKind::Uniform]
+            }
+        })
     {
         return Err("draft/build checkpoint pilot lineage does not match the package kind".into());
     }
@@ -311,7 +317,10 @@ fn load_draft_build(
     {
         return Err("release draft/build checkpoint has an untrained inference head".into());
     }
-    LearnedCheckpointSeats::from_model(model, rows, 1).map_err(|e| e.to_string())
+    Ok(LoadedDraftBuild {
+        seats: LearnedCheckpointSeats::from_model(model, rows, 1).map_err(|e| e.to_string())?,
+        pick_trained: heads.pick > 0,
+    })
 }
 
 fn read_verified(path: &Path, expected_sha256: &str, field: &str) -> Result<Vec<u8>, String> {
@@ -485,9 +494,11 @@ pub(crate) mod tests {
     fn verifies_fenced_learned_packages_and_rejects_mixed_artifacts() {
         use crate::cube_owner_view_v1::HeadUpdates;
         use crate::cube_pilot_adapter_v1::{D9DecodingMode, M3_SAMPLE_TEMP1_WIDE_V1};
-        use crate::cube_pod_runner_v1::PilotKind;
-        use crate::cube_seat_v1::LEARNED_SAMPLER_ID;
-        use crate::cube_training_driver_v1::{seat_package_fixture_checkpoint, PilotPin};
+        use crate::cube_seat_v1::{PassDirection, SeatPickView, LEARNED_SAMPLER_ID};
+        use crate::cube_training_driver_v1::{
+            seat_package_fixture_checkpoint, LineageSegment, PilotPin, Segment,
+        };
+        use crate::state::SplitMix64;
 
         let dir = test_directory();
         let mut manifest = uniform_manifest(&dir, true);
@@ -523,21 +534,36 @@ pub(crate) mod tests {
         );
         fs::write(dir.join("play.ckpt"), play).unwrap();
 
-        let make_pin = |name: &str, kind: PilotKind, heads: HeadUpdates| {
-            let checkpoint = seat_package_fixture_checkpoint(&dir, &table, kind, heads);
+        let make_pin = |name: &str, lineage: Vec<LineageSegment>, heads: HeadUpdates| {
+            let checkpoint = seat_package_fixture_checkpoint(&dir, &table, lineage, heads);
             json!({
                 "state_sha256": checkpoint.state_sha256,
                 "sampler": LEARNED_SAMPLER_ID,
                 "checkpoint": write_pinned(&dir, name, &serde_json::to_vec(&checkpoint).unwrap()),
             })
         };
-        let shakedown_pin = make_pin("shakedown.json", PilotKind::Uniform, heads);
-        let release_pin = make_pin("release.json", PilotKind::Checkpoint, heads);
-        let untrained_pin = make_pin(
-            "untrained.json",
-            PilotKind::Checkpoint,
-            HeadUpdates::default(),
+        let uniform = LineageSegment {
+            segment: Segment::BuilderOnly,
+            run: "b1".into(),
+            pilots: vec![PilotKind::Uniform],
+        };
+        let learned = LineageSegment {
+            segment: Segment::PickPhase,
+            run: "k1".into(),
+            pilots: vec![PilotKind::Checkpoint],
+        };
+        let shakedown_pin = make_pin(
+            "shakedown.json",
+            vec![uniform.clone()],
+            HeadUpdates {
+                pick: 0,
+                value: 0,
+                ..heads
+            },
         );
+        let release_pin = make_pin("release.json", vec![learned.clone()], heads);
+        let mixed_pin = make_pin("mixed.json", vec![uniform, learned.clone()], heads);
+        let untrained_pin = make_pin("untrained.json", vec![learned], HeadUpdates::default());
         manifest["seats"] = json!({"kind": "shakedown_stand_in", "draft_build": shakedown_pin});
         let loaded = load_manifest(&dir, &manifest).unwrap();
         assert_eq!(loaded.kind(), SeatPackageKind::ShakedownStandIn);
@@ -550,6 +576,29 @@ pub(crate) mod tests {
             .skip(1)
             .collect();
         assert_eq!(loaded.pool().ids(), expected);
+        let view = SeatPickView {
+            round: 0,
+            pick: 0,
+            direction: PassDirection::Left,
+            pack: &expected[..15],
+            pool: &[],
+            seen_not_taken: &[],
+        };
+        assert_eq!(
+            loaded
+                .make_picker()
+                .pick(&view, &mut SplitMix64::seed(5))
+                .unwrap(),
+            UniformSeatPicker
+                .pick(&view, &mut SplitMix64::seed(5))
+                .unwrap()
+        );
+        for disallowed_pin in [&mixed_pin, &release_pin] {
+            let mut changed = manifest.clone();
+            changed["seats"]["draft_build"] = disallowed_pin.clone();
+            let result = load_manifest(&dir, &changed);
+            assert!(matches!(result, Err(message) if message.contains("pilot lineage")));
+        }
 
         manifest["seats"] = json!({
             "kind": "release",

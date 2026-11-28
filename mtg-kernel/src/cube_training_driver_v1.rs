@@ -868,7 +868,7 @@ pub fn write_marked_test_checkpoint_v1(
 pub(crate) fn seat_package_fixture_checkpoint(
     directory: &Path,
     table: &CubeTableV1,
-    pilot: PilotKind,
+    lineage: Vec<LineageSegment>,
     heads: HeadUpdates,
 ) -> Checkpoint {
     let mut config = RunConfig::shakedown(directory, "k2", Segment::PickPhase);
@@ -895,11 +895,7 @@ pub(crate) fn seat_package_fixture_checkpoint(
         CubeModelState::from_model(&model, &optimizer),
         Vec::new(),
         1,
-        vec![LineageSegment {
-            segment: config.segment,
-            run: config.run.clone(),
-            pilots: vec![pilot],
-        }],
+        lineage,
         Vec::new(),
         heads,
     )
