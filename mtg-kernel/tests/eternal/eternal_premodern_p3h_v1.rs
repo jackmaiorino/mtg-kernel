@@ -570,6 +570,8 @@ fn decree_of_pain_miracle_waits_after_destruction_and_before_the_second_draw() {
     );
     assert_eq!(zone(&state, elves), Zone::Graveyard);
     assert_eq!(zone(&state, later), Zone::Library);
+    crate::eternal_sideboard_s1b_v1::assert_miracle_remainder_rejected(&state, 1, 0);
+    let state = crate::eternal_sideboard_s1b_v1::legacy_miracle_save(&state);
     let mut state: GameState =
         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
     act(&mut state, Action::ChooseEffectOption(0));

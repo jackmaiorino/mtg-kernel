@@ -573,6 +573,12 @@ pub(crate) fn drive(
                 );
             }
             if draw > 0 {
+                crate::eternal_cards_v1::owned_draws_v1::staged::enter_generated(
+                    state,
+                    continuation,
+                    &path,
+                    player,
+                );
                 push_frame(
                     continuation,
                     EffectOp::DrawCards {

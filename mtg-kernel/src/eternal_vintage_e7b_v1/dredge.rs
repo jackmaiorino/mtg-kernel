@@ -241,6 +241,7 @@ pub(crate) fn drive_draws(
         let Some((kind, cards)) =
             replacement_options(state, continuation, drawer, &path, &continuation.frames)
         else {
+            owned_draws_v1::staged::note_attempt(state, continuation, &path, drawer);
             commit_resolution_draw(state, continuation, drawer, &path);
             count -= 1;
             if !owned_draws_v1::draw_stage_matches(
@@ -590,6 +591,9 @@ pub(crate) fn finish_jace_or_hullbreacher(
     chosen: Option<EffectObjectBinding>,
 ) -> Result<(), String> {
     validate_jace_choice(state, pending, choice, &pending.frames)?;
+    owned_draws_v1::staged::note_attempt(state, pending, &choice.path, choice.player);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::effect::record_draw_replacement_choice(state, pending, choice, true);
     let player = choice.player;
     if chosen.is_some() {
         // The chooser selected the other replacement. The ordinary commit

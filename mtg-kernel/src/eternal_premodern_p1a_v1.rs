@@ -1825,6 +1825,12 @@ pub(crate) fn drive(
             Ok(true)
         }
         P1aOpV1::SylvanDrawV1 => {
+            crate::eternal_cards_v1::owned_draws_v1::staged::enter_generated(
+                state,
+                continuation,
+                &path,
+                controller,
+            );
             continuation
                 .frames
                 .push(crate::effect::EffectFrame::Program {

@@ -1655,6 +1655,8 @@ fn sylvan_library_miracle_pauses_after_replaced_turn_draw() {
         matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == miracle)
     );
     assert_eq!(zone(&state, later), Zone::Library);
+    crate::eternal_sideboard_s1b_v1::assert_miracle_remainder_rejected(&state, 1, 0);
+    let state = crate::eternal_sideboard_s1b_v1::legacy_miracle_save(&state);
     let mut state: GameState =
         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
     act(&mut state, Action::ChooseEffectOption(0));
@@ -1663,6 +1665,63 @@ fn sylvan_library_miracle_pauses_after_replaced_turn_draw() {
         if legal_targets == [Target::Object(miracle), Target::Object(later)])
     );
     assert_eq!(state.players[0].draws_this_turn, 2);
+}
+
+#[test]
+fn sylvan_library_miracle_after_two_separate_dredge_instructions() {
+    let mut state = game(&[
+        "Shenanigans",
+        "Island",
+        "Island",
+        "Island",
+        "Island",
+        "Terminus",
+        "Plains",
+        "Swamp",
+    ]);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let library = put(&mut state, P0, "Sylvan Library", Zone::Battlefield);
+    put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let shenanigans = state.players[0].library[0];
+    let miracle = state.players[0].library[5];
+    run_until(
+        &mut state,
+        |s| s.active_player == P0 && s.step == Step::Draw && !s.stack.is_empty(),
+        |_, decision| match decision {
+            Decision::ChooseEffectOption {
+                player: P0,
+                option_count: 2,
+                ..
+            } => Some(Action::ChooseEffectOption(1)),
+            _ => None,
+        },
+    );
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption {source,..}) if source == library)
+    );
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {legal_targets,..}) if legal_targets == [Target::Object(shenanigans)])
+    );
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(shenanigans)),
+    );
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption {source,..}) if source == miracle)
+    );
+    crate::eternal_sideboard_s1b_v1::assert_miracle_remainder_rejected(&state, 0, 1);
+    let ambiguous = crate::eternal_sideboard_s1b_v1::legacy_miracle_save(&state);
+    assert!(
+        mtg_kernel::effect::validate_pending_effect_choice(&ambiguous)
+            .unwrap_err()
+            .contains("no boundary for its earlier attempts")
+    );
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut restored, Action::ChooseEffectOption(0));
+    assert_eq!(restored.players[0].draws_this_turn, 1);
 }
 
 #[test]

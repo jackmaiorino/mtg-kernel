@@ -301,10 +301,11 @@ pub(crate) fn begin(
 }
 /// Reconstruct this instruction's count from public zone events. Later dredges
 /// can change the current graveyards but cannot change the captured count.
-fn graveyard_count_at(state: &GameState, boundary: usize) -> Option<u32> {
+pub(crate) fn graveyard_count_at(state: &GameState, boundary: usize) -> Option<u32> {
     let named = |object| {
         state.objects.try_get(object).is_some_and(|card| {
-            CARD_DEFS[usize::from(card.card_def)].object_name == "Accumulated Knowledge"
+            !card.v4.is_token
+                && CARD_DEFS[usize::from(card.card_def)].name == "Accumulated Knowledge"
         })
     };
     let mut cards: std::collections::HashSet<_> = state

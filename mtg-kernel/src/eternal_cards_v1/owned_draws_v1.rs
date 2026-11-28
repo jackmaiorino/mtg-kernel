@@ -483,6 +483,22 @@ pub enum JournalV1 {
         extra: u32,
         path: Vec<u16>,
     },
+    /// The committed discard or destruction batch immediately before a generated draw.
+    DrawInputBatchV1 {
+        item: StackItemId,
+        path: Vec<u16>,
+        objects: Vec<crate::ids::ObjectId>,
+    },
+    /// A non-native attempt at this site, recorded before applying its replacement.
+    DrawAttemptV1 {
+        item: StackItemId,
+        path: Vec<u16>,
+    },
+    /// Entry into a generated draw (including its actual choice branch).
+    GeneratedDrawV1 {
+        item: StackItemId,
+        path: Vec<u16>,
+    },
 }
 
 impl JournalV1 {
@@ -928,9 +944,11 @@ fn progress(
     let (started, attempts) = journal.start()?;
     let actual = match started.instruction {
         InstructionV1::FixedRoot { .. } => fixed::selected(state, pending),
-        InstructionV1::StagedRootV1 { count, .. } => match journal.as_ref() {
-            JournalV1::StartedLeafV1 { path, .. } => staged::leaf(state, pending, path, count)
-                .map(|(instruction, source, _)| (instruction, source)),
+        InstructionV1::StagedRootV1 { .. } => match journal.as_ref() {
+            JournalV1::StartedLeafV1 { path, .. } => {
+                staged::leaf(state, pending, path, progress.started_at)
+                    .map(|(instruction, source, _)| (instruction, source))
+            }
             _ => staged::selected(state, pending),
         },
         InstructionV1::Outcome { .. } => outcome::spell_source(state, pending)
@@ -1090,7 +1108,11 @@ fn finish_instruction(
     }
 }
 
-fn initial_library_len(state: &GameState, player: PlayerId, start: usize) -> Option<usize> {
+pub(crate) fn initial_library_len(
+    state: &GameState,
+    player: PlayerId,
+    start: usize,
+) -> Option<usize> {
     let current = state.players[player.index()].library.len();
     state
         .engine
@@ -1124,7 +1146,7 @@ fn initial_library_len(state: &GameState, player: PlayerId, start: usize) -> Opt
 
 // The native individual replacements move cards from library or graveyard,
 // or create Treasure. Triggered abilities wait until this instruction ends.
-fn initial_hand_len(state: &GameState, player: PlayerId, start: usize) -> Option<usize> {
+pub(crate) fn initial_hand_len(state: &GameState, player: PlayerId, start: usize) -> Option<usize> {
     state
         .engine
         .event_history
@@ -1293,13 +1315,14 @@ fn draw_tail_matches(
     tail: &[EffectFrame],
 ) -> bool {
     if matches!(instruction, InstructionV1::StagedRootV1 { .. }) {
-        if let Some(CommittedEvent::EternalOwnedDrawV1 { journal }) = state
-            .eternal_owned_draw_progress_v1
-            .and_then(|p| state.engine.event_history.get(p.started_at))
-        {
-            if let JournalV1::StartedLeafV1 { started, path, .. } = journal.as_ref() {
-                return staged::leaf(state, pending, path, started.total)
-                    .is_some_and(|(_, _, expected)| tail == expected);
+        if let Some(progress) = state.eternal_owned_draw_progress_v1 {
+            if let Some(CommittedEvent::EternalOwnedDrawV1 { journal }) =
+                state.engine.event_history.get(progress.started_at)
+            {
+                if let JournalV1::StartedLeafV1 { path, .. } = journal.as_ref() {
+                    return staged::leaf(state, pending, path, progress.started_at)
+                        .is_some_and(|(_, _, expected)| tail == expected);
+                }
             }
         }
         crate::effect::occult_draw_root(state, pending)
