@@ -122,7 +122,7 @@ struct DraftTransport<I, O> {
     schema: &'static str,
     input: I,
     output: O,
-    line: String,
+    line: Vec<u8>,
 }
 
 impl<I: BufRead, O: Write> DraftTransport<I, O> {
@@ -142,7 +142,7 @@ impl<I: BufRead, O: Write> DraftTransport<I, O> {
         self.line.clear();
         let bytes = (&mut self.input)
             .take(MAX_REQUEST_BYTES + 1)
-            .read_line(&mut self.line)
+            .read_until(b'\n', &mut self.line)
             .map_err(|_| "The client request could not be read.")?;
         if bytes == 0 {
             return Err("The client disconnected.".into());
@@ -150,8 +150,9 @@ impl<I: BufRead, O: Write> DraftTransport<I, O> {
         if bytes as u64 > MAX_REQUEST_BYTES {
             return Err("The client request exceeds its byte limit.".into());
         }
-        let command = crate::rl::parse_strict_json_value(&self.line)
+        let command = std::str::from_utf8(&self.line)
             .ok()
+            .and_then(|line| crate::rl::parse_strict_json_value(line).ok())
             .and_then(|value| serde_json::from_value(value).ok());
         if command.is_none() {
             self.error("Invalid request.")?;
@@ -339,7 +340,7 @@ pub fn serve_draft_build(
         schema: DRAFT_BUILD_RESPONSE_SCHEMA,
         input,
         output,
-        line: String::new(),
+        line: Vec::new(),
     };
     transport.send(
         "start",
@@ -474,6 +475,7 @@ mod tests {
             .record;
 
         let mut requests = Vec::new();
+        requests.extend([0xff, b'\n']);
         write_json_line(&mut requests, &json!({"kind":"suggest"})).unwrap();
         write_json_line(
             &mut requests,
@@ -538,6 +540,10 @@ mod tests {
         let published: Vec<Value> = BufRead::lines(Cursor::new(&replies))
             .map(|line| serde_json::from_str(&line.unwrap()).unwrap())
             .collect();
+        assert!(published.iter().all(|frame| matches!(
+            frame["event"].as_str(),
+            Some("start" | "pick" | "error" | "build" | "build_accepted")
+        )));
         let frames: Vec<_> = published
             .iter()
             .filter(|frame| frame["event"] == "pick")
@@ -607,7 +613,7 @@ mod tests {
                 .iter()
                 .filter(|frame| frame["event"] == "error")
                 .count(),
-            3
+            4
         );
         let journal = std::fs::read_to_string(journal_path).unwrap();
         assert!(journal.contains("client-pods") && journal.contains("\"event\":\"decks\""));

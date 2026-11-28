@@ -1,5 +1,6 @@
 //! Stand-in pod coordinator. The human and the three bot tables run together;
 //! standings advance only after each table produces a natural result.
+//! A failed human game stops the pod without a replay.
 
 use super::play::{serve_uniform_human_game, HumanGameConfig, HumanGameResult};
 use super::{
@@ -280,7 +281,7 @@ mod tests {
         });
         let events: Vec<_> = published
             .iter()
-            .filter_map(|frame| frame["event"].as_str())
+            .map(|frame| frame["event"].as_str().unwrap())
             .collect();
         assert_eq!(events.iter().filter(|&&event| event == "round").count(), 3);
         assert_eq!(
@@ -294,7 +295,19 @@ mod tests {
                 .count(),
             3
         );
-        assert!(!events.contains(&"bot_game"));
+        assert!(events.iter().all(|event| matches!(
+            *event,
+            "start"
+                | "pick"
+                | "build"
+                | "build_accepted"
+                | "round"
+                | "opening"
+                | "game_result"
+                | "standings"
+                | "error"
+                | "pod_complete"
+        )));
         assert_eq!(events.last(), Some(&"pod_complete"));
         assert_eq!(
             events.iter().filter(|&&event| event == "opening").count(),

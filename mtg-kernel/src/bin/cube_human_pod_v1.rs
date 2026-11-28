@@ -5,7 +5,18 @@ use mtg_kernel::cube_human_draft_build_v1::{pod::serve_pod_config, serve_draft_b
 use std::path::Path;
 
 fn main() {
-    if let Err(error) = run() {
+    let result = std::thread::Builder::new()
+        .name("cube-human-pod-v1".into())
+        // Match the Cube bot workers' engine stack, including on Windows.
+        .stack_size(64 * 1024 * 1024)
+        .spawn(run)
+        .map_err(|_| "The Cube pod could not start.".to_owned())
+        .and_then(|worker| {
+            worker
+                .join()
+                .map_err(|_| "The Cube pod stopped unexpectedly.".to_owned())?
+        });
+    if let Err(error) = result {
         eprintln!("cube human pod: {error}");
         std::process::exit(1);
     }
