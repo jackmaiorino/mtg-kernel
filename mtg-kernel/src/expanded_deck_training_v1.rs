@@ -159,6 +159,7 @@ pub(crate) mod card_semantics_e1;
 pub use card_semantics_e1::tool_json_v1 as card_semantics_tool_json_v1;
 pub(crate) use card_semantics_e1::validate_update_v1 as validate_card_semantics_run_v1;
 use checkpoint_container_v1::{BorrowedParameterBitsV1, ParameterBitsRefV1};
+pub use line_b_root_selection_v1::LineBRootSelectorV1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub use record_envelope_v1::RecordEnvelopeV1;
 pub(crate) use trajectory_parse_ahead_v1::{
@@ -14919,6 +14920,140 @@ pub(crate) mod tests {
         assert!(!line_b_learner_row_v1(&against, 0) && line_b_learner_row_v1(&against, 1));
     }
 
+    /// Issue #969: line (b) v2 root selection restricts self-play episodes to
+    /// `actor == episode.learner_seat` while v1 remains unchanged and default.
+    /// Explicitly proves a seed where the top-ranked decision overall is on the
+    /// non-learner seat: v1 picks the non-learner seat and v2 skips it to pick
+    /// the top learner-seat root.
+    #[test]
+    fn line_b_root_selection_v2_restricts_self_play_to_learner_seat() {
+        use line_b_root_selection_v1::{
+            line_b_learner_row_v1, line_b_learner_row_v2, line_b_root_eligible_v1,
+            line_b_root_rank_v1, select_line_b_root_v1, select_line_b_root_v2,
+        };
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        let learner = test_behavior(&policy, false);
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "line-b-root-v2-fixture".into(),
+            seed: 2_026_092_701,
+            starting_player: 1,
+            learner_seat: 0,
+            opponent: None,
+            opponent_search: None,
+            opponent_kind: None,
+            registered: [deck.clone(), deck.clone()],
+            selected: [deck.clone(), deck],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+            max_stack_objects: None,
+            runtime_rules: None,
+            reset: None,
+            opening: None,
+            mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
+            deck_format: None,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+
+        // Learner-row predicate: v2 selects only learner_seat even in self-play.
+        assert!(line_b_learner_row_v2(&episode, 0) && !line_b_learner_row_v2(&episode, 1));
+        let against = ExpandedEpisodeV1 {
+            opponent: Some(test_behavior(&policy, true).source),
+            learner_seat: 1,
+            ..episode.clone()
+        };
+        assert!(!line_b_learner_row_v2(&against, 0) && line_b_learner_row_v2(&against, 1));
+
+        // Independent replay collecting v1 (both seats) and v2 (learner seat only).
+        let configs = trajectory.episode.configurations().unwrap();
+        let mut session = episode_session_v1(&trajectory.episode, &configs).unwrap();
+        let mut eligible_v1 = Vec::new();
+        let mut eligible_v2 = Vec::new();
+        for (index, row) in trajectory.decisions.iter().enumerate() {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                panic!("replay ended early");
+            };
+            let is_v1 =
+                line_b_root_eligible_v1(&d, line_b_learner_row_v1(&trajectory.episode, row.actor));
+            let is_v2 =
+                line_b_root_eligible_v1(&d, line_b_learner_row_v2(&trajectory.episode, row.actor));
+            if is_v1 {
+                let key = session.kernel_search_visible_key_v4(0).unwrap();
+                eligible_v1.push((key, d.physical_decision_id, index, row.actor));
+                if is_v2 {
+                    eligible_v2.push((key, d.physical_decision_id, index, row.actor));
+                }
+            } else {
+                assert!(!is_v2);
+            }
+            session.step(d.episode_id, d.step, row.selected).unwrap();
+        }
+        assert!(
+            eligible_v2.len() >= 4 && eligible_v1.len() > eligible_v2.len(),
+            "self-play fixture must have eligible decisions on both seats"
+        );
+
+        // Find a seed whose overall top-ranked decision is on the non-learner seat.
+        let non_learner_seed = (0_u64..1024)
+            .find(|&seed| {
+                let top = eligible_v1
+                    .iter()
+                    .map(|(key, id, index, actor)| {
+                        (line_b_root_rank_v1(seed, key), *id, *index, *actor)
+                    })
+                    .min()
+                    .unwrap();
+                top.3 != trajectory.episode.learner_seat
+            })
+            .expect("must find a seed where top-ranked root is on the non-learner seat");
+
+        let root_v1 = select_line_b_root_v1(&trajectory, non_learner_seed)
+            .unwrap()
+            .expect("v1 root");
+        let root_v2 = select_line_b_root_v2(&trajectory, non_learner_seed)
+            .unwrap()
+            .expect("v2 root");
+
+        assert_ne!(
+            root_v1.actor, trajectory.episode.learner_seat,
+            "v1 must remain unchanged and pick the non-learner seat here"
+        );
+        assert_eq!(root_v1.eligible_decisions, eligible_v1.len());
+
+        assert_eq!(
+            root_v2.actor, trajectory.episode.learner_seat,
+            "v2 must skip the non-learner seat and pick a learner-seat root"
+        );
+        assert_eq!(root_v2.eligible_decisions, eligible_v2.len());
+        let expected_v2 = eligible_v2
+            .iter()
+            .map(|(key, id, index, _)| (line_b_root_rank_v1(non_learner_seed, key), *id, *index))
+            .min()
+            .unwrap();
+        assert_eq!(
+            (
+                root_v2.rank,
+                root_v2.physical_decision_id,
+                root_v2.decision_index
+            ),
+            expected_v2
+        );
+        assert!(
+            (root_v1.rank, root_v1.physical_decision_id)
+                < (root_v2.rank, root_v2.physical_decision_id),
+            "v1's non-learner root must have strictly better rank than v2's learner root"
+        );
+    }
+
     /// One real self-play game (Burn mirror, fixture V4 policy) collected
     /// with the line (b) unclamped learner sampler.
     fn line_b_operator_fixture_v1() -> (FrozenPlayPolicyV1, ExpandedTrajectoryV1) {
@@ -15251,6 +15386,7 @@ pub(crate) mod tests {
                 None,
             ],
             permuted_control: false,
+            root_selector: LineBRootSelectorV1::V1,
         };
         let student = "0".repeat(64);
         let serial = line_b_teach_v1(&trajectories, &policy, &student, &options(1)).unwrap();
@@ -15302,6 +15438,7 @@ pub(crate) mod tests {
         }
         let json = serde_json::to_value(&serial).unwrap();
         assert_eq!(json["schema"], LINE_B_TEACHER_PACKET_SCHEMA_V1);
+        assert!(json["options"].get("root_selector").is_none());
         assert_eq!(json["games"][0]["kind"], "root");
         assert_eq!(json["games"][1]["kind"], "canonical");
         assert_eq!(
@@ -15446,6 +15583,7 @@ pub(crate) mod tests {
             workers: 2,
             games,
             permuted_control: true,
+            root_selector: LineBRootSelectorV1::V2,
         };
         let seeds = || {
             vec![Some(LineBGameSeedsV1 {
@@ -15504,6 +15642,12 @@ pub(crate) mod tests {
                 packet["options"]["direction"],
                 serde_json::to_value(direction).unwrap()
             );
+            assert_eq!(
+                packet["options"]["root_selector"],
+                "line-b-root-selector-v2"
+            );
+            assert_eq!(taught["root_selector"], "line-b-root-selector-v2");
+            assert_eq!(packet["games"][0]["actor"], 0);
             assert_eq!(taught["census"], packet["census"]);
             assert_eq!(taught["census"]["selected_roots"], 1);
             assert_eq!(taught["census"]["complete_roots"], 1, "{seed_drift}");

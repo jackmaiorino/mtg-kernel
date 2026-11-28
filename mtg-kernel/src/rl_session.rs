@@ -15007,8 +15007,24 @@ mod tests {
                     ("no placed trigger", |state: &mut GameState| {
                         state.stack.clear();
                     }),
+                    ("lone madness offer", |state: &mut GameState| {
+                        let item = &mut state.stack[0];
+                        item.kind = crate::state::StackItemKind::MadnessOffer;
+                        item.madness_offer = true;
+                        item.inline_effect = None;
+                    }),
                 ],
             );
+
+            // A Madness offer placed above an earlier TriggeredAbility in the
+            // same batch still leaves that TriggeredAbility on the stack.
+            let mut above_trigger = legit.clone();
+            let mut offer = above_trigger.stack[0].clone();
+            offer.kind = crate::state::StackItemKind::MadnessOffer;
+            offer.madness_offer = true;
+            offer.inline_effect = None;
+            above_trigger.stack.push(offer);
+            engine::step(&mut above_trigger, choose.clone()).unwrap();
 
             // The batch's last trigger placed with its capture still waiting:
             // the next checkpoint has offered nothing, so nothing answers it.
