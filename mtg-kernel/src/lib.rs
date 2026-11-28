@@ -225,6 +225,8 @@ pub mod cube_pod_runner_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_read_plan_v1;
 #[cfg(feature = "eternal-fixtures")]
+pub mod cube_seat_package_v1;
+#[cfg(feature = "eternal-fixtures")]
 pub mod cube_seat_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_training_driver_v1;
