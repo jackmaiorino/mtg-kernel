@@ -369,6 +369,7 @@ fn context(item: &StackItem) -> ExecCtx {
         controller: item.controller,
         targets: item.targets.clone(),
         target_contracts: item.v4.target_contracts.clone(),
+        copy_legal_targets_v1: Vec::new(),
         discarded: item.discarded.clone(),
         paid_cost_refs: item.v4.paid_cost_refs.clone(),
         hidden_ability_source: item.v4.hidden_ability_source,

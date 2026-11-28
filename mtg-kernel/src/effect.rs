@@ -459,6 +459,7 @@ pub(crate) mod perforating_artist_v1 {
             controller: item.controller,
             targets: item.targets.clone(),
             target_contracts: item.v4.target_contracts.clone(),
+            copy_legal_targets_v1: Vec::new(),
             discarded: item.discarded.clone(),
             paid_cost_refs: item.v4.paid_cost_refs.clone(),
             hidden_ability_source: item.v4.hidden_ability_source,
@@ -765,6 +766,7 @@ pub(crate) mod alesha_optional_v1 {
             controller: item.controller,
             targets: item.targets.clone(),
             target_contracts: item.v4.target_contracts.clone(),
+            copy_legal_targets_v1: Vec::new(),
             discarded: item.discarded.clone(),
             paid_cost_refs: item.v4.paid_cost_refs.clone(),
             hidden_ability_source: item.v4.hidden_ability_source,
@@ -4191,6 +4193,11 @@ pub struct ExecCtx {
     /// individually guarded multi-target leaf may act on that object.
     #[serde(default)]
     pub target_contracts: Vec<StackTargetContractV4>,
+    /// Target slots whose live permanent became a copy or stopped being one
+    /// before resolution (`live.card_def != contract.card_def`) and still met
+    /// the resolving stack item's targeting restriction (CR 608.2b, 707.4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) copy_legal_targets_v1: Vec<u16>,
     /// Cards discarded to pay this cast's mandatory additional cost (Grab
     /// the Prize), if any. Empty for everything else. Read by
     /// `EffectCond::DiscardedNonLandForCost`.
@@ -4332,6 +4339,10 @@ impl std::hash::Hash for ExecCtx {
         if let Some(origin) = self.niv_damage_origin_v1 {
             std::hash::Hash::hash(&0x6e69_765f_646d_676f_u64, state);
             std::hash::Hash::hash(&origin, state);
+        }
+        if !self.copy_legal_targets_v1.is_empty() {
+            std::hash::Hash::hash(&0x636f_7079_6c65_6761_u64, state);
+            std::hash::Hash::hash(&self.copy_legal_targets_v1, state);
         }
     }
 }
@@ -11179,6 +11190,115 @@ fn validate_aberration_continuation_v1(
     }
 }
 
+pub(crate) fn validate_historical_copy_legal_targets_v1(
+    state: &GameState,
+    item: &StackItem,
+    slots: &[u16],
+) -> Result<(), String> {
+    if slots.is_empty() {
+        return Ok(());
+    }
+    if !cfg!(feature = "eternal-fixtures") {
+        return Err("copy-legal target slots require eternal fixtures".into());
+    }
+    if !slots.windows(2).all(|pair| pair[0] < pair[1]) {
+        return Err("copy-legal target slots must be strictly increasing".into());
+    }
+    for &slot in slots {
+        let index = usize::from(slot);
+        let (
+            Some(Target::Object(object)),
+            Some(StackTargetContractV4::Object {
+                object: bound,
+                card_def,
+                owner,
+                zone_change_count,
+                ..
+            }),
+        ) = (
+            item.targets.get(index).copied(),
+            item.v4.target_contracts.get(index).copied(),
+        )
+        else {
+            return Err("copy-legal target slot does not name an object target".into());
+        };
+        if bound != object {
+            return Err("copy-legal target slot contract mismatched its target".into());
+        }
+        let live = state
+            .objects
+            .try_get(object)
+            .ok_or("copy-legal target object is missing")?;
+        if live.owner != owner
+            || (live.zone_change_count == zone_change_count
+                && crate::standard_cards_v1::active_aegis_copy(state, object))
+            || !crate::standard_cards_v1::had_card_def(state, object, zone_change_count, card_def)
+        {
+            return Err("copy-legal target slot lacks a recorded copy definition".into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_copy_legal_targets_v1(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let slots = &pending.ctx.copy_legal_targets_v1;
+    validate_historical_copy_legal_targets_v1(state, &pending.resolving_item, slots)?;
+    if slots.is_empty() {
+        return Ok(());
+    }
+    let mut cached_legalities: Option<Vec<bool>> = None;
+    for &slot in slots {
+        let index = usize::from(slot);
+        let (
+            Some(Target::Object(object)),
+            Some(StackTargetContractV4::Object {
+                card_def,
+                zone,
+                zone_change_count,
+                ..
+            }),
+        ) = (
+            pending.resolving_item.targets.get(index).copied(),
+            pending
+                .resolving_item
+                .v4
+                .target_contracts
+                .get(index)
+                .copied(),
+        )
+        else {
+            return Err("copy-legal target slot does not name an object target".into());
+        };
+        let live = state
+            .objects
+            .try_get(object)
+            .ok_or("copy-legal target object is missing")?;
+        if live.zone == zone && live.zone_change_count == zone_change_count {
+            if live.card_def == card_def {
+                return Err("copy-legal target slot did not change card definition".into());
+            }
+            let legalities = match cached_legalities.as_ref() {
+                Some(legalities) => legalities,
+                None => {
+                    let computed =
+                        crate::engine::stack_target_legalities(&pending.resolving_item, state)?;
+                    cached_legalities.insert(computed)
+                }
+            };
+            if legalities.get(index).copied() != Some(true) {
+                return Err(
+                    "copy-legal target slot is not a legal target of the resolving stack item"
+                        .into(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::drake_hatcher_v1::custody::with_validation_replay_keys(
         state,
@@ -11342,6 +11462,7 @@ fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String>
     }
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
+    validate_copy_legal_targets_v1(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_sideboard_s1d_v1::validate_circle_choice(state, pending)?;
     #[cfg(feature = "eternal-fixtures")]
@@ -18697,16 +18818,20 @@ fn resumable_discard_below(
 
 impl ExecCtx {
     /// Compare the semantic stack context while leaving the private Niv damage
-    /// handoff to its owning continuation validator. This token is checked
-    /// against the authentic saved stack row before effect execution.
+    /// handoff and resolution-time copy-legal target slots to their owning
+    /// continuation and boundary validators.
     pub(crate) fn same_except_niv_damage_origin_v1(&self, other: &Self) -> bool {
-        if self.niv_damage_origin_v1 == other.niv_damage_origin_v1 {
+        if self.niv_damage_origin_v1 == other.niv_damage_origin_v1
+            && self.copy_legal_targets_v1 == other.copy_legal_targets_v1
+        {
             return self == other;
         }
         let mut left = self.clone();
         let mut right = other.clone();
         left.niv_damage_origin_v1 = None;
         right.niv_damage_origin_v1 = None;
+        left.copy_legal_targets_v1.clear();
+        right.copy_legal_targets_v1.clear();
         left == right
     }
 
@@ -18719,6 +18844,7 @@ impl ExecCtx {
             controller,
             targets: Vec::new(),
             target_contracts: Vec::new(),
+            copy_legal_targets_v1: Vec::new(),
             discarded: Vec::new(),
             paid_cost_refs: Vec::new(),
             hidden_ability_source: None,
@@ -18775,7 +18901,18 @@ impl ExecCtx {
             ) => {
                 bound == object
                     && state.objects.try_get(*object).is_some_and(|live| {
-                        live.card_def == *card_def
+                        let same_definition = live.card_def == *card_def
+                            || (cfg!(feature = "eternal-fixtures")
+                                && u16::try_from(index)
+                                    .is_ok_and(|slot| self.copy_legal_targets_v1.contains(&slot))
+                                && !crate::standard_cards_v1::active_aegis_copy(state, *object)
+                                && crate::standard_cards_v1::had_card_def(
+                                    state,
+                                    *object,
+                                    *zone_change_count,
+                                    *card_def,
+                                ));
+                        same_definition
                             && live.owner == *owner
                             && live.zone_change_count == *zone_change_count
                     })
@@ -28038,6 +28175,7 @@ mod tests {
             controller: PlayerId::P0,
             targets: vec![Target::Player(PlayerId::P1)],
             target_contracts: vec![StackTargetContractV4::Player(PlayerId::P1)],
+            copy_legal_targets_v1: Vec::new(),
             discarded: Vec::new(),
             paid_cost_refs: Vec::new(),
             hidden_ability_source: None,
@@ -28078,6 +28216,7 @@ mod tests {
                 zone_change_count: state.objects.get(creature).zone_change_count,
                 spell_copy_origin: state.objects.get(creature).spell_copy_origin,
             }],
+            copy_legal_targets_v1: Vec::new(),
             discarded: Vec::new(),
             paid_cost_refs: Vec::new(),
             hidden_ability_source: None,
@@ -29531,6 +29670,7 @@ pub(crate) fn begin_owned_tutelage_v1(
         controller: item.controller,
         targets: item.targets.clone(),
         target_contracts: item.v4.target_contracts.clone(),
+        copy_legal_targets_v1: Vec::new(),
         discarded: item.discarded.clone(),
         paid_cost_refs: item.v4.paid_cost_refs.clone(),
         hidden_ability_source: item.v4.hidden_ability_source,
@@ -29847,9 +29987,11 @@ impl NativeExecutionOwnerV1 {
             .pending_effect
             .as_ref()
             .ok_or("native pending row lost")?;
+        validate_copy_legal_targets_v1(state, pending)?;
         let mut expected = crystal_prevention_v1::context(&pending.resolving_item);
         expected.niv_damage_origin_v1 =
             event::niv_damage_origin_for_saved_item_v1(state, &pending.resolving_item);
+        expected.copy_legal_targets_v1 = pending.ctx.copy_legal_targets_v1.clone();
         let root = validated_native_execution_root_v1(state, pending)?;
         if pending.ctx != expected
             || pending.frames.iter().any(|frame| {
@@ -29881,6 +30023,7 @@ pub(crate) fn acquire_native_execution_owner_v1(
         return Ok(None);
     }
     crate::engine::validated_stack_item_target_spec(item, state)?;
+    ctx.copy_legal_targets_v1 = crate::engine::copy_legal_targets_for_item_v1(state, item)?;
     if state.engine.pending_effect.is_some()
         || state.stack.last() != Some(item)
         || state
@@ -30684,6 +30827,7 @@ pub(crate) mod blasphemous_edict_v1 {
             controller: i.controller,
             targets: i.targets.clone(),
             target_contracts: i.v4.target_contracts.clone(),
+            copy_legal_targets_v1: Vec::new(),
             discarded: i.discarded.clone(),
             paid_cost_refs: i.v4.paid_cost_refs.clone(),
             hidden_ability_source: i.v4.hidden_ability_source,
@@ -31244,7 +31388,12 @@ fn spirit_copy_item_v1(state: &GameState, item: &StackItem) -> bool {
                 d.name == "Self-Reflection"
                     && (d.spell_effect)() == Some(EffectOp::CreateControlledCreatureTargetCopyV1)
             })
-    }) && spirit_copy_target_v1(state, &crystal_prevention_v1::context(item))
+    }) && {
+        let mut ctx = crystal_prevention_v1::context(item);
+        ctx.copy_legal_targets_v1 =
+            crate::engine::copy_legal_targets_for_item_v1(state, item).unwrap_or_default();
+        spirit_copy_target_v1(state, &ctx)
+    }
 }
 fn spirit_copy_proposal_v1(
     state: &GameState,

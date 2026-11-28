@@ -205,6 +205,7 @@ fn multiple_bait_remove_exactly_one_and_explicit_effect_untap_both_seats() {
                 &state,
                 Target::Object(pole),
             )],
+            copy_legal_targets_v1: vec![],
             discarded: vec![],
             paid_cost_refs: vec![],
             hidden_ability_source: None,
