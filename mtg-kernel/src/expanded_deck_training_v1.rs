@@ -1748,9 +1748,13 @@ pub struct ExpandedEpisodeV1 {
     pub deck_format: Option<crate::sideboard::DeckFormatV1>,
     /// Optional cap on the number of items on the stack when a decision is
     /// exposed. None keeps every prior serialized byte and imposes no cap.
-    /// Last, after `deck_format`, so older positional arrays still decode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_stack_objects: Option<u32>,
+    /// Explicit Cube flat-action union admission for a `limited40-v1`
+    /// episode. False is omitted and preserves every prior serialized byte.
+    /// Last so older positional arrays still decode.
+    #[serde(default, skip_serializing_if = "is_false_v1")]
+    pub cube_flat_action_contract: bool,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -3764,30 +3768,73 @@ fn episode_session_v1(
     episode: &ExpandedEpisodeV1,
     configs: &[DeckConfigurationV1; 2],
 ) -> Result<FastActorSessionV1, String> {
+    ensure(
+        !episode.cube_flat_action_contract
+            || episode.deck_format == Some(crate::sideboard::DeckFormatV1::Limited40V1),
+        "cube_flat_action_contract requires limited40-v1",
+    )?;
     let (steps, physical) = episode.reset_offsets_v1();
     let game_seed = episode.reset.as_ref().map_or(episode.seed, |r| r.game_seed);
     let windows = episode.priority_windows_v1()?;
     let mut session = if let Some(modes) = episode.mulligan_modes {
         // `opening` (London v1) with its refusals; never a reset start.
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
-            1,
-            game_seed,
-            episode.max_physical_decisions,
-            episode.max_policy_steps,
-            episode.selected.each_ref().map(|d| d.label.clone()),
-            configs.each_ref().map(|d| d.mainboard().to_vec()),
-            PlayerId(episode.starting_player),
-            modes,
-            windows,
-            episode.deck_format,
-        )
+        if episode.cube_flat_action_contract {
+            FastActorSessionV1::reset_cube_pauper_london_windows_deck_format_v1(
+                1,
+                game_seed,
+                episode.max_physical_decisions,
+                episode.max_policy_steps,
+                episode.selected.each_ref().map(|d| d.label.clone()),
+                configs.each_ref().map(|d| d.mainboard().to_vec()),
+                PlayerId(episode.starting_player),
+                modes,
+                windows,
+                episode.deck_format,
+            )
+        } else {
+            FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
+                1,
+                game_seed,
+                episode.max_physical_decisions,
+                episode.max_policy_steps,
+                episode.selected.each_ref().map(|d| d.label.clone()),
+                configs.each_ref().map(|d| d.mainboard().to_vec()),
+                PlayerId(episode.starting_player),
+                modes,
+                windows,
+                episode.deck_format,
+            )
+        }
         .map_err(err)?
     } else {
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
-        1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player), windows, episode.deck_format).map_err(err)?
+        if episode.cube_flat_action_contract {
+            FastActorSessionV1::reset_cube_flat_action_v1(
+                1,
+                game_seed,
+                physical + episode.max_physical_decisions,
+                steps + episode.max_policy_steps,
+                episode.selected.each_ref().map(|d| d.label.clone()),
+                configs.each_ref().map(|d| d.mainboard().to_vec()),
+                PlayerId(episode.starting_player),
+                windows,
+                episode.deck_format,
+            )
+        } else {
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
+                1,
+                game_seed,
+                physical + episode.max_physical_decisions,
+                steps + episode.max_policy_steps,
+                episode.selected.each_ref().map(|d| d.label.clone()),
+                configs.each_ref().map(|d| d.mainboard().to_vec()),
+                PlayerId(episode.starting_player),
+                windows,
+                episode.deck_format,
+            )
+        }
+        .map_err(err)?
     };
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
@@ -9635,6 +9682,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100,
             max_policy_steps: 1000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -10176,6 +10224,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100,
             max_policy_steps: 1000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -10290,6 +10339,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -10434,6 +10484,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -10579,6 +10630,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -10722,6 +10774,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -10848,6 +10901,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -10987,6 +11041,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -11138,6 +11193,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -11279,6 +11335,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -11437,6 +11494,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -11597,6 +11655,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -11643,6 +11702,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13067,6 +13127,7 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                cube_flat_action_contract: false,
                 max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
@@ -13131,6 +13192,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13178,6 +13240,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13306,6 +13369,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13368,6 +13432,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13416,6 +13481,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13479,6 +13545,7 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                cube_flat_action_contract: false,
                 max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
@@ -13557,6 +13624,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13597,6 +13665,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13655,6 +13724,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13696,6 +13766,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -13846,6 +13917,7 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                cube_flat_action_contract: false,
                 max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
@@ -14232,6 +14304,7 @@ pub(crate) mod tests {
                     postboard: false,
                     max_physical_decisions: 100_000,
                     max_policy_steps: 1_000_000,
+                    cube_flat_action_contract: false,
                     max_stack_objects: None,
                     runtime_rules: None,
                     reset: None,
@@ -14665,6 +14738,7 @@ pub(crate) mod tests {
                     postboard: false,
                     max_physical_decisions: 100_000,
                     max_policy_steps: 1_000_000,
+                    cube_flat_action_contract: false,
                     max_stack_objects: None,
                     runtime_rules: None,
                     reset: None,
@@ -14818,6 +14892,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -14961,6 +15036,7 @@ pub(crate) mod tests {
             priority_windows: None,
             london_keep_offset: None,
             deck_format: None,
+            cube_flat_action_contract: false,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -15080,6 +15156,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -15554,6 +15631,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -16033,6 +16111,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100000,
             max_policy_steps: 1000000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,
@@ -16186,6 +16265,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100000,
             max_policy_steps: 1000000,
+            cube_flat_action_contract: false,
             max_stack_objects: None,
             runtime_rules: None,
             reset: None,

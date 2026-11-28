@@ -67,6 +67,7 @@ pub(crate) fn episode(
         priority_windows: None,
         london_keep_offset: None,
         deck_format,
+        cube_flat_action_contract: false,
         max_stack_objects: None,
     }
 }
@@ -194,6 +195,45 @@ fn deck_format_absent_writes_no_key_and_round_trips() {
         serde_json::from_value::<ExpandedEpisodeV1>(full).unwrap(),
         present
     );
+}
+
+#[test]
+fn cube_flat_action_contract_is_explicit_and_limited40_only() {
+    for london in [false, true] {
+        let frozen = episode(pauper(40, 0), london, LIMITED);
+        let value = serde_json::to_value(&frozen).unwrap();
+        assert!(value.get("cube_flat_action_contract").is_none());
+
+        let mut cube = frozen.clone();
+        cube.cube_flat_action_contract = true;
+        let value = serde_json::to_value(&cube).unwrap();
+        assert_eq!(value["cube_flat_action_contract"], serde_json::json!(true));
+        assert_eq!(
+            serde_json::from_value::<ExpandedEpisodeV1>(value.clone()).unwrap(),
+            cube
+        );
+        let mut pre_cube_fields = FIELD_ORDER.to_vec();
+        pre_cube_fields.push("max_stack_objects");
+        let without_cube = positional(&value, &pre_cube_fields);
+        let decoded = serde_json::from_value::<ExpandedEpisodeV1>(without_cube).unwrap();
+        assert!(!decoded.cube_flat_action_contract);
+        assert_eq!(decoded, frozen);
+
+        let configs = cube.configurations().unwrap();
+        let session = episode_session_v1(&cube, &configs).unwrap();
+        assert!(session.is_cube_v1());
+        assert!(matches!(
+            session.current_response(),
+            FastActorResponseV1::Decision(_)
+        ));
+
+        let mut wrong_format = cube;
+        wrong_format.deck_format = None;
+        let Err(error) = episode_session_v1(&wrong_format, &configs) else {
+            panic!("a Cube contract without limited40-v1 must be refused");
+        };
+        assert_eq!(error, "cube_flat_action_contract requires limited40-v1");
+    }
 }
 
 #[test]

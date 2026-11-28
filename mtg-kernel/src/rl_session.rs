@@ -5297,35 +5297,87 @@ fn flat_validate_expected_decision_numeric_domain(
     if crate::text_color_change_v1::requires_successor(&session.state) {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
-    if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39 && !session.is_common_v40())
-        || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37 && !session.is_common_v40())
+    if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39
+        && !session.is_common_v40())
+        || (crate::inspiration_observation_v1::requires_successor(&session.state)
+            && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37
+            && !session.is_common_v40())
         || (crate::krenko_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34 && !session.is_common_v40())
-        || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35 && !session.is_common_v40())
+            && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34
+            && !session.is_common_v40())
+        || (crate::zul_ashur_v1::requires_successor(&session.state)
+            && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35
+            && !session.is_common_v40())
         || (crate::heraldic_banner_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36 && !session.is_common_v40())
+            && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36
+            && !session.is_common_v40())
         || (crate::fiery_annihilation_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40())
+            && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33
+            && !session.is_common_v40())
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25 && !session.is_common_v40())
-        || (!exact_battlefield_v51 && session.state.objects.iter().any(|(_, object)| {
-        i16::try_from(object.counters.plus1_plus1).is_err()
-            || u16::try_from(object.damage).is_err()
-    })) || (session.state.planeswalkers_v1.is_some() && !session.is_common_v40())
+            && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25
+            && !session.is_common_v40()
+            && !session.is_cube_v1())
+        || (!exact_battlefield_v51
+            && session.state.objects.iter().any(|(_, object)| {
+                i16::try_from(object.counters.plus1_plus1).is_err()
+                    || u16::try_from(object.damage).is_err()
+            }))
+        || (session.state.planeswalkers_v1.is_some()
+            && !session.is_common_v40()
+            && !session.is_cube_v1())
         || (session.state.trigger_uses_v1.is_some()
+            && !session.is_cube_v1()
             && !(session.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
                 && session.surface.limited_appendix_v1() == LimitedAppendixV1::FullPool))
-        || session.state.engine.active_replacements.iter().any(|replacement| {
-            match replacement.kind {
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49 | FlatActionContractModeV1::FakeV50
-                | FlatActionContractModeV1::RavenousV51
-                | FlatActionContractModeV1::ElendaV52 | FlatActionContractModeV1::PreparedV57 | FlatActionContractModeV1::NextFiveV59 | FlatActionContractModeV1::GraveyardReturnV61 | FlatActionContractModeV1::CallV62 | FlatActionContractModeV1::EndTurnV68 | FlatActionContractModeV1::GenesisWaveV69 | FlatActionContractModeV1::VivienV70
-| FlatActionContractModeV1::MuldrothaV71
-                | FlatActionContractModeV1::TinybonesV72 | FlatActionContractModeV1::LilianaV73 | FlatActionContractModeV1::ChandraV74 | FlatActionContractModeV1::KaitoV75),
-                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
+        || session
+            .state
+            .engine
+            .active_replacements
+            .iter()
+            .any(|replacement| {
+                match replacement.kind {
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn {
+                    ..
+                } => {
+                    !matches!(
+                        session.flat_action_contract_mode,
+                        FlatActionContractModeV1::TwinflameV38
+                            | FlatActionContractModeV1::AkromaV40
+                            | FlatActionContractModeV1::LimitedCommonV1
+                            | FlatActionContractModeV1::AjaniV42
+                            | FlatActionContractModeV1::FaebloomV43
+                            | FlatActionContractModeV1::DivineV44
+                            | FlatActionContractModeV1::HunterV45
+                            | FlatActionContractModeV1::EatenV46
+                            | FlatActionContractModeV1::PandaV47
+                            | FlatActionContractModeV1::SeasonV48
+                            | FlatActionContractModeV1::ConquerorV49
+                            | FlatActionContractModeV1::FakeV50
+                            | FlatActionContractModeV1::RavenousV51
+                            | FlatActionContractModeV1::ElendaV52
+                            | FlatActionContractModeV1::PreparedV57
+                            | FlatActionContractModeV1::NextFiveV59
+                            | FlatActionContractModeV1::GraveyardReturnV61
+                            | FlatActionContractModeV1::CallV62
+                            | FlatActionContractModeV1::EndTurnV68
+                            | FlatActionContractModeV1::GenesisWaveV69
+                            | FlatActionContractModeV1::VivienV70
+                            | FlatActionContractModeV1::MuldrothaV71
+                            | FlatActionContractModeV1::TinybonesV72
+                            | FlatActionContractModeV1::LilianaV73
+                            | FlatActionContractModeV1::ChandraV74
+                            | FlatActionContractModeV1::KaitoV75
+                    )
+                }
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => {
+                    session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33
+                        && !session.is_common_v40()
+                }
                 _ => false,
             }
-        })
+            })
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
@@ -5478,6 +5530,14 @@ enum FlatActionContractModeV1 {
     LilianaV73,
     ChandraV74,
     KaitoV75,
+    /// Opt-in Vintage Cube admission on the existing V3/V4 transport, limited
+    /// to planeswalker loyalty, combat statics, per-turn trigger uses and
+    /// scheduled extra turns. This is deliberately outside `is_common_v40`:
+    /// that predicate also selects the distinct common candidate and
+    /// observation contracts, rather than only admitting successor states.
+    /// The V4 flat encoder cannot observe planeswalker loyalty records,
+    /// trigger-use rows or the extra-turn schedule; FlatV9 owns those features.
+    CubeV1,
     /// Rules-only Limited self-play (`rules_only_v1`): no consumer contract.
     RulesOnlyV1,
 }
@@ -7758,6 +7818,33 @@ impl FastActorSessionV1 {
         windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
         deck_format: Option<crate::sideboard::DeckFormatV1>,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_explicit_decks_v2_with_contract_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            windows,
+            deck_format,
+            FlatActionContractModeV1::V2,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reset_explicit_decks_v2_with_contract_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: Option<PlayerId>,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
+        flat_action_contract_mode: FlatActionContractModeV1,
+    ) -> Result<Self, RlSessionError> {
         let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
@@ -7781,7 +7868,7 @@ impl FastActorSessionV1 {
             policy_step_count: 0,
             physical_decision_count: 0,
             current: None,
-            flat_action_contract_mode: FlatActionContractModeV1::V2,
+            flat_action_contract_mode,
             v3_spell_target_reference_adapter: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
             trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
@@ -9748,6 +9835,7 @@ impl FastActorSessionV1 {
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
             && !self.is_common_v40()
+            && !self.is_cube_v1()
         {
             return Err(session_error(
                 RlSessionErrorCode::StaleEnvironmentBinding,
@@ -10797,6 +10885,7 @@ impl FastActorSessionV1 {
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
             && !self.is_common_v40()
+            && !self.is_cube_v1()
         {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -11209,7 +11298,7 @@ impl FastActorSessionV1 {
                 let cache_result = flat_build_action_cache_v2(self, &current, reusable_cache);
                 flat_install_action_cache_build_result_v2(&mut current, cache_result);
             }
-            FlatActionContractModeV1::V3 => {
+            FlatActionContractModeV1::V3 | FlatActionContractModeV1::CubeV1 => {
                 self.flat_action_cache_spare_v2 = None;
                 // The V3 cache refuses a London pregame decision without
                 // touching its engine-ordered menu (`pauper_london_v1`).

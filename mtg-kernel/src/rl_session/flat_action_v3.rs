@@ -191,7 +191,12 @@ fn extensions(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<PolicyObservationExtensionsV6, FlatActionDecisionSliceErrorV1> {
-    crate::rl::policy_observation_extensions_v6(&session.state, current.actor).map_err(|error| {
+    let result = if session.is_cube_v1() {
+        crate::rl::policy_observation_extensions_cube_v1(&session.state, current.actor)
+    } else {
+        crate::rl::policy_observation_extensions_v6(&session.state, current.actor)
+    };
+    result.map_err(|error| {
         capture_action_error_v3(session, current, "observation_extensions", &error, None);
         FlatActionDecisionSliceErrorV1::InvalidDecisionRelation
     })
@@ -606,7 +611,10 @@ fn validate_cache(
     current: &FastActorCurrentDecisionV1,
     cache: &FlatActionDecisionCacheV2,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
-    if session.flat_action_contract_mode != FlatActionContractModeV1::V3 {
+    if !matches!(
+        session.flat_action_contract_mode,
+        FlatActionContractModeV1::V3 | FlatActionContractModeV1::CubeV1
+    ) {
         return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
     }
     let extension = extensions(session, current)?;
@@ -673,6 +681,34 @@ impl FastActorSessionV1 {
             self.current = Some(current);
         }
         self
+    }
+
+    #[cfg(test)]
+    // Used only by fixture-gated CubeV1 tests.
+    #[allow(dead_code)]
+    pub(crate) fn from_cube_v1_fixture_state(state: GameState) -> Self {
+        let mut session = Self::from_v3_fixture_state_without_advance(state);
+        session.flat_action_contract_mode = FlatActionContractModeV1::CubeV1;
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
+    #[cfg(test)]
+    // Used only by fixture-gated CubeV1 tests.
+    #[allow(dead_code)]
+    fn from_v3_fixture_state_without_advance(state: GameState) -> Self {
+        let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session
     }
 
     pub fn reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2(
@@ -747,6 +783,34 @@ impl FastActorSessionV1 {
         )?.into_flat_action_v3())
     }
 
+    /// CubeV1 is installed before the reset's first advance; every other
+    /// constructor retains its original mode transition sequence.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_cube_flat_action_v1(
+        episode_id: u64,
+        seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_explicit_decks_v2_with_contract_v1(
+            episode_id,
+            seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            Some(starting_player),
+            windows,
+            deck_format,
+            FlatActionContractModeV1::CubeV1,
+        )
+    }
+
     pub fn reset_with_decks_and_limits_flat_action_v3(
         episode_id: u64,
         seed: u64,
@@ -775,7 +839,10 @@ impl FastActorSessionV1 {
         flat_validate_expected_decision_v1(self, current, expected).inspect_err(|error| {
             capture_action_error_v3(self, current, "expected_decision_binding", error, None);
         })?;
-        if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
+        if !matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::V3 | FlatActionContractModeV1::CubeV1
+        ) {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
         if let Some(error) = current.flat_action_cache_error_v2 {
@@ -848,16 +915,28 @@ impl FastActorSessionV1 {
     ) -> Result<ObservationV6, FlatActionDecisionSliceErrorV1> {
         self.validated_v3_cache(expected)?;
         let current = self.current.as_ref().unwrap();
-        crate::rl::observe_policy_v6_unhashed_for_flat_policy(
-            &self.state,
-            &self.surface,
-            current.actor,
-            self.policy_step_count,
-            current.physical_decision_id,
-            current.substep_index,
-            current.substep_count,
-        )
-        .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
+        let observation = if self.is_cube_v1() {
+            crate::rl::observe_policy_v6_unhashed_for_cube_flat_policy(
+                &self.state,
+                &self.surface,
+                current.actor,
+                self.policy_step_count,
+                current.physical_decision_id,
+                current.substep_index,
+                current.substep_count,
+            )
+        } else {
+            crate::rl::observe_policy_v6_unhashed_for_flat_policy(
+                &self.state,
+                &self.surface,
+                current.actor,
+                self.policy_step_count,
+                current.physical_decision_id,
+                current.substep_index,
+                current.substep_count,
+            )
+        };
+        observation.map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
     }
 
     /// Private human-adapter input. All three values come from the same

@@ -2953,6 +2953,19 @@ type AcceptedPlanesV48 = (bool, bool, bool, bool, bool, bool, bool, bool);
 type AcceptedPlanesV49 = (AcceptedPlanesV48, bool);
 type HistoricalSourcesV47 = (bool, bool, bool, bool);
 
+// Authority, extra turns, combat statics, Banishing Light, Gourmand, Garruk,
+// Crystal, Arahbo, Strongbox, Fiery, Krenko, Zul, Banner, Inspiration,
+// Twinflame; the outer flag is Fishing Pole.
+const CUBE_ACCEPTED_STATICS_V1: FamilyCapabilitiesWithFishingV40 = (
+    (
+        false, true, true, false, false, false, false, false, false, false, false, false, false,
+        false, false,
+    ),
+    false,
+);
+const CUBE_ACCEPTED_PLANES_V1: AcceptedPlanesV48 =
+    (false, false, false, false, false, false, false, false);
+
 fn build_observation_common_v2(
     state: &GameState,
     surface: &crate::surface_v2::HarnessSurfaceV2,
@@ -4351,6 +4364,52 @@ pub(crate) fn observe_policy_v6_unhashed_for_flat_policy(
         substep_count,
         text_mode: ObservationTextModeV2::FlatForbiddenElided,
     })
+}
+
+/// Cube always uses flat text. Its observation and both action/scoring
+/// extension routes consume the same admitted capability tuples.
+pub(crate) fn observe_policy_v6_unhashed_for_cube_flat_policy(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV6> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    if crate::authority_of_the_consuls_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "opposing-creature tapped entry and captured gain require their observation successor"
+                .into(),
+        ));
+    }
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    Ok(
+        build_policy_observation_storage_common_fishing_v39_ajani_v42(
+            (
+                PolicyObservationBuildV5 {
+                    state,
+                    surface,
+                    acting_player,
+                    step_index,
+                    physical_decision_id,
+                    substep_index,
+                    substep_count,
+                    text_mode: ObservationTextModeV2::FlatForbiddenElided,
+                },
+                CUBE_ACCEPTED_PLANES_V1,
+            ),
+            false,
+            false,
+            false,
+            false,
+            false,
+            CUBE_ACCEPTED_STATICS_V1,
+        )?
+        .into_legacy(),
+    )
 }
 
 fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<ObservationV6> {
@@ -6586,6 +6645,32 @@ pub(crate) fn policy_observation_extensions_v6(
         state,
         acting_player,
         ObservationTextModeV2::FlatForbiddenElided,
+    )
+}
+
+pub(crate) fn policy_observation_extensions_cube_v1(
+    state: &GameState,
+    acting_player: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    if crate::authority_of_the_consuls_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "opposing-creature tapped entry and captured gain require their observation successor"
+                .into(),
+        ));
+    }
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    let (_, accept_fishing) = CUBE_ACCEPTED_STATICS_V1;
+    let (accept_akroma, _, accept_faebloom, _, accept_hunter, _, accept_panda, _) =
+        CUBE_ACCEPTED_PLANES_V1;
+    policy_observation_extensions_union_inner_v40(
+        state,
+        acting_player,
+        ObservationTextModeV2::FlatForbiddenElided,
+        false,
+        accept_fishing,
+        (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
     )
 }
 

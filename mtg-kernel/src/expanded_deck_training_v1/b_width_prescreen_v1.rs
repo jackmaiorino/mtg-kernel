@@ -603,6 +603,7 @@ pub(crate) fn episode_v1(
         postboard: c.postboard,
         max_physical_decisions: c.max_physical_decisions,
         max_policy_steps: c.max_policy_steps,
+        cube_flat_action_contract: false,
         max_stack_objects: None,
         runtime_rules: Some(c.runtime_rules),
         reset: None,

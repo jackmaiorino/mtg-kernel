@@ -98,6 +98,14 @@ pub(crate) fn policy_observation_extensions_v7(
     policy_observation_extensions_v7_from_v6(state, acting_player, v6)
 }
 
+pub(crate) fn policy_observation_extensions_v7_for_cube_v1(
+    state: &GameState,
+    acting_player: PlayerId,
+) -> Result<PolicyObservationExtensionsV7> {
+    let v6 = crate::rl::policy_observation_extensions_cube_v1(state, acting_player)?;
+    policy_observation_extensions_v7_from_v6(state, acting_player, v6)
+}
+
 pub(crate) fn policy_observation_extensions_v7_from_v6(
     state: &GameState,
     acting_player: PlayerId,
