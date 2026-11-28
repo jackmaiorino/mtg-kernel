@@ -1,8 +1,12 @@
 //! Three-round single-game Swiss for human pods. The server owns this state and
 //! advances it only after all four results in a round are natural.
 
-use super::{pod_play_seed, PodRunnerError, PodUse, CLIENT_NAMESPACE};
-use crate::cube_draft_v1::{derive_seed, game_seed, SeedStream, SEATS};
+use super::{
+    execute_game_tasks_with_options, pod_play_seed, AttemptTiming, ExecOptions, GameRole, GameTask,
+    PodCaps, PodGameRecord, PodRecordVersion, PodRunnerError, PodUse, SeatRule, CLIENT_NAMESPACE,
+};
+use crate::cube_draft_v1::{derive_seed, game_seed, Deck, SeedStream, SEATS};
+use crate::cube_seat_v1::GamePilot;
 use serde::Serialize;
 
 pub const CLIENT_SWISS_ROUNDS: u8 = 3;
@@ -35,6 +39,8 @@ pub struct SwissStanding {
 }
 
 pub struct ClientSwiss {
+    run: String,
+    pod_index: u64,
     pod_seed: u64,
     round: u8,
     points: [u8; SEATS],
@@ -48,6 +54,8 @@ impl ClientSwiss {
 
     pub fn new(run: &str, pod_index: u64) -> Result<Self, PodRunnerError> {
         Ok(Self {
+            run: run.to_owned(),
+            pod_index,
             pod_seed: pod_play_seed(Self::NAMESPACE, run, pod_index)?,
             round: 0,
             points: [0; SEATS],
@@ -96,6 +104,61 @@ impl ClientSwiss {
                 }
             }),
         }))
+    }
+
+    /// Executes the three private bot tables using the normal runner's A2
+    /// caps and attempt-seed ledger. The human table is played by the
+    /// fixed-seat human service. Three retries are available for an ordinary
+    /// bot halt. A watchdog expiry stops the round.
+    pub fn play_bot_tables(
+        &self,
+        round: &SwissRound,
+        human_chair: usize,
+        decks: &[Deck; SEATS],
+        pilot: &(dyn GamePilot + Sync),
+        on_game_complete: &(impl Fn(&PodGameRecord, &[AttemptTiming]) -> Result<(), String> + Sync),
+    ) -> Result<Vec<PodGameRecord>, PodRunnerError> {
+        if human_chair >= SEATS || self.next_round()?.as_ref() != Some(round) {
+            return Err(invalid("invalid chair or stale Swiss round"));
+        }
+        let tasks: Vec<_> = round
+            .tables
+            .iter()
+            .filter(|table| !table.chairs.contains(&human_chair))
+            .map(|table| GameTask {
+                game: table.game,
+                group: u32::from(round.round),
+                role: GameRole::Reference,
+                pairing: None,
+                decks: table.chairs.map(|chair| chair as u32),
+                chairs: table.chairs.map(|chair| Some(chair as u8)),
+                seats: table.chairs,
+                arms: ["bot".into(), "bot".into()],
+                seat_rule: SeatRule::Schedule,
+                game_seed: table.game_seed,
+                episode: u64::from(table.game),
+            })
+            .collect();
+        let options = ExecOptions {
+            namespace: CLIENT_NAMESPACE,
+            run: &self.run,
+            pod_index: self.pod_index,
+            caps: PodCaps::training_a2(),
+            watchdog_override: None,
+            workers: tasks.len(),
+            host: "local",
+            stop_on_watchdog: true,
+            record_version: PodRecordVersion::V3,
+            pilot_sample_denom: 0,
+            on_game_complete: Some(on_game_complete),
+        };
+        let results = execute_game_tasks_with_options(&tasks, decks, pilot, &options)?;
+        if results.games.len() != CLIENT_SWISS_TABLES - 1
+            || results.games.iter().any(|game| game.scores.is_none())
+        {
+            return Err(invalid("a bot table stopped without a natural result"));
+        }
+        Ok(results.games)
     }
 
     /// Commit all four tables together. Reject stale rounds and winners
@@ -228,5 +291,76 @@ mod tests {
         assert!(swiss.finish_round(&round, results).is_err());
         assert_eq!(swiss.next_round().unwrap(), Some(round));
         assert!(swiss.standings().iter().all(|row| row.points == 0));
+    }
+
+    #[test]
+    fn runner_excludes_human_table_and_journals_bot_replays() {
+        use super::super::attempt_seeds;
+        use crate::cube_draft_v1::{GameCaps, GameEnd};
+        use crate::cube_seat_v1::{AttemptOutcome, AttemptSpec};
+        use std::sync::Mutex;
+
+        struct RetryPilot([u64; CLIENT_SWISS_TABLES]);
+        impl GamePilot for RetryPilot {
+            fn play(&self, spec: &AttemptSpec<'_>, _: &GameCaps) -> AttemptOutcome {
+                let end = if self.0.contains(&spec.env_seed) {
+                    GameEnd::Terminal {
+                        code: "fixture".into(),
+                        classification: "fixture".into(),
+                        reason: "fixture".into(),
+                    }
+                } else {
+                    GameEnd::Natural {
+                        winner_seat: Some(spec.seats[0]),
+                        reason: "fixture".into(),
+                    }
+                };
+                AttemptOutcome {
+                    decisions: 1,
+                    physical_decisions: Some(1),
+                    policy_steps: Some(1),
+                    end,
+                    last_action_source: None,
+                    first_player_seat: Some(spec.seats[0]),
+                    last_acting_seat: Some(spec.seats[0]),
+                    pilot_sample: None,
+                }
+            }
+        }
+
+        let swiss = ClientSwiss::new("fixture", 0).unwrap();
+        let round = swiss.next_round().unwrap().unwrap();
+        let pilot = RetryPilot(round.tables.map(|t| attempt_seeds(t.game_seed, 0).1));
+        let observed = Mutex::new(Vec::new());
+        let games = swiss
+            .play_bot_tables(
+                &round,
+                0,
+                &std::array::from_fn(|_| Deck::default()),
+                &pilot,
+                &|record, _| {
+                    observed.lock().unwrap().push(record.game);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(games.len(), 3);
+        assert!(games.iter().all(|game| !game.chairs.contains(&Some(0))));
+        for game in &games {
+            assert_eq!(game.attempts.len(), 2);
+            assert!(game.attempts[0].halted);
+            assert!(!game.attempts[1].halted);
+            assert_eq!(
+                game.attempts[1].env_seed,
+                attempt_seeds(game.game_seed, 1).1
+            );
+            assert_eq!(game.scores, Some([1, -1]));
+        }
+        let mut emitted = observed.into_inner().unwrap();
+        emitted.sort_unstable();
+        assert_eq!(
+            emitted,
+            games.iter().map(|game| game.game).collect::<Vec<_>>()
+        );
     }
 }
