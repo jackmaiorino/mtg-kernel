@@ -42,24 +42,35 @@ pub struct ClientSwiss {
     run: String,
     pod_index: u64,
     pod_seed: u64,
+    human_chair: usize,
     round: u8,
-    bot_tables_started: bool,
+    bot_tables: BotTables,
     points: [u8; SEATS],
     plays: [u8; SEATS],
     opponents: [u8; SEATS],
+}
+
+enum BotTables {
+    Pending,
+    Stopped,
+    Complete([Option<SwissResult>; CLIENT_SWISS_TABLES]),
 }
 
 impl ClientSwiss {
     pub const NAMESPACE: &'static str = CLIENT_NAMESPACE;
     pub const USE: PodUse = PodUse::Client;
 
-    pub fn new(run: &str, pod_index: u64) -> Result<Self, PodRunnerError> {
+    pub fn new(run: &str, pod_index: u64, human_chair: usize) -> Result<Self, PodRunnerError> {
+        if human_chair >= SEATS {
+            return Err(invalid("invalid human chair"));
+        }
         Ok(Self {
             run: run.to_owned(),
             pod_index,
             pod_seed: pod_play_seed(Self::NAMESPACE, run, pod_index)?,
+            human_chair,
             round: 0,
-            bot_tables_started: false,
+            bot_tables: BotTables::Pending,
             points: [0; SEATS],
             plays: [0; SEATS],
             opponents: [0; SEATS],
@@ -78,8 +89,11 @@ impl ClientSwiss {
 
     /// Pair by minimum total points difference, excluding previous opponents.
     /// Ties use the first pairing in standings order. A play/draw imbalance
-    /// is corrected first, with the runner's seat coin breaking ties.
+    /// is corrected first, with the low bit of the GameCoin seed breaking ties.
     pub fn next_round(&self) -> Result<Option<SwissRound>, PodRunnerError> {
+        if matches!(self.bot_tables, BotTables::Stopped) {
+            return Err(invalid("the Swiss pod stopped during bot-table dispatch"));
+        }
         if self.round == CLIENT_SWISS_ROUNDS {
             return Ok(None);
         }
@@ -116,24 +130,24 @@ impl ClientSwiss {
     pub fn play_bot_tables(
         &mut self,
         round: &SwissRound,
-        human_chair: usize,
         decks: &[Deck; SEATS],
         pilot: &(dyn GamePilot + Sync),
         on_game_complete: &(impl Fn(&PodGameRecord, &[AttemptTiming]) -> Result<(), String> + Sync),
     ) -> Result<Vec<PodGameRecord>, PodRunnerError> {
-        if human_chair >= SEATS || self.next_round()?.as_ref() != Some(round) {
-            return Err(invalid("invalid chair or stale Swiss round"));
-        }
-        if self.bot_tables_started {
+        if !matches!(self.bot_tables, BotTables::Pending) {
             return Err(invalid(
                 "bot tables already dispatched for this Swiss round",
             ));
         }
-        self.bot_tables_started = true;
+        if self.next_round()?.as_ref() != Some(round) {
+            return Err(invalid("round differs from the current Swiss schedule"));
+        }
+        // Leave the pod stopped unless dispatch and every completion hook succeed.
+        self.bot_tables = BotTables::Stopped;
         let tasks: Vec<_> = round
             .tables
             .iter()
-            .filter(|table| !table.chairs.contains(&human_chair))
+            .filter(|table| !table.chairs.contains(&self.human_chair))
             .map(|table| GameTask {
                 game: table.game,
                 group: u32::from(round.round),
@@ -162,28 +176,54 @@ impl ClientSwiss {
             on_game_complete: Some(on_game_complete),
         };
         let results = execute_game_tasks_with_options(&tasks, decks, pilot, &options)?;
-        if results.games.len() != CLIENT_SWISS_TABLES - 1
-            || results.games.iter().any(|game| game.scores.is_none())
-        {
-            return Err(invalid("a bot table stopped without a natural result"));
+        if results.first_watchdog_stop.is_some() {
+            return Err(invalid("a bot table exceeded its watchdog"));
         }
+        if results.games.len() != CLIENT_SWISS_TABLES - 1 {
+            return Err(invalid("a scheduled bot table result is missing"));
+        }
+        let bot_tables = round
+            .tables
+            .iter()
+            .enumerate()
+            .filter(|(_, table)| !table.chairs.contains(&self.human_chair));
+        let mut outcomes = [None; CLIENT_SWISS_TABLES];
+        for ((index, table), game) in bot_tables.zip(&results.games) {
+            if game.game != table.game || game.chairs != table.chairs.map(|chair| Some(chair as u8))
+            {
+                return Err(invalid("bot result differs from the scheduled table"));
+            }
+            outcomes[index] = Some(match game.scores {
+                Some([1, -1]) => SwissResult::Win {
+                    chair: table.chairs[0],
+                },
+                Some([-1, 1]) => SwissResult::Win {
+                    chair: table.chairs[1],
+                },
+                Some([0, 0]) => SwissResult::Draw,
+                _ => return Err(invalid("a bot table stopped without a natural result")),
+            });
+        }
+        self.bot_tables = BotTables::Complete(outcomes);
         Ok(results.games)
     }
 
-    /// Commit all four tables together. Reject stale rounds and winners
-    /// outside their own table before changing standings.
+    /// Commit the human result and the three recorded bot results together.
     pub fn finish_round(
         &mut self,
         round: &SwissRound,
-        results: [SwissResult; CLIENT_SWISS_TABLES],
+        human_result: SwissResult,
     ) -> Result<(), PodRunnerError> {
         if self.next_round()?.as_ref() != Some(round) {
             return Err(invalid("round differs from the current Swiss schedule"));
         }
+        let BotTables::Complete(results) = self.bot_tables else {
+            return Err(invalid("bot tables have not completed"));
+        };
         let mut points = self.points;
         for (table, result) in round.tables.iter().zip(results) {
             let [first, second] = table.chairs;
-            match result {
+            match result.unwrap_or(human_result) {
                 SwissResult::Win { chair } if table.chairs.contains(&chair) => points[chair] += 3,
                 SwissResult::Win { .. } => {
                     return Err(invalid("winner was not seated at this table"))
@@ -202,7 +242,7 @@ impl ClientSwiss {
             self.opponents[second] |= 1 << first;
         }
         self.round += 1;
-        self.bot_tables_started = false;
+        self.bot_tables = BotTables::Pending;
         Ok(())
     }
 
@@ -251,7 +291,8 @@ mod tests {
 
     #[test]
     fn plays_three_disjoint_rounds_and_pairs_winners_after_round_one() {
-        let mut swiss = ClientSwiss::new("fixture", 0).unwrap();
+        let human_chair = 0;
+        let mut swiss = ClientSwiss::new("fixture", 0, human_chair).unwrap();
         assert_eq!(ClientSwiss::NAMESPACE, "client-pods");
         assert_eq!(ClientSwiss::USE, PodUse::Client);
         let mut opponents = BTreeSet::new();
@@ -279,8 +320,17 @@ mod tests {
                     SwissResult::Draw
                 }
             });
-            swiss.finish_round(&round, results).unwrap();
-            assert!(swiss.finish_round(&round, results).is_err());
+            let human_table = round
+                .tables
+                .iter()
+                .position(|t| t.chairs.contains(&human_chair))
+                .unwrap();
+            // Inject completed outcomes here to isolate the pairing rules.
+            swiss.bot_tables = BotTables::Complete(std::array::from_fn(|index| {
+                (index != human_table).then_some(results[index])
+            }));
+            swiss.finish_round(&round, results[human_table]).unwrap();
+            assert!(swiss.finish_round(&round, results[human_table]).is_err());
         }
         assert!(swiss.next_round().unwrap().is_none());
         assert_eq!(opponents.len(), 12);
@@ -291,14 +341,11 @@ mod tests {
     }
 
     #[test]
-    fn invalid_winner_leaves_the_round_uncommitted() {
-        let mut swiss = ClientSwiss::new("fixture", 0).unwrap();
+    fn round_without_bot_dispatch_cannot_score() {
+        assert!(ClientSwiss::new("fixture", 0, SEATS).is_err());
+        let mut swiss = ClientSwiss::new("fixture", 0, 0).unwrap();
         let round = swiss.next_round().unwrap().unwrap();
-        let mut results = [SwissResult::Draw; CLIENT_SWISS_TABLES];
-        results[3] = SwissResult::Win {
-            chair: round.tables[0].chairs[0],
-        };
-        assert!(swiss.finish_round(&round, results).is_err());
+        assert!(swiss.finish_round(&round, SwissResult::Draw).is_err());
         assert_eq!(swiss.next_round().unwrap(), Some(round));
         assert!(swiss.standings().iter().all(|row| row.points == 0));
     }
@@ -310,7 +357,7 @@ mod tests {
         use crate::cube_seat_v1::{AttemptOutcome, AttemptSpec};
         use std::sync::Mutex;
 
-        struct RetryPilot([u64; CLIENT_SWISS_TABLES]);
+        struct RetryPilot(Vec<u64>);
         impl GamePilot for RetryPilot {
             fn play(&self, spec: &AttemptSpec<'_>, _: &GameCaps) -> AttemptOutcome {
                 let end = if self.0.contains(&spec.env_seed) {
@@ -338,7 +385,7 @@ mod tests {
             }
         }
 
-        let mut swiss = ClientSwiss::new("fixture", 0).unwrap();
+        let mut swiss = ClientSwiss::new("fixture", 0, 0).unwrap();
         let round = swiss.next_round().unwrap().unwrap();
         let expected: Vec<_> = round
             .tables
@@ -346,7 +393,13 @@ mod tests {
             .filter(|table| !table.chairs.contains(&0))
             .map(|table| (table.game, table.chairs.map(|chair| Some(chair as u8))))
             .collect();
-        let pilot = RetryPilot(round.tables.map(|t| attempt_seeds(t.game_seed, 0).1));
+        let pilot = RetryPilot(
+            round
+                .tables
+                .iter()
+                .map(|t| attempt_seeds(t.game_seed, 0).1)
+                .collect(),
+        );
         let decks = std::array::from_fn(|_| Deck::default());
         let observed = Mutex::new(Vec::new());
         let hook = |record: &PodGameRecord, _: &[AttemptTiming]| {
@@ -354,13 +407,13 @@ mod tests {
             Ok(())
         };
         let games = swiss
-            .play_bot_tables(&round, 0, &decks, &pilot, &hook)
+            .play_bot_tables(&round, &decks, &pilot, &hook)
             .unwrap();
         assert_eq!(expected.len(), 3);
         let actual: Vec<_> = games.iter().map(|game| (game.game, game.chairs)).collect();
         assert_eq!(actual, expected);
         assert!(swiss
-            .play_bot_tables(&round, 0, &decks, &pilot, &hook)
+            .play_bot_tables(&round, &decks, &pilot, &hook)
             .is_err());
         for game in &games {
             assert_eq!(game.attempts.len(), 2);
@@ -377,20 +430,61 @@ mod tests {
         let expected_ids: Vec<_> = expected.iter().map(|(id, _)| *id).collect();
         assert_eq!(emitted, expected_ids);
 
-        let mut failed_swiss = ClientSwiss::new("fixture", 0).unwrap();
+        let bot_chair = usize::from(expected[0].1[0].unwrap());
+        assert!(swiss
+            .finish_round(&round, SwissResult::Win { chair: bot_chair })
+            .is_err());
+        assert_eq!(swiss.next_round().unwrap().as_ref(), Some(&round));
+        assert!(swiss.standings().iter().all(|row| row.points == 0));
+        swiss.finish_round(&round, SwissResult::Draw).unwrap();
+        for table in &round.tables {
+            let [first, second] = table.chairs;
+            let expected_points = if table.chairs.contains(&0) {
+                [1, 1]
+            } else {
+                [3, 0]
+            };
+            assert_eq!([swiss.points[first], swiss.points[second]], expected_points);
+        }
+
+        let mut failed_swiss = ClientSwiss::new("fixture", 0, 0).unwrap();
         let failed_calls = Mutex::new(Vec::new());
         let failing_hook = |record: &PodGameRecord, _: &[AttemptTiming]| {
             failed_calls.lock().unwrap().push(record.game);
             Err("journal failure".into())
         };
         assert!(failed_swiss
-            .play_bot_tables(&round, 0, &decks, &pilot, &failing_hook)
+            .play_bot_tables(&round, &decks, &pilot, &failing_hook)
             .is_err());
-        let after_failure = failed_calls.lock().unwrap().len();
-        assert!(after_failure > 0);
+        assert_eq!(failed_calls.lock().unwrap().len(), expected_ids.len());
         assert!(failed_swiss
-            .play_bot_tables(&round, 0, &decks, &pilot, &failing_hook)
+            .finish_round(&round, SwissResult::Draw)
             .is_err());
-        assert_eq!(failed_calls.lock().unwrap().len(), after_failure);
+        assert!(failed_swiss.next_round().is_err());
+        assert!(failed_swiss.standings().iter().all(|row| row.points == 0));
+        assert!(failed_swiss
+            .play_bot_tables(&round, &decks, &pilot, &failing_hook)
+            .is_err());
+        assert_eq!(failed_calls.lock().unwrap().len(), expected_ids.len());
+
+        let mut halted_swiss = ClientSwiss::new("fixture", 0, 0).unwrap();
+        let halted_table = round
+            .tables
+            .iter()
+            .find(|t| !t.chairs.contains(&0))
+            .unwrap();
+        let halted_pilot = RetryPilot(
+            (0..=PodCaps::training_a2().max_replays)
+                .map(|attempt| attempt_seeds(halted_table.game_seed, attempt).1)
+                .collect(),
+        );
+        assert!(halted_swiss
+            .play_bot_tables(&round, &decks, &halted_pilot, &|_, _| Ok(()))
+            .is_err());
+        assert!(halted_swiss
+            .finish_round(&round, SwissResult::Draw)
+            .is_err());
+        assert!(halted_swiss.next_round().is_err());
+        assert!(halted_swiss.standings().iter().all(|row| row.points == 0));
     }
 }
