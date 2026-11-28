@@ -119,6 +119,8 @@ impl PodPilotSample {
 }
 /// Reserved namespace for human-client pods (`m4-interfaces/v2` change 1).
 pub const CLIENT_NAMESPACE: &str = "client-pods";
+
+pub mod client_swiss;
 /// `GameEnd::Terminal` fields for a watchdog expiry (`READ-PLAN-v1` section 5).
 pub const WATCHDOG_CODE: &str = "watchdog";
 /// Supervisor failures are intercepted before D5 constructs a game record or retries.
