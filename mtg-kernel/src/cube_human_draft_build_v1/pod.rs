@@ -7,14 +7,13 @@ use super::{
     LocalCardText,
 };
 use crate::cube_pod_runner_v1::client_swiss::{ClientSwiss, SwissResult};
-use crate::cube_pod_runner_v1::{attempt_seeds, PodGameRecord, A2_GAME_CAPS};
+use crate::cube_pod_runner_v1::{attempt_seeds, A2_GAME_CAPS};
 use crate::cube_seat_package_v1::SeatPackage;
 use crate::cube_seat_v1::TypedUniformPilot;
 use crate::rl::PlayerSeatV1;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::Path;
-use std::sync::Mutex;
 
 const POD_SCHEMA: &str = "mtg-kernel-cube-client-pod-response/v1";
 
@@ -49,7 +48,7 @@ fn serve_pod(
     let human_chair = config.human_chair;
     let draft = serve_draft_build(package, config, card_text, &mut input, &mut output)?;
     let decks = draft.decks;
-    let mut private = draft.journal;
+    let private = draft.journal;
     while let Some(round) = swiss.next_round().map_err(|e| e.to_string())? {
         let human_table = round
             .tables
@@ -61,7 +60,7 @@ fn serve_pod(
         } else {
             PlayerSeatV1::P1
         };
-        journal(&mut private, "round_started", json!(round))?;
+        journal(&private, "round_started", json!(round))?;
         send(
             &mut output,
             "round",
@@ -74,7 +73,6 @@ fn serve_pod(
         )?;
 
         let (_, environment_seed, action_seed) = attempt_seeds(human_table.game_seed, 0);
-        let bot_records = Mutex::new(Vec::<PodGameRecord>::new());
         let (human, bots) = std::thread::scope(|scope| {
             let games = scope.spawn(|| {
                 swiss.play_bot_tables(
@@ -82,13 +80,7 @@ fn serve_pod(
                     human_chair,
                     &decks,
                     &TypedUniformPilot,
-                    &|game, _| {
-                        bot_records
-                            .lock()
-                            .map_err(|_| "Bot record buffer failed.")?
-                            .push(game.clone());
-                        Ok(())
-                    },
+                    &|game, _| journal(&private, "bot_game", json!(game)),
                 )
             });
             let human = serve_uniform_human_game(
@@ -101,7 +93,7 @@ fn serve_pod(
                 },
                 human_table.chairs.map(|chair| &decks[chair]),
                 card_text,
-                &mut private,
+                &private,
                 &mut input,
                 &mut output,
             );
@@ -112,13 +104,6 @@ fn serve_pod(
             (human, bots)
         });
 
-        let mut records = bot_records
-            .into_inner()
-            .map_err(|_| "Bot record buffer failed.")?;
-        records.sort_unstable_by_key(|record| record.game);
-        for game in records {
-            journal(&mut private, "bot_game", json!(game))?;
-        }
         let results = match (human, bots) {
             (Ok(human), Ok(bots)) => {
                 let mut results = [SwissResult::Draw; 4];
@@ -158,7 +143,7 @@ fn serve_pod(
             }
             (human, bots) => {
                 journal(
-                    &mut private,
+                    &private,
                     "pod_stopped",
                     json!({
                         "round": round.round,
@@ -173,12 +158,12 @@ fn serve_pod(
             .finish_round(&round, results)
             .map_err(|e| e.to_string())?;
         let standings = json!({"round": round.round, "standings": swiss.standings()});
-        journal(&mut private, "round_complete", standings.clone())?;
+        journal(&private, "round_complete", standings.clone())?;
         send(&mut output, "standings", standings)?;
     }
 
     let final_standings = json!({"standings": swiss.standings()});
-    journal(&mut private, "pod_complete", final_standings.clone())?;
+    journal(&private, "pod_complete", final_standings.clone())?;
     send(&mut output, "pod_complete", final_standings)
 }
 
@@ -197,8 +182,67 @@ mod tests {
     use crate::cube_pod_runner_v1::{pod_draft_seed, CLIENT_NAMESPACE};
     use crate::cube_seat_package_v1::tests::{load_manifest, test_directory, uniform_manifest};
     use crate::cube_seat_v1::{run_seat_draft, SeatPicker};
-    use std::collections::BTreeSet;
-    use std::io::Cursor;
+    use std::cell::RefCell;
+    use std::collections::{BTreeSet, VecDeque};
+    use std::io::{BufReader, Cursor, Read};
+    use std::rc::Rc;
+
+    struct ScriptedInput {
+        draft_and_build: Cursor<Vec<u8>>,
+        opening_commands: Rc<RefCell<VecDeque<u8>>>,
+    }
+
+    impl Read for ScriptedInput {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            let read = self.draft_and_build.read(output)?;
+            if read != 0 {
+                return Ok(read);
+            }
+            let mut commands = self.opening_commands.borrow_mut();
+            let count = output.len().min(commands.len());
+            for byte in &mut output[..count] {
+                *byte = commands.pop_front().unwrap();
+            }
+            Ok(count)
+        }
+    }
+
+    struct ScriptedOutput<'a> {
+        line: Vec<u8>,
+        frames: &'a mut Vec<Value>,
+        opening_commands: Rc<RefCell<VecDeque<u8>>>,
+        last_concession: Option<Value>,
+    }
+
+    impl Write for ScriptedOutput<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.line.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.line.is_empty() {
+                return Ok(());
+            }
+            let frame: Value = serde_json::from_slice(&self.line)?;
+            self.line.clear();
+            if frame["event"] == "opening" {
+                let command = json!({
+                    "kind": "concede",
+                    "episode": frame["view"]["episode"],
+                    "prompt_seq": frame["view"]["prompt_seq"],
+                });
+                let mut requests = Vec::new();
+                if let Some(prior) = self.last_concession.replace(command.clone()) {
+                    write_json_line(&mut requests, &prior)?;
+                }
+                write_json_line(&mut requests, &command)?;
+                self.opening_commands.borrow_mut().extend(requests);
+            }
+            self.frames.push(frame);
+            Ok(())
+        }
+    }
 
     #[test]
     fn stand_in_pod_records_three_human_and_nine_bot_games() {
@@ -235,17 +279,24 @@ mod tests {
         }
         let cards = vec![basic_land_ids().unwrap()[0]; DECK_CARDS as usize];
         write_json_line(&mut commands, &json!({"kind": "build", "cards": cards})).unwrap();
-        for _ in 0..3 {
-            write_json_line(&mut commands, &json!({"kind": "concede"})).unwrap();
-        }
-
-        let mut replies = Vec::new();
+        let opening_commands = Rc::new(RefCell::new(VecDeque::new()));
+        let input = BufReader::new(ScriptedInput {
+            draft_and_build: Cursor::new(commands),
+            opening_commands: Rc::clone(&opening_commands),
+        });
+        let mut published = Vec::new();
+        let output = ScriptedOutput {
+            line: Vec::new(),
+            frames: &mut published,
+            opening_commands,
+            last_concession: None,
+        };
         serve_pod(
             &package,
             config,
             &LocalCardText(Default::default()),
-            Cursor::new(commands),
-            &mut replies,
+            input,
+            output,
         )
         .unwrap_or_else(|e| {
             panic!(
@@ -253,9 +304,6 @@ mod tests {
                 journal_path.display()
             )
         });
-        let published: Vec<Value> = BufRead::lines(Cursor::new(replies))
-            .map(|line| serde_json::from_str(&line.unwrap()).unwrap())
-            .collect();
         let events: Vec<_> = published
             .iter()
             .filter_map(|frame| frame["event"].as_str())
@@ -274,6 +322,11 @@ mod tests {
         );
         assert!(!events.contains(&"bot_game"));
         assert_eq!(events.last(), Some(&"pod_complete"));
+        assert_eq!(
+            events.iter().filter(|&&event| event == "opening").count(),
+            3
+        );
+        assert_eq!(events.iter().filter(|&&event| event == "error").count(), 2);
         let standings = published.last().unwrap()["view"]["standings"]
             .as_array()
             .unwrap();
@@ -318,6 +371,75 @@ mod tests {
                 .map(|line| line["payload"]["episode"].as_u64().unwrap()),
         );
         assert!(games.iter().copied().eq(0..12));
+        let mut points = [0u8; SEATS];
+        let schedule = private
+            .iter()
+            .filter(|line| line["event"] == "round_started");
+        let public_standings = published.iter().filter(|line| line["event"] == "standings");
+        let mut rounds = 0;
+        for (round, standings) in schedule.zip(public_standings) {
+            let round = &round["payload"];
+            assert_eq!(round["round"], rounds);
+            rounds += 1;
+            let tables = round["tables"].as_array().unwrap();
+            assert_eq!(tables.len(), 4);
+            for table in tables {
+                let id = &table["game"];
+                let chairs = table["chairs"].as_array().unwrap();
+                let chairs = [
+                    chairs[0].as_u64().unwrap() as usize,
+                    chairs[1].as_u64().unwrap() as usize,
+                ];
+                if chairs.contains(&human_chair) {
+                    let record = private
+                        .iter()
+                        .find(|line| {
+                            line["event"] == "game_result" && line["payload"]["episode"] == *id
+                        })
+                        .unwrap();
+                    assert_eq!(record["payload"]["reason"], "conceded");
+                    let opponent = usize::from(chairs[0] == human_chair);
+                    assert_eq!(
+                        record["payload"]["result"]["Win"]["winner"],
+                        if opponent == 0 { "p0" } else { "p1" }
+                    );
+                    points[chairs[opponent]] += 3;
+                } else {
+                    let record = bots
+                        .iter()
+                        .find(|line| line["payload"]["game"] == *id)
+                        .unwrap();
+                    let record = &record["payload"];
+                    assert_eq!(record["chairs"], json!(chairs));
+                    let terminal = &record["attempts"].as_array().unwrap().last().unwrap()["end"];
+                    assert_eq!(terminal["kind"], "natural");
+                    if let Some(winner) = terminal["winner_seat"].as_u64() {
+                        let winner = winner as usize;
+                        assert!(chairs.contains(&winner));
+                        points[winner] += 3;
+                    } else {
+                        for chair in chairs {
+                            points[chair] += 1;
+                        }
+                    }
+                }
+            }
+            let mut chairs: Vec<_> = (0..SEATS).collect();
+            chairs.sort_unstable_by_key(|&chair| (std::cmp::Reverse(points[chair]), chair));
+            let expected: Vec<_> = chairs
+                .into_iter()
+                .map(|chair| {
+                    json!({
+                        "chair": chair, "points": points[chair],
+                    })
+                })
+                .collect();
+            assert_eq!(
+                standings["view"],
+                json!({"round": round["round"], "standings": expected})
+            );
+        }
+        assert_eq!(rounds, 3);
         assert_eq!(private.last().unwrap()["event"], "pod_complete");
         std::fs::remove_dir_all(dir).unwrap();
     }

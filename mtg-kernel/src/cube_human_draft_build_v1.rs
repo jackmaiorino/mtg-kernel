@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
+use std::sync::Mutex;
 
 pub mod play;
 pub mod pod;
@@ -120,7 +121,7 @@ impl<I: BufRead, O: Write> DraftTransport<I, O> {
 struct HumanPicker<'a, I, O> {
     transport: &'a mut DraftTransport<I, O>,
     card_text: &'a LocalCardText,
-    journal: &'a mut File,
+    journal: &'a PodJournal,
 }
 
 impl<I: BufRead, O: Write> HumanPicker<'_, I, O> {
@@ -175,11 +176,14 @@ impl<I: BufRead, O: Write> SeatPicker for HumanPicker<'_, I, O> {
     }
 }
 
+/// Serializes durable private records from the human game and bot workers.
+pub struct PodJournal(Mutex<File>);
+
 /// Server-private output. Send only the human view through the transport.
 pub struct PrivateDraftBuild {
     pub draft: DraftRecord,
     pub decks: [Deck; SEATS],
-    pub journal: File,
+    pub journal: PodJournal,
 }
 
 pub struct DraftBuildConfig<'a> {
@@ -265,11 +269,13 @@ pub fn serve_draft_build(
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut private = options
-        .open(config.journal_path)
-        .map_err(|e| format!("Fresh private journal required: {e}"))?;
+    let private = PodJournal(Mutex::new(
+        options
+            .open(config.journal_path)
+            .map_err(|e| format!("Fresh private journal required: {e}"))?,
+    ));
     journal(
-        &mut private,
+        &private,
         "session",
         json!({
             "namespace": CLIENT_NAMESPACE,
@@ -300,7 +306,7 @@ pub fn serve_draft_build(
         let mut human: Option<Box<dyn SeatPicker + '_>> = Some(Box::new(HumanPicker {
             transport: &mut transport,
             card_text,
-            journal: &mut private,
+            journal: &private,
         }));
         let mut pickers = std::array::from_fn(|chair| {
             if chair == config.human_chair {
@@ -313,7 +319,7 @@ pub fn serve_draft_build(
             .map_err(|e| e.to_string())?
             .record
     };
-    journal(&mut private, "draft", json!(draft))?;
+    journal(&private, "draft", json!(draft))?;
 
     let mut decks: [Deck; SEATS] = std::array::from_fn(|_| Deck::default());
     for (chair, deck) in decks.iter_mut().enumerate() {
@@ -356,7 +362,7 @@ pub fn serve_draft_build(
             None => {}
         }
     };
-    journal(&mut private, "decks", json!(decks))?;
+    journal(&private, "decks", json!(decks))?;
     transport.send("build_accepted", json!({"deck": decks[config.human_chair]}))?;
     Ok(PrivateDraftBuild {
         draft,
@@ -365,8 +371,12 @@ pub fn serve_draft_build(
     })
 }
 
-fn journal(file: &mut File, event: &str, payload: Value) -> Result<(), String> {
-    write_json_line(file, &json!({"event": event, "payload": payload}))
+fn journal(journal: &PodJournal, event: &str, payload: Value) -> Result<(), String> {
+    let mut file = journal
+        .0
+        .lock()
+        .map_err(|_| "The private pod journal could not be locked.")?;
+    write_json_line(&mut *file, &json!({"event": event, "payload": payload}))
         .and_then(|()| file.sync_data())
         .map_err(|_| "The private pod journal could not be saved.".into())
 }
@@ -382,6 +392,7 @@ mod tests {
     use super::*;
     use crate::cube_draft_v1::POOL_CARDS;
     use crate::cube_seat_package_v1::tests::{load_manifest, test_directory, uniform_manifest};
+    use std::collections::BTreeSet;
     use std::io::Cursor;
 
     pub(super) struct FirstCard;
@@ -486,32 +497,71 @@ mod tests {
             .filter(|frame| frame["event"] == "pick")
             .collect();
         assert_eq!(frames.len(), POOL_CARDS);
+        let mut human_pool = Vec::new();
+        let mut seen = BTreeSet::new();
         for (frame, pick) in frames.iter().zip(
             expected
                 .picks
                 .iter()
                 .filter(|pick| pick.seat == human_chair),
         ) {
-            let pack = frame["view"]["pack"].as_array().unwrap();
-            let ids: Vec<_> = pack
-                .iter()
-                .map(|card| card["id"].as_u64().unwrap() as u16)
-                .collect();
-            assert_eq!(ids, pick.pack);
-            for (card, id) in pack.iter().zip(ids) {
-                assert_eq!(card["text"], format!("local-{id}"));
-            }
+            let pack: Vec<_> = pick.pack.iter().map(|&id| json!({
+                "id": id, "name": CARD_DEFS[usize::from(id)].name, "text": format!("local-{id}"),
+            })).collect();
+            assert_eq!(
+                **frame,
+                json!({
+                    "schema": DRAFT_BUILD_RESPONSE_SCHEMA,
+                    "event": "pick",
+                    "view": {
+                        "round": pick.round,
+                        "pick": pick.pick,
+                        "direction": if pick.round == 1 { "right" } else { "left" },
+                        "pack": pack,
+                        "pool": human_pool,
+                        "seen_not_taken": seen,
+                    },
+                })
+            );
+            seen.extend(pick.pack.iter().copied());
+            seen.remove(&pick.chosen);
+            human_pool.push(pick.chosen);
         }
+        let start = published.first().unwrap();
+        assert_eq!(
+            *start,
+            json!({
+                "schema": DRAFT_BUILD_RESPONSE_SCHEMA,
+                "event": "start",
+                "view": {"human_chair": human_chair, "seat_package": "Uniform stand-in"},
+            })
+        );
+        let build = published
+            .iter()
+            .find(|frame| frame["event"] == "build")
+            .unwrap();
+        assert_eq!(
+            *build,
+            json!({
+                "schema": DRAFT_BUILD_RESPONSE_SCHEMA,
+                "event": "build",
+                "view": {"pool": secrets.render(&expected.pools[human_chair]), "basics": secrets.render(&basic_land_ids().unwrap())},
+            })
+        );
+        assert_eq!(
+            *published.last().unwrap(),
+            json!({
+                "schema": DRAFT_BUILD_RESPONSE_SCHEMA,
+                "event": "build_accepted",
+                "view": {"deck": completed.decks[human_chair]},
+            })
+        );
         assert_eq!(
             published
                 .iter()
                 .filter(|frame| frame["event"] == "error")
                 .count(),
             3
-        );
-        assert_eq!(
-            published.last().unwrap()["view"]["deck"],
-            json!(completed.decks[human_chair])
         );
         let journal = std::fs::read_to_string(journal_path).unwrap();
         assert!(journal.contains("client-pods") && journal.contains("\"event\":\"decks\""));

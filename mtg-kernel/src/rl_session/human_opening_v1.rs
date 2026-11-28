@@ -120,7 +120,7 @@ mod tests {
         ];
         for starting in [PlayerId::P0, PlayerId::P1] {
             for human in [PlayerId::P0, PlayerId::P1] {
-                let mut opening = HumanOpeningV1::new(
+                let opening = HumanOpeningV1::new(
                     1,
                     100,
                     256,
@@ -131,56 +131,83 @@ mod tests {
                     human,
                 )
                 .unwrap();
-                opening.mulligan().unwrap();
-                opening.keep().unwrap();
-                opening.bottom(&[0]).unwrap();
-                let mut session = opening.into_session().unwrap();
-                assert!(session.state.engine.event_log.is_empty());
-                assert_eq!(session.state.players[0].draws_this_turn, 0);
-                assert_eq!(session.state.players[1].draws_this_turn, 0);
-                for target in [starting, starting.opponent()] {
-                    let mut reached = false;
-                    for _ in 0..128 {
-                        if session.state.active_player == target
-                            && session.state.step == crate::state::Step::Main1
-                        {
-                            reached = true;
-                            break;
-                        }
-                        let FastActorResponseV1::Decision(decision) = session.current_response()
-                        else {
-                            panic!("unexpected terminal before first main");
-                        };
-                        let selected = session
-                            .current
-                            .as_ref()
-                            .unwrap()
-                            .candidates
-                            .iter()
-                            .position(|candidate| {
-                                matches!(&candidate.semantic, ActionSemanticV1::Pass { .. })
-                            })
-                            .expect("all-land fixture offers pass");
-                        session
-                            .step(decision.episode_id, decision.step, selected as u32)
-                            .unwrap();
-                    }
-                    assert!(reached, "first main must be reachable with pass actions");
-                    let kept = if target == human { 6 } else { 7 };
-                    assert_eq!(
-                        session.state.players[target.index()].hand.len(),
-                        kept + usize::from(target != starting)
-                    );
-                    assert_eq!(
-                        session.state.players[target.index()].draws_this_turn,
-                        u32::from(target != starting)
-                    );
-                    assert_eq!(
-                        session.state.players[target.opponent().index()].draws_this_turn,
-                        0
-                    );
-                }
+                assert_first_main_after_mulligan(opening, starting, human);
             }
+        }
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn cube_limited_opening_retains_first_draw_and_turn_counters() {
+        let decks = [
+            vec![card_id_by_name("Mountain").unwrap(); 40],
+            vec![card_id_by_name("Island").unwrap(); 40],
+        ];
+        for human in [PlayerId::P0, PlayerId::P1] {
+            let opening = HumanOpeningV1::new_cube_limited(
+                1,
+                100,
+                crate::cube_pod_runner_v1::A2_GAME_CAPS,
+                decks.clone(),
+                human,
+            )
+            .unwrap();
+            assert_first_main_after_mulligan(opening, PlayerId::P0, human);
+        }
+    }
+
+    fn assert_first_main_after_mulligan(
+        mut opening: HumanOpeningV1,
+        starting: PlayerId,
+        human: PlayerId,
+    ) {
+        opening.mulligan().unwrap();
+        opening.keep().unwrap();
+        opening.bottom(&[0]).unwrap();
+        let mut session = opening.into_session().unwrap();
+        assert!(session.state.engine.event_log.is_empty());
+        assert_eq!(session.state.players[0].draws_this_turn, 0);
+        assert_eq!(session.state.players[1].draws_this_turn, 0);
+        for target in [starting, starting.opponent()] {
+            let mut reached = false;
+            for _ in 0..128 {
+                if session.state.active_player == target
+                    && session.state.step == crate::state::Step::Main1
+                {
+                    reached = true;
+                    break;
+                }
+                let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                    panic!("unexpected terminal before first main");
+                };
+                let selected = session
+                    .current
+                    .as_ref()
+                    .unwrap()
+                    .candidates
+                    .iter()
+                    .position(|candidate| {
+                        matches!(&candidate.semantic, ActionSemanticV1::Pass { .. })
+                    })
+                    .expect("all-land fixture offers pass");
+                session
+                    .step(decision.episode_id, decision.step, selected as u32)
+                    .unwrap();
+            }
+            assert!(reached, "first main must be reachable with pass actions");
+            let kept = if target == human { 6 } else { 7 };
+            assert_eq!(
+                session.state.players[target.index()].hand.len(),
+                kept + usize::from(target != starting)
+            );
+            assert_eq!(
+                session.state.players[target.index()].draws_this_turn,
+                u32::from(target != starting)
+            );
+            assert_eq!(
+                session.state.players[target.opponent().index()].draws_this_turn,
+                0
+            );
         }
     }
 }
