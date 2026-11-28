@@ -1847,6 +1847,9 @@ mod tests {
         )
     ))]
     mod cube_v1 {
+        // The Cube-card fixtures need the eternal registry; the FDN-only build
+        // compiles just the removed-family refusal matrix.
+        #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code, unused_imports))]
         use super::*;
         use crate::event::{propose_and_commit, ProposedEvent};
         use crate::flat_policy_v2::{
@@ -2089,7 +2092,8 @@ mod tests {
         ))]
         #[test]
         fn cube_removed_successor_families_refuse_exactly_like_frozen_v3() {
-            let cards: [(&str, Zone, fn(&GameState) -> bool); 6] = [
+            type RemovedCard = (&'static str, Zone, fn(&GameState) -> bool);
+            let cards: [RemovedCard; 6] = [
                 (
                     "Fishing Pole",
                     Zone::Battlefield,
