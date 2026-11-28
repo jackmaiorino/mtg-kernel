@@ -3,11 +3,13 @@ use super::*;
 /// Recover an unmarked prefix when loading a save written before per-attempt
 /// receipts. A previous choice offer identifies its site. The physical Peer
 /// and Decree are single-instruction spells with an independently recorded cast.
-pub(super) fn attempts(
+pub(crate) fn visit_attempts(
     state: &GameState,
     pending: &EffectContinuation,
     path: &[u16],
     end: usize,
+    replacement_offer: bool,
+    mut visit: impl FnMut(usize),
 ) -> (Option<usize>, u32) {
     let history = &state.engine.event_history[..end];
     let item = &pending.resolving_item;
@@ -61,12 +63,11 @@ pub(super) fn attempts(
             return None;
         }
         let def = state.objects.try_get(item.source)?.card_def;
-        let drawer = match crate::card_def::CARD_DEFS.get(usize::from(def))?.name {
-            "Peer into the Abyss" => match pending.ctx.targets.first()? {
-                Target::Player(player) => *player,
-                _ => return None,
-            },
-            _ => return None,
+        if crate::card_def::CARD_DEFS.get(usize::from(def))?.name != "Peer into the Abyss" {
+            return None;
+        }
+        let Target::Player(drawer) = *pending.ctx.targets.first()? else {
+            return None;
         };
         let cast = history.iter().rposition(
             |row| matches!(row,CommittedEvent::SpellCast{spell,..} if *spell == item.source),
@@ -97,10 +98,83 @@ pub(super) fn attempts(
         )?;
         Some((at + 1, item.controller))
     };
+    let treasure = |row: &CommittedEvent, drawer| {
+        replacement_offer
+            && matches!(row, CommittedEvent::CreateToken { token_def,controller,.. }
+            if crate::card_def::CARD_DEFS.get(usize::from(*token_def)).is_some_and(|def| def.name == "Treasure Token")
+                && Some(*controller) == crate::eternal_sideboard_s1c_v1::statics::hullbreacher_controller(state, drawer))
+    };
+    // A printed draw may be nested or copied. Walk back from its first
+    // actual Miracle draw (or its still-open choice) over completed draws
+    // and whole dredges. A graveyard-to-hand move alone proves no attempt.
+    let printed = || {
+        use crate::effect::EffectOp;
+        let stopped = stop();
+        if !replacement_offer && stopped.is_none() {
+            return None;
+        }
+        let root = crate::effect::validated_definition_owned_root_effect(state, pending).ok()?;
+        let (EffectOp::DrawCards { player, .. } | EffectOp::DrawCardsDynamic { player, .. }) =
+            crate::effect::effect_op_at_structural_path(&root, path)?
+        else {
+            return None;
+        };
+        let drawer = pending.ctx.resolve_player(*player, state);
+        // No later stack item and no earlier instruction: the physical cast
+        // also bounds a prefix containing other event-time bookkeeping.
+        if !item.is_copy
+            && item.kind == crate::state::StackItemKind::Spell
+            && item.v4.stack_item_id.0 == state.engine.next_stack_item_id
+            && path
+                .iter()
+                .try_fold(root.as_ref(), |op, index| match op {
+                    EffectOp::Sequence(ops) if *index == 0 => ops.first(),
+                    _ => None,
+                })
+                .is_some()
+        {
+            if let Some(cast) = history.iter().rposition(|row| {
+                matches!(row,
+                CommittedEvent::SpellCast { spell, .. } if *spell == item.source)
+            }) {
+                return Some((cast + 1, drawer));
+            }
+        }
+        let anchor = stopped.map_or(end, |(draw_at, _)| draw_at + 1);
+        let unrelated = |row: &CommittedEvent| {
+            let same_draw = match row {
+                CommittedEvent::Draw { player, .. } => *player == drawer,
+                CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Library,
+                    to: Zone::Graveyard | Zone::Exile,
+                    ..
+                }
+                | CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Graveyard,
+                    to: Zone::Hand,
+                    ..
+                } => state
+                    .objects
+                    .try_get(*object)
+                    .is_some_and(|card| card.owner == drawer),
+                _ => treasure(row, drawer),
+            };
+            !same_draw
+        };
+        let cursor = history[..anchor]
+            .iter()
+            .rposition(unrelated)
+            .map_or(0, |at| at + 1);
+        Some((cursor, drawer))
+    };
+    let offer = offer.filter(|_| crate::effect::definition_has_nonterminal_discard(state, pending));
     let Some((boundary, drawer)) = offer
         .or_else(inputs)
         .or_else(cast)
         .or_else(turn_draw)
+        .or_else(printed)
         .or_else(stop)
     else {
         return (None, 0);
@@ -108,6 +182,7 @@ pub(super) fn attempts(
     let mut start = None;
     let mut turn_attempts = None;
     let mut answered = false;
+    let mut extra_results = 0;
     let mut count = 0;
     let mut mill = None;
     let mut milled = 0usize;
@@ -125,12 +200,14 @@ pub(super) fn attempts(
                 stack_item_id,
                 path: recorded,
             } if *stack_item_id == item.v4.stack_item_id && recorded == path => {
+                visit(boundary);
                 start.get_or_insert(boundary);
                 count += 1;
                 answered = true;
                 continue;
             }
             CommittedEvent::Draw { player, .. } if *player == drawer => Some(at),
+            row if treasure(row, drawer) => Some(at),
             CommittedEvent::ZoneChange {
                 object, from, to, ..
             } if state
@@ -173,9 +250,28 @@ pub(super) fn attempts(
             });
             if *skip > 0 {
                 *skip -= 1;
-            } else if !answered {
-                start.get_or_insert(at);
-                count += 1;
+            } else {
+                // The released non-native loop proposed one draw per unanswered
+                // replacement. Riddler could produce several Draws or Treasures
+                // for that one attempt. A dredge is already a complete attempt.
+                let ordinary = replacement_offer
+                    && (matches!(row, CommittedEvent::Draw { .. }) || treasure(row, drawer));
+                if ordinary && extra_results > 0 {
+                    extra_results -= 1;
+                } else {
+                    extra_results = if ordinary {
+                        super::super::initial_hand_len(state, drawer, at).map_or(0, |hand| {
+                            event::draw_instruction_extra_at_hand_size(state, drawer, 1, hand)
+                        })
+                    } else {
+                        0
+                    };
+                    if !answered {
+                        visit(at);
+                        start.get_or_insert(at);
+                        count += 1;
+                    }
+                }
             }
             answered = false;
         }
@@ -185,60 +281,23 @@ pub(super) fn attempts(
     (start, count)
 }
 
-/// Old Peer records identify the cast, but never identified the beginning of
-/// its resolution. A later stack activation can draw or dredge in response
-/// without moving a spell off the stack. Its attempts cannot be attributed to
-/// Peer. New saves mark the generated instruction after all responses resolve.
-#[cfg(feature = "eternal-fixtures")]
-pub(crate) fn check_legacy_boundary(
-    state: &GameState,
-    pending: &EffectContinuation,
-    spent: u32,
-    current_draw: bool,
-) -> Result<(), String> {
+/// The released engine could pause these generators at replacement choices,
+/// but did not suspend their generated draws with a Miracle remainder.
+pub(crate) fn requires_generator_receipt(state: &GameState, pending: &EffectContinuation) -> bool {
     let item = &pending.resolving_item;
-    if spent <= u32::from(current_draw) || super::generated_path(state, pending).is_some() {
-        return Ok(());
-    }
-    // Old Library saves marked upkeep, but not the draw-step instruction or
-    // the accepted Library option. Surplus attempts in this prefix might
-    // belong to another upkeep/step draw. Once the first Library draw is
-    // authenticated, later attempts are all inside this resolution.
-    if item.kind == crate::state::StackItemKind::TriggeredAbility
-        && item.v4.ability_source_contract.is_some_and(|source| {
-            crate::card_def::CARD_DEFS[usize::from(source.card_def)].name == "Sylvan Library"
-        })
-    {
-        let history = &state.engine.event_history;
-        let stop = history
-            .of_kinds_v2(&[EventKindV1::MiracleDrawSuspendedV1])
-            .find_map(|(at, row)| match row {
-                CommittedEvent::MiracleDrawSuspendedV1 {
-                    stack_item_id,
-                    drawn,
-                    path,
-                    ..
-                } if *stack_item_id == item.v4.stack_item_id && path == &[0] => {
-                    Some((at, drawn.object))
-                }
-                _ => None,
-            });
-        let before = stop.and_then(|(at,card)| history[..at].iter().rposition(|row| matches!(row,CommittedEvent::Draw {player,object:Some(object)} if *player == item.controller && *object == card))).unwrap_or(history.len());
-        if attempts(state, pending, &[0], before).1 > 0 {
-            return Err(
-                "Legacy Sylvan Library draw has no boundary for its earlier attempts".into(),
-            );
+    let definition = match item.kind {
+        crate::state::StackItemKind::Spell => {
+            state.objects.try_get(item.source).map(|c| c.card_def)
         }
-    }
-    if state.engine.next_stack_item_id > item.v4.stack_item_id.0
-        && item.kind == crate::state::StackItemKind::Spell
-        && state.objects.try_get(item.source).is_some_and(|card| {
-            crate::card_def::CARD_DEFS[usize::from(card.card_def)].name == "Peer into the Abyss"
-        })
-    {
-        return Err(
-            "Legacy Peer draw cannot distinguish attempts from an intervening stack item".into(),
-        );
-    }
-    Ok(())
+        crate::state::StackItemKind::TriggeredAbility => {
+            item.v4.ability_source_contract.map(|c| c.card_def)
+        }
+        _ => None,
+    };
+    definition.is_some_and(|def| {
+        matches!(
+            crate::card_def::CARD_DEFS[usize::from(def)].name,
+            "Peer into the Abyss" | "Decree of Pain" | "Sylvan Library"
+        )
+    })
 }

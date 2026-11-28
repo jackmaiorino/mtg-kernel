@@ -286,7 +286,10 @@ pub(crate) fn drive_draws(
             continuation.frames.clone(),
         );
         #[cfg(feature = "eternal-fixtures")]
-        crate::effect::record_draw_replacement_choice(state, continuation, &choice, false);
+        {
+            crate::effect::enter_printed_choice(state, continuation, &choice);
+            crate::effect::record_draw_replacement_choice(state, continuation, &choice, false);
+        }
         crate::eternal_cards_v1::e3::offer(continuation, choice);
         return Ok(true);
     }
@@ -591,6 +594,8 @@ pub(crate) fn finish_jace_or_hullbreacher(
     chosen: Option<EffectObjectBinding>,
 ) -> Result<(), String> {
     validate_jace_choice(state, pending, choice, &pending.frames)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::effect::retain_legacy_draw_offer(state, pending, choice);
     owned_draws_v1::staged::note_attempt(state, pending, &choice.path, choice.player);
     #[cfg(feature = "eternal-fixtures")]
     crate::effect::record_draw_replacement_choice(state, pending, choice, true);

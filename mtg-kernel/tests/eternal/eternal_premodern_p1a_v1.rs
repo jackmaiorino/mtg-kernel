@@ -1656,7 +1656,8 @@ fn sylvan_library_miracle_pauses_after_replaced_turn_draw() {
     );
     assert_eq!(zone(&state, later), Zone::Library);
     crate::eternal_sideboard_s1b_v1::assert_miracle_remainder_rejected(&state, 1, 0);
-    let state = crate::eternal_sideboard_s1b_v1::legacy_miracle_save(&state);
+    let stripped = crate::eternal_sideboard_s1b_v1::without_draw_journal(&state);
+    assert!(mtg_kernel::effect::validate_pending_effect_choice(&stripped).is_err());
     let mut state: GameState =
         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
     act(&mut state, Action::ChooseEffectOption(0));
@@ -1712,11 +1713,11 @@ fn sylvan_library_miracle_after_two_separate_dredge_instructions() {
         matches!(settle(&mut state), Some(Decision::ChooseEffectOption {source,..}) if source == miracle)
     );
     crate::eternal_sideboard_s1b_v1::assert_miracle_remainder_rejected(&state, 0, 1);
-    let ambiguous = crate::eternal_sideboard_s1b_v1::legacy_miracle_save(&state);
+    let ambiguous = crate::eternal_sideboard_s1b_v1::without_draw_journal(&state);
     assert!(
         mtg_kernel::effect::validate_pending_effect_choice(&ambiguous)
             .unwrap_err()
-            .contains("no boundary for its earlier attempts")
+            .contains("generator receipt")
     );
     let mut restored: GameState =
         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();

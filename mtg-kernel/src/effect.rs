@@ -935,7 +935,9 @@ pub(crate) mod nonland_copy_v1;
 mod staged_draw_count;
 pub(crate) use staged_draw_count::begin_draw_input_batch;
 #[cfg(feature = "eternal-fixtures")]
-use staged_draw_count::{draw_total_at, validate_staged_draw_choice};
+use staged_draw_count::{draw_total_at, restored_balance, validate_staged_draw_choice};
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) use staged_draw_count::{enter_printed_choice, retain_legacy_draw_offer};
 use staged_draw_count::{staged_batch_count, staged_dynamic_count};
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
@@ -10513,7 +10515,10 @@ fn validate_answered_choice_guard(
     Ok(())
 }
 
-fn definition_has_nonterminal_discard(state: &GameState, pending: &EffectContinuation) -> bool {
+pub(super) fn definition_has_nonterminal_discard(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> bool {
     let nonterminal = |op: &EffectOp| matches!(op, EffectOp::Sequence(ops) if ops.iter().take(ops.len().saturating_sub(1)).any(|op| matches!(op, EffectOp::DiscardCards { .. })));
     let Some(source) = state.objects.try_get(pending.resolving_item.source) else {
         return false;
@@ -13717,10 +13722,22 @@ pub(crate) fn staged_draw_site(
 ) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
     use crate::eternal_cards_v1::EternalOpV1 as Eternal;
     use crate::standard_cards_v1::StandardOpV1 as Standard;
-    if crate::eternal_cards_v1::owned_draws_v1::staged::generated_path(state, pending)
-        .is_some_and(|selected| selected != path)
+    if let Some(selected) =
+        crate::eternal_cards_v1::owned_draws_v1::staged::generated_path(state, pending)
     {
-        return None;
+        // An ordinary printed draw marks only its own instruction. Synthetic
+        // branches (including Denial) must still match the selected path.
+        let printed = pending.resolving_item.inline_effect.is_none()
+            && !crate::eternal_cards_v1::owned_draws_v1::staged::requires_generator_receipt(
+                state, pending,
+            )
+            && matches!(
+                resolved_definition_op_at(root, selected, &pending.ctx, state),
+                Some(EffectOp::DrawCards { .. } | EffectOp::DrawCardsDynamic { .. })
+            );
+        if selected != path && !printed {
+            return None;
+        }
     }
     let (parent, (player, limit, tail)) =
         if let Some(leaf) = resolved_definition_op_at(root, path, &pending.ctx, state) {
@@ -13865,8 +13882,9 @@ fn authenticated_draw_attempts(
     let Some(total) = draw_total_at(state, player, base, start) else {
         return Err("draw instruction lost its starting hand".into());
     };
-    let remaining = total
-        .checked_sub(spent)
+    let retained = restored_balance(state, continuation, &root, path)?;
+    let remaining = retained
+        .or_else(|| total.checked_sub(spent))
         .ok_or("draw instruction exceeded its original attempts")?;
     if (spent == 0 && count == base)
         || (spent > 0 && matches!(leaf, EffectOp::DrawCards { .. }) && count == remaining)
@@ -13967,9 +13985,20 @@ fn miracle_draw_remainder(
     };
     let (first_attempt, attempted) =
         crate::eternal_cards_v1::owned_draws_v1::staged::attempts(state, pending, path);
-    crate::eternal_cards_v1::owned_draws_v1::staged::check_legacy_boundary(
-        state, pending, attempted, true,
-    )?;
+    let retained = restored_balance(state, pending, &root, path)?;
+    let journal =
+        crate::eternal_cards_v1::owned_draws_v1::staged::journal_attempts(state, pending, path);
+    if journal.entered && journal.charged == 0 {
+        return Err("miracle draw lost its charged attempt".into());
+    }
+    if retained.is_none()
+        && !journal.entered
+        && crate::eternal_cards_v1::owned_draws_v1::staged::requires_generator_receipt(
+            state, pending,
+        )
+    {
+        return Err("miracle draw lost its generator receipt".into());
+    }
     let start = first_attempt.unwrap_or(draw_at);
     let (player_ref, printed_count, below) = draw_site(state, pending, &root, path, start)
         .ok_or("miracle draw lost its printed draw instruction")?;
@@ -13978,7 +14007,7 @@ fn miracle_draw_remainder(
     if drawn.expected_zone != Zone::Hand
         || pending.ctx.resolve_player(player_ref, state) != player
         || state.players[player.index()].draws_this_turn != 1
-        || remaining.checked_add(attempted.max(1)) != Some(total)
+        || Some(remaining) != retained.or_else(|| total.checked_sub(attempted.max(1)))
         || tail != below
     {
         return Err("miracle draw lost its first draw or the rest of its program".into());

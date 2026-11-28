@@ -2244,6 +2244,8 @@ pub(crate) fn finish_selection(
     }
     match kind {
         E7bChoiceV1::DredgeV1 => {
+            #[cfg(feature = "eternal-fixtures")]
+            crate::effect::retain_legacy_draw_offer(state, continuation, choice);
             crate::eternal_cards_v1::owned_draws_v1::staged::note_attempt(
                 state,
                 continuation,

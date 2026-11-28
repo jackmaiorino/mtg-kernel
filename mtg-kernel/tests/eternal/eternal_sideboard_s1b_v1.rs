@@ -654,7 +654,90 @@ fn peer_miracle_preserves_the_original_library_count_and_life_loss() {
     assert_eq!(life(&state, P1), 10);
 }
 
-pub(super) fn legacy_miracle_save(state: &GameState) -> GameState {
+/// GameState JSON written at actual decisions by released main 51a72f253.
+/// The two Brainstorm stops straddle its second attempt after dredging the
+/// first. Peer had a Mogg Fanatic activation above it. Decree destroyed one
+/// creature after Fanatic sacrificed itself. Tersa discarded after Putrid Imp.
+#[test]
+fn released_draw_choices_resume_through_their_remaining_attempts() {
+    use flate2::read::GzDecoder;
+    use std::collections::BTreeMap;
+    let saves: BTreeMap<String, GameState> = serde_json::from_reader(GzDecoder::new(
+        &include_bytes!("../fixtures/draw_choices_51a72f253.json.gz")[..],
+    ))
+    .unwrap();
+    assert!(saves.keys().map(String::as_str).eq([
+        "decree",
+        "discard",
+        "jace",
+        "jace_after_treasure",
+        "miracle",
+        "peer",
+        "peer_response_dredge",
+        "printed",
+        "riddler",
+        "sylvan"
+    ]));
+    for (name, mut state) in saves {
+        mtg_kernel::effect::validate_pending_effect_choice(&state)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let drawer = if name.starts_with("peer") { P1 } else { P0 };
+        let mut decision = settle(&mut state);
+        if name.starts_with("jace") {
+            let Some(Decision::ChooseEffectTargets { legal_targets, .. }) = decision else {
+                panic!("lost Jace choice")
+            };
+            act(&mut state, Action::ChooseEffectTarget(legal_targets[0]));
+            assert!(matches!(
+                next(&mut state),
+                Decision::GameOver { winner: Some(P0) }
+            ));
+            continue;
+        }
+        for _ in 0..16 {
+            let Some(prompt) = decision else { break };
+            if let Some(mtg_kernel::effect::EffectFrame::MiracleDrawRemainderV1 {
+                remaining, ..
+            }) = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .and_then(|pending| pending.frames.last())
+            {
+                assert_miracle_remainder_rejected(&state, *remaining, remaining + 1);
+            }
+            let action = match prompt {
+                Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
+                Decision::ChooseEffectTargets { ref legal_targets, .. } if name == "riddler"
+                    && legal_targets.iter().any(|&target| {
+                        matches!(target, Target::Object(card) if state.objects.get(card).zone == Zone::Graveyard)
+                    }) => Action::ChooseEffectTarget(legal_targets[0]),
+                other => first_answer(other),
+            };
+            act(&mut state, action);
+            state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            decision = settle(&mut state);
+        }
+        assert!(decision.is_none(), "{name} still paused at {decision:?}");
+        let draws = match name.as_str() {
+            "miracle" | "printed" | "sylvan" => 2,
+            "peer" => 5,
+            "peer_response_dredge" => 4,
+            "decree" | "discard" | "riddler" => 1,
+            _ => panic!("unrecognized released save {name}"),
+        };
+        assert_eq!(
+            state.players[drawer.index()].draws_this_turn,
+            draws,
+            "{name}"
+        );
+        if name.starts_with("peer") {
+            assert_eq!(life(&state, drawer), 10);
+        }
+    }
+}
+
+pub(super) fn without_draw_journal(state: &GameState) -> GameState {
     let mut snapshot = serde_json::to_value(state).unwrap();
     snapshot["engine"]["event_history"]
         .as_array_mut()
@@ -787,15 +870,12 @@ fn peer_miracle_restores_original_count_after_dredge_with_and_without_riddler() 
             assert!(engine::step(&mut forged, Action::ChooseEffectOption(0)).is_err());
         } else {
             assert_miracle_remainder_rejected(&state, 3, 2);
-            state = legacy_miracle_save(&state);
-            let mut ambiguous = state.clone();
-            ambiguous.engine.next_stack_item_id += 1;
+            let stripped = without_draw_journal(&state);
             assert!(
-                mtg_kernel::effect::validate_pending_effect_choice(&ambiguous)
+                mtg_kernel::effect::validate_pending_effect_choice(&stripped)
                     .unwrap_err()
-                    .contains("intervening stack item")
+                    .contains("generator receipt")
             );
-            assert_miracle_remainder_rejected(&state, 3, 2);
         }
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
