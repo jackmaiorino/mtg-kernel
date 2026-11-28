@@ -1653,15 +1653,37 @@ fn miracle_draw_step_wait_rejects_a_simultaneous_dredge_choice() {
     assert_miracle_wait_rejected(&forged);
 
     // Without a Miracle offer, a forged draw_step_remaining on a single-draw
-    // Dredge choice (no Riddler) is also rejected.
+    // Dredge choice (no Riddler, or 1 Riddler with 2 cards in hand) is rejected,
+    // and clearing the genuine Some(2) on an empty-hand 1-Riddler Dredge choice
+    // is also rejected.
     let mut no_riddler = draw_step_game(&["Island", "Island", "Island", "Island"], 0, &[], 1);
     assert!(matches!(
         next(&mut no_riddler),
         Decision::ChooseEffectOption { player: P0, source, .. }
             if no_riddler.objects.get(source).name == "Shambling Shell"
     ));
-    let forged_dredge = with_miracle_remaining(no_riddler, Some(3));
-    assert_miracle_wait_rejected(&forged_dredge);
+    assert_miracle_wait_rejected(&with_miracle_remaining(no_riddler, Some(3)));
+
+    let mut two_in_hand = draw_step_game(
+        &["Island", "Island", "Island", "Island"],
+        1,
+        &["Island", "Island"],
+        1,
+    );
+    assert!(matches!(
+        next(&mut two_in_hand),
+        Decision::ChooseEffectOption { player: P0, source, .. }
+            if two_in_hand.objects.get(source).name == "Shambling Shell"
+    ));
+    assert_miracle_wait_rejected(&with_miracle_remaining(two_in_hand, Some(2)));
+
+    let mut empty_hand = draw_step_game(&["Island", "Island", "Island", "Island"], 1, &[], 1);
+    assert!(matches!(
+        next(&mut empty_hand),
+        Decision::ChooseEffectOption { player: P0, source, .. }
+            if empty_hand.objects.get(source).name == "Shambling Shell"
+    ));
+    assert_miracle_wait_rejected(&with_miracle_remaining(empty_hand, None));
 }
 
 #[test]
@@ -1703,7 +1725,8 @@ fn single_riddler_miracle_receipt_rejects_a_forged_draw_after_dredge() {
         1
     );
 
-    // Re-offering a zero-remaining Miracle after declining is rejected.
+    // Re-offering a zero-remaining Miracle after declining is rejected both in
+    // the draw step and after advancing to the first main phase.
     let mut reoffered = current.clone();
     let link = mtg_kernel::state::ObjectLinkV4 {
         object: terminus,
@@ -1711,6 +1734,18 @@ fn single_riddler_miracle_receipt_rejects_a_forged_draw_after_dredge() {
     };
     reoffered.eternal_v1.as_mut().unwrap().e5b.miracle_offers = vec![link];
     assert_miracle_wait_rejected(&reoffered);
+
+    pass_until(&mut current, |s| {
+        s.active_player == P0 && s.step == Step::Main1
+    });
+    let mut main_reoffered = current.clone();
+    main_reoffered
+        .eternal_v1
+        .as_mut()
+        .unwrap()
+        .e5b
+        .miracle_offers = vec![link];
+    assert_miracle_wait_rejected(&main_reoffered);
 }
 
 #[test]
@@ -1861,11 +1896,17 @@ fn miracle_wait_rejects_a_cycling_draw_after_turn_based_dredge() {
     ));
     assert_eq!(state.players[0].draws_this_turn, 1);
     assert_eq!(state.players[0].hand.len(), 3);
-    assert!(state.engine.pending_effect.is_none());
 
     let mut forged = with_miracle_remaining(without_owned_draws(state), Some(1));
     forged.stack.clear();
+    forged.engine.pending_effect = None;
     forged.eternal_v1.as_mut().unwrap().e7b.dredge_deferring = true;
+    let mut forged_value = serde_json::to_value(&forged).unwrap();
+    forged_value
+        .as_object_mut()
+        .unwrap()
+        .remove("eternal_owned_draw_progress_v1");
+    let forged: GameState = serde_json::from_value(forged_value).unwrap();
     assert_miracle_wait_rejected(&forged);
 }
 

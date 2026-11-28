@@ -920,6 +920,27 @@ fn has_unresumed_draw_step_miracle(state: &GameState, player: PlayerId, draw_at:
     found
 }
 
+fn hand_changed_since_upkeep(state: &GameState, player: PlayerId, before: usize) -> Option<bool> {
+    let history = &state.engine.event_history[..before];
+    let upkeep = history.iter().rposition(|entry| {
+        matches!(
+            entry,
+            event::CommittedEvent::UpkeepBegan { player: began } if *began == player
+        )
+    })?;
+    Some(history[upkeep + 1..].iter().any(|entry| {
+        matches!(
+            entry,
+            event::CommittedEvent::Draw { player: drawn, .. } if *drawn == player
+        ) || matches!(
+            entry,
+            event::CommittedEvent::ZoneChange { object, from, to, .. }
+                if (*from == Zone::Hand || *to == Zone::Hand)
+                    && state.objects.try_get(*object).is_some_and(|card| card.owner == player)
+        )
+    }))
+}
+
 /// Old snapshots did not publish an exact count. Accept only a first-attempt
 /// wait with no earlier hand change this turn; dredges and other hand changes
 /// make the old layout ambiguous, so current receipts replace this inference.
@@ -928,22 +949,7 @@ fn legacy_expected_miracle_wait(
     player: PlayerId,
     draw_at: usize,
 ) -> Option<u32> {
-    let history = &state.engine.event_history[..draw_at];
-    let upkeep = history.iter().rposition(|entry| {
-        matches!(
-            entry,
-            event::CommittedEvent::UpkeepBegan { player: began } if *began == player
-        )
-    })?;
-    let hand_changed = history[upkeep + 1..].iter().any(|entry| {
-        matches!(
-            entry,
-            event::CommittedEvent::ZoneChange { object, from, to, .. }
-                if (*from == Zone::Hand || *to == Zone::Hand)
-                    && state.objects.try_get(*object).is_some_and(|card| card.owner == player)
-        )
-    });
-    if hand_changed {
+    if hand_changed_since_upkeep(state, player, draw_at)? {
         return None;
     }
     let hand_before = state.players[player.index()].hand.len().checked_sub(1)?;
@@ -959,14 +965,60 @@ pub(crate) fn validate_miracle_draw_step_wait(state: &GameState) -> Result<(), S
     let player = state.active_player;
     let max_extra = event::draw_instruction_extra_at_hand_size(state, player, 1, 0);
     if let Some(dredge_player) = read_state(state).and_then(|e7b| e7b.dredge_draw) {
-        if let Some(count) = read_state(state).and_then(|e7b| e7b.draw_step_remaining.0) {
+        let raw_remaining = read_state(state).and_then(|e7b| e7b.draw_step_remaining.0);
+        if dredge_player != player || state.step != crate::state::Step::Draw {
+            return Err(invalid());
+        }
+        let hand_changed =
+            hand_changed_since_upkeep(state, dredge_player, state.engine.event_history.len());
+        if hand_changed == Some(false) {
+            let hand_len = state.players[dredge_player.index()].hand.len();
+            let expected_total =
+                1 + event::draw_instruction_extra_at_hand_size(state, dredge_player, 1, hand_len);
+            let expected = (expected_total > 1).then_some(expected_total);
+            if raw_remaining != expected {
+                return Err(invalid());
+            }
+        } else if let Some(count) = raw_remaining {
             let dredge_max =
                 1 + event::draw_instruction_extra_at_hand_size(state, dredge_player, 1, 0);
-            if dredge_player != player
-                || state.step != crate::state::Step::Draw
-                || count < 2
-                || count > dredge_max
-            {
+            if count < 2 || count > dredge_max {
+                return Err(invalid());
+            }
+        }
+    }
+
+    // Never allow a live Miracle offer whose draw-step Miracle receipt has
+    // already been answered/resumed, in any step of the turn (CR 702.94a).
+    if let Some(crate::engine::Decision::ChooseEffectOption {
+        player: owner,
+        source,
+        ..
+    }) = crate::eternal_legacy_e5b_v1::pending_decision(state)
+    {
+        if let Some((offer_draw_at, _)) =
+            crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, owner)
+                .filter(|&(_, card)| card == source)
+        {
+            let already_resumed = state
+                .engine
+                .event_history
+                .of_kinds_v2(&[crate::event_history_v1::EventKindV1::EternalOwnedDrawV1])
+                .any(|(at, entry)| {
+                    at > offer_draw_at
+                        && matches!(
+                            entry,
+                            event::CommittedEvent::EternalOwnedDrawV1 { journal }
+                                if matches!(
+                                    **journal,
+                                    owned_draws_v1::JournalV1::DrawStepMiracleResumedV1 {
+                                        player: recorded,
+                                        draw_at: draw,
+                                    } if recorded == owner && draw == offer_draw_at
+                                )
+                        )
+                });
+            if already_resumed {
                 return Err(invalid());
             }
         }
