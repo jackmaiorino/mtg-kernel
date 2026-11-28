@@ -11073,14 +11073,13 @@ pub(crate) struct StagedEscapeCostGroupV1 {
     /// Whether this group is the escape cost's "exile other cards from your
     /// graveyard".
     pub(crate) escape: bool,
-    /// Exactly this many objects. `None` for Nethergoyf's escape, which
-    /// exiles any number of cards with `min_card_types` card types among them.
+    /// Exactly this many objects, or None for variable exile and tap selections.
     pub(crate) count: Option<u8>,
     pub(crate) min_card_types: Option<u8>,
     /// The objects chosen so far, in order. Each stays where it is until the
     /// whole cost is paid.
     pub(crate) selected: Vec<ObjectId>,
-    /// Nethergoyf's escape: the caster stopped exiling further cards.
+    /// The caster finished the variable exile or tap selection.
     pub(crate) finished: bool,
 }
 
@@ -11179,7 +11178,6 @@ pub(crate) fn staged_escape_v1(
                 .is_some_and(|discarded| !discarded.is_empty()),
             "an additional discard",
         ),
-        (standard_cast_convoke::active(state, pending), "convoke"),
         (state.engine.pending_discard.is_some(), "a pending discard"),
     ] {
         if unrecorded {
@@ -11272,11 +11270,26 @@ pub(crate) fn staged_escape_v1(
     }
     escape.selected = pending.sacrifice_chosen.clone();
     escape.finished = escape.min_card_types.is_some() && pending.escape_exile_finished_v1;
+    let mut groups = vec![escape];
+    if standard_cast_convoke::active(state, pending) {
+        groups.push(StagedEscapeCostGroupV1 {
+            kind: CostKind::TapPermanents,
+            escape: false,
+            count: None,
+            min_card_types: None,
+            selected: pending
+                .convoke_chosen
+                .iter()
+                .map(|binding| binding.object)
+                .collect(),
+            finished: pending.convoke_finished,
+        });
+    }
     Ok(StagedEscapeV1::Paying {
         breach,
         costs_chosen: true,
         order_chosen: true,
-        groups: vec![escape],
+        groups,
         x_options,
     })
 }
@@ -20134,6 +20147,21 @@ pub(crate) fn validate_pending_cast(
             || !optional_additional_cost_selection_is_complete(pending, def, state)?
         {
             return Err("pending cast discard binding or stage changed".to_string());
+        }
+    }
+    if method == CastMethodV4::Escape && standard_cast_convoke::active(state, pending) {
+        let tapped = pending.convoke_finished || !pending.convoke_chosen.is_empty();
+        if pending.sacrifice_chosen.len() < interactive_object_cost_needed {
+            if tapped {
+                return Err("Escape convokers chosen before graveyard payment".into());
+            }
+        } else if !tapped
+            && pending.selected_x_v59().is_some_and(|x| {
+                pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
+                    .is_none()
+            })
+        {
+            return Err("Escape tap selection has no payable completion".into());
         }
     }
     standard_cast_convoke::validate(state, pending)?;

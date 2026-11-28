@@ -919,6 +919,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
         false,
         false,
         false,
+        true,
     )
 }
 
@@ -941,6 +942,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
     artifact_spell: bool,
     colorless_eldrazi_spell: bool,
     improvise: bool,
+    require_convoke: bool,
 ) -> Option<(PaymentPlan, Vec<ObjectId>)> {
     let tapper_type = if improvise {
         crate::card_def::CardType::Artifact
@@ -969,7 +971,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
     let mut source_choices = SpellSourceChoicesV1 {
         aliases: Vec::new(),
         convoke: Vec::new(),
-        require_convoke: true,
+        require_convoke,
     };
     for creature in creatures {
         // An improvising artifact pays only generic mana.

@@ -169,6 +169,8 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) own_generic_increase: u32,
     pub(super) delve: bool,
     pub(super) convoke: bool,
+    // Escape permits an empty tap selection when mana pays the entire cost.
+    escape_convoke: bool,
     /// Improvise (Kappa Cannoneer): the convoke payment taps artifacts, each
     /// for one generic mana.
     pub(super) improvise: bool,
@@ -563,20 +565,14 @@ impl SelectedSpellManaCostsV1 {
         Some(payment)
     }
 
-    /// The mana payment alone, without teamwork's tapping.
-    fn mana_payment_plan(
+    /// The total before choosing which resources pay it (CR 601.2f).
+    pub(super) fn total_mana_cost(
         &self,
         x: u16,
-        player: PlayerId,
-        state: &GameState,
+        _state: &GameState,
         increase: u32,
         reduction: u32,
-        reserved: &[ObjectId],
-    ) -> Option<SpellManaPaymentV1> {
-        // No current selected cost combines Delve and Convoke.
-        if self.convoke && self.delve {
-            return None;
-        }
+    ) -> (Vec<mana::Pip>, u32) {
         let extra_costs: Vec<Cost> = if self.splice && cfg!(feature = "eternal-fixtures") {
             crate::eternal_pauper_e8b_v1::splice_costs_for_code(x)
         } else {
@@ -604,10 +600,26 @@ impl SelectedSpellManaCostsV1 {
         // Trinisphere raises a total below three mana to three.
         #[cfg(feature = "eternal-fixtures")]
         let generic = generic.saturating_add(crate::eternal_vintage_v1::trinisphere_increase(
-            state,
+            _state,
             pips.len(),
             generic,
         ));
+        (pips, generic)
+    }
+
+    fn mana_payment_plan(
+        &self,
+        x: u16,
+        player: PlayerId,
+        state: &GameState,
+        increase: u32,
+        reduction: u32,
+        reserved: &[ObjectId],
+    ) -> Option<SpellManaPaymentV1> {
+        if self.convoke && self.delve && !self.no_mana {
+            return None;
+        }
+        let (pips, generic) = self.total_mana_cost(x, state, increase, reduction);
         // Hogaak: creatures and graveyard cards pay; mana never does.
         if self.no_mana {
             if !self.convoke {
@@ -652,6 +664,7 @@ impl SelectedSpellManaCostsV1 {
                     self.types.contains(&CardType::Artifact),
                     self.colorless_eldrazi,
                     self.improvise,
+                    !self.escape_convoke,
                 )?;
             return Some(SpellManaPaymentV1 {
                 mana,
@@ -852,6 +865,7 @@ fn selected_spell_mana_costs_with_escape(
         own_generic_increase: 0,
         delve: false,
         convoke: false,
+        escape_convoke: false,
         improvise: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e7a_v1::improvise_definition(definition.name),
         // Multikicker (wave C2c) is paid like replicate, once per kick.
@@ -899,6 +913,9 @@ fn selected_spell_mana_costs_with_escape(
                 selected.types = types;
             } else {
                 selected.components(escape_cost_v1(definition, breach_escape)?);
+                selected.escape_convoke =
+                    super::standard_cast_convoke::printed_tap_payment(definition);
+                selected.convoke = selected.escape_convoke;
                 selected.delve = definition.delve;
                 if let Some(reducer) = definition.generic_cost_reduction {
                     selected.own_generic_reduction =
@@ -1929,7 +1946,7 @@ fn selected_spell_quote_branch_grant_v1(
     // only the first set clear of separately reserved cards, the one the
     // search below would accept first, instead of every combination of a
     // large graveyard.
-    if graveyard_family && !selected.no_mana {
+    if graveyard_family {
         chosen.extend(
             candidates
                 .iter()
@@ -2315,6 +2332,14 @@ pub(super) fn prepare_final_spell_payment_v1(
             None,
         )
     };
+    let mana = if selected.convoke || selected.teamwork.is_some() {
+        if !pending.convoke_finished {
+            return None;
+        }
+        super::standard_cast_convoke::payment(resources, pending, &pending.convoke_chosen)?
+    } else {
+        mana
+    };
     let spent = super::checked_spell_mana_plan_v59(resources, player, &mana.mana)?;
     if definition.records_mana_spent && u16::try_from(spent).is_err() {
         return None;
@@ -2347,13 +2372,6 @@ pub(super) fn prepare_final_spell_payment_v1(
         )
         .ok()?,
     };
-    if selected.convoke || selected.teamwork.is_some() {
-        if !pending.convoke_finished {
-            return None;
-        }
-        prepared.mana =
-            super::standard_cast_convoke::payment(resources, pending, &pending.convoke_chosen)?;
-    }
     // Ordinary mana-only spells require no whole-state projection.
     if prepared.greatwurm.is_none()
         && selected.component_groups.is_empty()

@@ -3,7 +3,26 @@
 //! no mana, and their total power must reach the teamwork requirement.
 use super::*;
 use spell_costs_v1::SpellManaPaymentV1;
+/// The catalog uses ConvokeMana to encode printed convoke and improvise.
+pub(super) fn printed_tap_payment(def: &card_def::CardDef) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && def.alt_cost.is_some_and(|alt| {
+            alt.components
+                .iter()
+                .any(|c| matches!(c, CostComponent::ConvokeMana(_)))
+        })
+}
+
+fn escape(p: &PendingCast) -> bool {
+    p.source_contract.cast_method == CastMethodV4::Escape
+}
 pub(super) fn active(state: &GameState, p: &PendingCast) -> bool {
+    if escape(p) {
+        let def = &card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize];
+        return !(sphinx_lore_cast_v1::waiting(p)
+            || (p.mode_chosen == Some(1) && escape_supports_second_form_v1(def)))
+            && printed_tap_payment(def);
+    }
     p.cast_mode == Some(CastMode::Alternative)
         && card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize]
             .alt_cost
@@ -108,6 +127,20 @@ fn selected(
     p: &PendingCast,
 ) -> Option<spell_costs_v1::SelectedSpellManaCostsV1> {
     let def = &card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize];
+    if escape(p) {
+        return spell_costs_v1::selected_spell_mana_costs_for_source_v1(
+            p.spell,
+            def,
+            (
+                CastMethodV4::Escape,
+                p.kicked == Some(true),
+                p.mode_chosen.unwrap_or(0),
+            ),
+            &p.targets_chosen,
+            p.controller,
+            state,
+        );
+    }
     spell_costs_v1::selected_spell_mana_costs_v1(
         def,
         CastMethodV4::Alternative,
@@ -121,6 +154,11 @@ fn selected(
 fn cost(state: &GameState, p: &PendingCast) -> Option<(Vec<mana::Pip>, u32, bool)> {
     let s = selected(state, p)?;
     let (increase, reduction) = spell_cost_generic_modifiers_v1(state, s.types, p.controller);
+    if escape(p) {
+        let (pips, generic) =
+            s.total_mana_cost(p.selected_x_v59().unwrap_or(0), state, increase, reduction);
+        return Some((pips, generic, s.types.contains(&CardType::Creature)));
+    }
     let pips = s
         .costs
         .iter()
@@ -170,7 +208,7 @@ pub(super) fn payment(
     p: &PendingCast,
     chosen: &[EffectObjectBinding],
 ) -> Option<SpellManaPaymentV1> {
-    if chosen.is_empty() {
+    if chosen.is_empty() && !escape(p) {
         return None;
     }
     if teamwork(state, p).is_some() {
@@ -200,12 +238,16 @@ pub(super) fn payment(
     if crate::eternal_legacy_e8a_v1::statics::no_mana_spell(
         card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize].name,
     ) {
+        let mut reserved = vec![p.spell];
+        if escape(p) {
+            reserved.extend_from_slice(&p.sacrifice_chosen);
+        }
         let (convoke_tapped, delve_exiled) = crate::eternal_legacy_e8a_v1::statics::hogaak_payment(
             &pips,
             generic,
             p.controller,
             state,
-            &[p.spell],
+            &reserved,
             Some(excluded.as_slice()),
         )?;
         return Some(SpellManaPaymentV1 {
@@ -382,7 +424,7 @@ pub(super) fn decision(state: &GameState, p: &PendingCast) -> Decision {
         player: p.controller,
         source: p.spell,
         selected_count: p.convoke_chosen.len() as u16,
-        min_targets: 1,
+        min_targets: u16::from(!escape(p)),
         max_targets: u16::try_from(max_targets).unwrap_or(u16::MAX),
         legal_targets: candidates(state, p)
             .into_iter()
