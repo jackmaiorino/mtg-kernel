@@ -864,6 +864,44 @@ pub fn write_marked_test_checkpoint_v1(
     Ok(marked)
 }
 
+#[cfg(test)]
+pub(crate) fn seat_package_fixture_checkpoint(
+    directory: &Path,
+    table: &CubeTableV1,
+    lineage: Vec<LineageSegment>,
+    heads: HeadUpdates,
+) -> Checkpoint {
+    let mut config = RunConfig::shakedown(directory, "k2", Segment::PickPhase);
+    let model = ModelV1::initialise_v1(
+        table.index().len(),
+        table.vector_width(),
+        table.dense_columns().len(),
+        42,
+    )
+    .unwrap();
+    let optimizer = Optimizer::new(&model);
+    config.pins.card_index = Some(table.index_pin().to_owned());
+    config.pins.cube_table = Some(table.file_sha256().to_owned());
+    config.metadata.parameter_layout_sha256 = model_layout_pin(&model);
+    config.metadata.card_database_sha256 = format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH);
+    config.metadata.dense_fields = table
+        .dense_columns()
+        .iter()
+        .map(|c| c.token.clone())
+        .collect();
+    config.metadata.column_scales = table.divisors().iter().map(|&d| d as u32).collect();
+    Checkpoint::new(
+        &config,
+        CubeModelState::from_model(&model, &optimizer),
+        Vec::new(),
+        1,
+        lineage,
+        Vec::new(),
+        heads,
+    )
+    .unwrap()
+}
+
 fn model_layout_pin(model: &ModelV1) -> String {
     model
         .parameter_layout_sha256()

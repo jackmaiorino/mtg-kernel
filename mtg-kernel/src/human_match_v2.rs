@@ -83,7 +83,7 @@ fn strict<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
     serde_json::from_value(value).map_err(|_| "Invalid JSON fields.".to_owned())
 }
 
-fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
+pub(crate) fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     File::open(path)
         .map_err(|e| e.to_string())?
