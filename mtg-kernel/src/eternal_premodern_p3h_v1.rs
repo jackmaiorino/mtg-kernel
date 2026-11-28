@@ -199,7 +199,10 @@ pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_i
 /// a zone-change replacement effect (Rest in Peace, Leyline of the Void,
 /// Dauthi Voidwalker) were still destroyed and count; indestructible creatures
 /// and noncreature permanents do not.
-fn destroy_all_creatures_no_regeneration(state: &mut GameState) -> u32 {
+fn destroy_all_creatures_no_regeneration(
+    state: &mut GameState,
+    draw: Option<(&EffectContinuation, &[u16])>,
+) -> u32 {
     let creatures = [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
@@ -211,6 +214,15 @@ fn destroy_all_creatures_no_regeneration(state: &mut GameState) -> u32 {
         .collect::<Vec<_>>();
     if creatures.is_empty() {
         return 0;
+    }
+    if let Some((pending, path)) = draw {
+        crate::effect::begin_draw_input_batch(
+            state,
+            pending,
+            path,
+            pending.ctx.controller,
+            creatures.iter().map(|link| link.object),
+        );
     }
     event::propose_and_commit_batch(
         state,
@@ -235,7 +247,7 @@ fn destroy_all_creatures_no_regeneration(state: &mut GameState) -> u32 {
 pub(crate) fn execute(op: &P3hOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         P3hOpV1::DecreeOfPainV1 => {
-            let destroyed = destroy_all_creatures_no_regeneration(state);
+            let destroyed = destroy_all_creatures_no_regeneration(state, None);
             if destroyed > 0
                 && state.engine.halted.is_none()
                 && !crate::graveyard_order_v1::paused(state)
@@ -262,7 +274,8 @@ pub(crate) fn drive(
 ) -> Result<bool, String> {
     match op {
         P3hOpV1::DecreeOfPainV1 => {
-            let destroyed = destroy_all_creatures_no_regeneration(state);
+            let destroyed =
+                destroy_all_creatures_no_regeneration(state, Some((continuation, &path)));
             if destroyed > 0
                 && state.engine.halted.is_none()
                 && !crate::graveyard_order_v1::paused(state)

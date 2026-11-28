@@ -2245,6 +2245,14 @@ pub(crate) fn finish_selection(
     match kind {
         E7bChoiceV1::DredgeV1 => {
             #[cfg(feature = "eternal-fixtures")]
+            crate::effect::retain_legacy_draw_offer(state, continuation, choice);
+            crate::eternal_cards_v1::owned_draws_v1::staged::note_attempt(
+                state,
+                continuation,
+                &choice.path,
+                player,
+            );
+            #[cfg(feature = "eternal-fixtures")]
             crate::effect::record_draw_replacement_choice(state, continuation, choice, true);
             dredge::finish(state, continuation, choice, chosen);
             #[cfg(feature = "eternal-fixtures")]
@@ -2252,8 +2260,6 @@ pub(crate) fn finish_selection(
             Ok(false)
         }
         E7bChoiceV1::JaceOrHullbreacherV1 => {
-            #[cfg(feature = "eternal-fixtures")]
-            crate::effect::record_draw_replacement_choice(state, continuation, choice, true);
             dredge::finish_jace_or_hullbreacher(state, continuation, choice, chosen)?;
             Ok(false)
         }

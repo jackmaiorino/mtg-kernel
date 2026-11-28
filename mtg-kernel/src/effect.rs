@@ -932,6 +932,13 @@ pub(crate) mod alesha_optional_v1 {
 }
 
 pub(crate) mod nonland_copy_v1;
+mod staged_draw_count;
+pub(crate) use staged_draw_count::begin_draw_input_batch;
+#[cfg(feature = "eternal-fixtures")]
+use staged_draw_count::{draw_total_at, restored_balance, validate_staged_draw_choice};
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) use staged_draw_count::{enter_printed_choice, retain_legacy_draw_offer};
+use staged_draw_count::{staged_batch_count, staged_dynamic_count};
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
 mod scavenging_ooze_v1;
@@ -5145,6 +5152,21 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         return Err(err);
                     }
                     path.push(option_index);
+                    if matches!(
+                        pending.resolving_item.inline_effect,
+                        Some(EffectOp::StandardV1(
+                            crate::standard_cards_v1::StandardOpV1::EternalV1(
+                                crate::eternal_cards_v1::EternalOpV1::E9bV1(
+                                    crate::eternal_e9b_v1::E9bOpV1::DenialMayDrawV1 { .. }
+                                )
+                            )
+                        ))
+                    ) && matches!(selected, EffectOp::DrawCards { .. })
+                    {
+                        crate::eternal_cards_v1::owned_draws_v1::staged::enter_generated(
+                            state, &pending, &path, player,
+                        );
+                    }
                     if let Some(continuation) = state.engine.pending_effect.as_mut() {
                         continuation
                             .frames
@@ -8241,73 +8263,19 @@ pub(crate) fn jace_draw_replacement_origin(
             );
     }
     let ctx = &pending.ctx;
-    let mut sibling_path = path;
-    let (player, count, staged_below) = match resolved_definition_op_at(&root, path, ctx, state) {
-        Some(EffectOp::DrawCards { player, count }) => (*player, *count, Vec::new()),
-        Some(EffectOp::DrawCardsDynamic { player, count }) => {
-            let evaluated = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller);
-            (
-                *player,
-                u32::try_from(evaluated.max(0)).unwrap_or(0),
-                Vec::new(),
-            )
-        }
-        Some(EffectOp::DiscardUpToThenDraw { player, maximum }) => {
-            (*player, u32::from(*maximum), Vec::new())
-        }
-        Some(leaf) => match leaf_staged_draw(leaf, path, ctx, state) {
-            Some(staged) => staged,
-            None => return false,
-        },
-        None => {
-            let Some((&branch, parent)) = path.split_last() else {
-                return false;
-            };
-            sibling_path = parent;
-            match (branch, resolved_definition_op_at(&root, parent, ctx, state)) {
-                (
-                    1,
-                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
-                        crate::eternal_cards_v1::EternalOpV1::OutsideGameV1(
-                            crate::eternal_outside_game_v1::OutsideGameOpV1::LearnV1,
-                        ),
-                    ))),
-                ) => (PlayerRef::Controller, 1, Vec::new()),
-                (
-                    1 | 2,
-                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
-                        crate::eternal_cards_v1::EternalOpV1::E9bV1(
-                            crate::eternal_e9b_v1::E9bOpV1::DenialMayDrawV1 { player },
-                        ),
-                    ))),
-                ) => (
-                    crate::eternal_e9b_v1::denial_drawer(ctx.controller, *player),
-                    u32::from(branch),
-                    Vec::new(),
-                ),
-                (
-                    0,
-                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
-                        crate::eternal_cards_v1::EternalOpV1::Pf2aV1(
-                            crate::eternal_pauper_pf2a_v1::Pf2aOpV1::ThrillingDiscoveryV1,
-                        ),
-                    ))),
-                ) => (PlayerRef::Controller, 3, Vec::new()),
-                _ => return false,
-            }
-        }
-    };
-    if count == 0 || pending.ctx.resolve_player(player, state) != drawer {
+    let (first, _) =
+        crate::eternal_cards_v1::owned_draws_v1::staged::attempts(state, pending, path);
+    let start = first.unwrap_or(state.engine.event_history.len());
+    let Some((player, count, below)) = draw_site(state, pending, &root, path, start) else {
         return false;
-    }
-    nonland_sacrifice_payment_v1::remaining(&root, sibling_path).is_ok_and(|mut below| {
-        below.extend(staged_below);
-        draw_remainder_matches(remaining, &below, path, player, count)
-    })
+    };
+    count > 0
+        && ctx.resolve_player(player, state) == drawer
+        && draw_remainder_matches(remaining, &below, path, player, count)
 }
 
 /// The draw a definition-owned leaf stages at its own path when it resolves:
-/// its drawer, the most cards it draws, and the frames it pushes below the
+/// its drawer, its original count, and the frames it pushes below the
 /// draw. Only the leaf itself pushes a frame at its path, so a draw found
 /// there with these frames below it is that leaf's draw.
 fn leaf_staged_draw(
@@ -8315,6 +8283,7 @@ fn leaf_staged_draw(
     path: &[u16],
     ctx: &ExecCtx,
     state: &GameState,
+    start: usize,
 ) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
     use crate::eternal_cards_v1::EternalOpV1 as E;
     use crate::eternal_cube_c1a_v1::C1aOpV1;
@@ -8325,6 +8294,21 @@ fn leaf_staged_draw(
     use crate::eternal_sideboard_s1b_v1::S1bOpV1;
     use crate::eternal_vintage_e7b_v1::E7bOpV1;
     use crate::standard_cards_v1::StandardOpV1;
+    if let EffectOp::DiscardUpToThenDraw { player, maximum } = leaf {
+        return Some((
+            *player,
+            staged_batch_count(
+                state,
+                ctx,
+                path,
+                start,
+                Zone::Hand,
+                Some(ctx.resolve_player(*player, state)),
+                u32::from(*maximum),
+            )?,
+            Vec::new(),
+        ));
+    }
     let EffectOp::StandardV1(standard) = leaf else {
         return None;
     };
@@ -8335,7 +8319,19 @@ fn leaf_staged_draw(
         } else {
             PlayerRef::Opponent
         };
-        return Some((framed, u32::from(*count), Vec::new()));
+        return Some((
+            framed,
+            staged_batch_count(
+                state,
+                ctx,
+                path,
+                start,
+                Zone::Hand,
+                Some(resolved),
+                u32::from(*count),
+            )?,
+            Vec::new(),
+        ));
     }
     let StandardOpV1::EternalV1(leaf) = standard else {
         return None;
@@ -8365,9 +8361,11 @@ fn leaf_staged_draw(
         // K'un-Lun Warrior stages one draw at the leaf after payment.
         E::Pf1aV1(Pf1aOpV1::KunLunV1) => Some((PlayerRef::Controller, 1, Vec::new())),
         // Keep Watch stages one draw per attacking creature at resolution.
-        E::Pf2aV1(crate::eternal_pauper_pf2a_v1::Pf2aOpV1::KeepWatchV1) => {
-            Some((PlayerRef::Controller, u32::MAX, Vec::new()))
-        }
+        E::Pf2aV1(crate::eternal_pauper_pf2a_v1::Pf2aOpV1::KeepWatchV1) => Some((
+            PlayerRef::Controller,
+            crate::eternal_pauper_pf2a_v1::attacking_creature_count(state),
+            Vec::new(),
+        )),
         // Flush Out stages two draws after its mandatory discard.
         E::Pf2bV1(crate::eternal_pauper_pf2b_v1::Pf2bOpV1::FlushOutV1) => {
             Some((PlayerRef::Controller, 2, Vec::new()))
@@ -8397,18 +8395,8 @@ fn leaf_staged_draw(
             ))
         }
         E::P1aV1(P1aOpV1::GravebornMuseV1) => {
-            let zombies = state.players[ctx.controller.index()]
-                .battlefield
-                .iter()
-                .filter(|&&object| {
-                    crate::engine::has_effective_subtype(
-                        state,
-                        object,
-                        crate::card_def::Subtype::Zombie,
-                    )
-                })
-                .count();
-            let count = u32::try_from(zombies).unwrap_or(u32::MAX);
+            let count =
+                crate::eternal_premodern_p1a_v1::graveborn_draw_count(state, ctx.controller);
             let amount = i32::try_from(count).unwrap_or(i32::MAX);
             Some((
                 PlayerRef::Controller,
@@ -8418,14 +8406,24 @@ fn leaf_staged_draw(
                     .collect(),
             ))
         }
-        E::P3hV1(P3hOpV1::DecreeOfPainV1) => Some((PlayerRef::Controller, u32::MAX, Vec::new())),
+        E::P3hV1(P3hOpV1::DecreeOfPainV1) => Some((
+            PlayerRef::Controller,
+            staged_batch_count(state, ctx, path, start, Zone::Battlefield, None, u32::MAX)?,
+            Vec::new(),
+        )),
         E::S1bV1(S1bOpV1::PeerV1) => {
-            let target = ctx.resolve_player(PlayerRef::Target(0), state);
+            let Some(&Target::Player(target)) = ctx.targets.first() else {
+                return None;
+            };
             let life = state.players[target.index()].life;
             let lose = if life > 0 { (life + 1) / 2 } else { 0 };
             Some((
                 PlayerRef::Target(0),
-                u32::MAX,
+                crate::eternal_cards_v1::owned_draws_v1::half_library_count(
+                    crate::eternal_cards_v1::owned_draws_v1::initial_library_len(
+                        state, target, start,
+                    )?,
+                ),
                 lose_life_frame(PlayerRef::Target(0), lose)
                     .into_iter()
                     .collect(),
@@ -10517,7 +10515,10 @@ fn validate_answered_choice_guard(
     Ok(())
 }
 
-fn definition_has_nonterminal_discard(state: &GameState, pending: &EffectContinuation) -> bool {
+pub(super) fn definition_has_nonterminal_discard(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> bool {
     let nonterminal = |op: &EffectOp| matches!(op, EffectOp::Sequence(ops) if ops.iter().take(ops.len().saturating_sub(1)).any(|op| matches!(op, EffectOp::DiscardCards { .. })));
     let Some(source) = state.objects.try_get(pending.resolving_item.source) else {
         return false;
@@ -11555,6 +11556,8 @@ fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String>
             validate_nonterminal_discard_other_stage(state, pending)?;
         }
     }
+    #[cfg(feature = "eternal-fixtures")]
+    validate_staged_draw_choice(state, pending)?;
     let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
     };
@@ -13658,6 +13661,22 @@ pub(crate) fn program_may_draw_miracle(state: &GameState, op: &EffectOp, ctx: &E
             return program_may_draw_miracle(state, then, ctx)
                 || program_may_draw_miracle(state, else_, ctx);
         }
+        // These Premodern leaves normally execute synchronously. Their
+        // resumable implementations push the draw and any subsequent life loss.
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+            crate::eternal_cards_v1::EternalOpV1::P1aV1(op),
+        )) => {
+            use crate::eternal_premodern_p1a_v1::P1aOpV1;
+            match op {
+                P1aOpV1::SkeletalScryingV1 | P1aOpV1::GravebornMuseV1 => PlayerRef::Controller,
+                P1aOpV1::IceV1 | P1aOpV1::PortentUpkeepDrawV1
+                    if event::draw_instruction_extra(state, ctx.controller, 1) != 0 =>
+                {
+                    PlayerRef::Controller
+                }
+                _ => return false,
+            }
+        }
         _ => return false,
     };
     let drawer = match player {
@@ -13693,6 +13712,85 @@ fn plain_draw_instruction(
     Some((player, count))
 }
 
+/// The original count and following instructions of a generated draw at this site.
+pub(crate) fn staged_draw_site(
+    state: &GameState,
+    pending: &EffectContinuation,
+    root: &EffectOp,
+    path: &[u16],
+    start: usize,
+) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
+    use crate::eternal_cards_v1::EternalOpV1 as Eternal;
+    use crate::standard_cards_v1::StandardOpV1 as Standard;
+    if let Some(selected) =
+        crate::eternal_cards_v1::owned_draws_v1::staged::generated_path(state, pending)
+    {
+        // An ordinary printed draw marks only its own instruction. Synthetic
+        // branches (including Denial) must still match the selected path.
+        let printed = pending.resolving_item.inline_effect.is_none()
+            && !crate::eternal_cards_v1::owned_draws_v1::staged::requires_generator_receipt(
+                state, pending,
+            )
+            && matches!(
+                resolved_definition_op_at(root, selected, &pending.ctx, state),
+                Some(EffectOp::DrawCards { .. } | EffectOp::DrawCardsDynamic { .. })
+            );
+        if selected != path && !printed {
+            return None;
+        }
+    }
+    let (parent, (player, limit, tail)) =
+        if let Some(leaf) = resolved_definition_op_at(root, path, &pending.ctx, state) {
+            let staged = match leaf {
+                // The native start fixes a dynamic count before dredge can change it.
+                EffectOp::DrawCardsDynamic { player, count } => (
+                    *player,
+                    staged_dynamic_count(state, &pending.ctx, *count, start)?,
+                    Vec::new(),
+                ),
+                EffectOp::DrawCards { player, count } if !path.is_empty() => {
+                    (*player, *count, Vec::new())
+                }
+                _ => leaf_staged_draw(leaf, path, &pending.ctx, state, start)?,
+            };
+            (path, staged)
+        } else {
+            let (&branch, parent) = path.split_last()?;
+            let staged = match (
+                branch,
+                resolved_definition_op_at(root, parent, &pending.ctx, state),
+            ) {
+                (
+                    1,
+                    Some(EffectOp::StandardV1(Standard::EternalV1(Eternal::OutsideGameV1(
+                        crate::eternal_outside_game_v1::OutsideGameOpV1::LearnV1,
+                    )))),
+                ) => (PlayerRef::Controller, 1, Vec::new()),
+                (
+                    1 | 2,
+                    Some(EffectOp::StandardV1(Standard::EternalV1(Eternal::E9bV1(
+                        crate::eternal_e9b_v1::E9bOpV1::DenialMayDrawV1 { player },
+                    )))),
+                ) => (
+                    crate::eternal_e9b_v1::denial_drawer(pending.ctx.controller, *player),
+                    u32::from(branch),
+                    Vec::new(),
+                ),
+                (
+                    0,
+                    Some(EffectOp::StandardV1(Standard::EternalV1(Eternal::Pf2aV1(
+                        crate::eternal_pauper_pf2a_v1::Pf2aOpV1::ThrillingDiscoveryV1,
+                    )))),
+                ) => (PlayerRef::Controller, 3, Vec::new()),
+                _ => return None,
+            };
+            (parent, staged)
+        };
+    let mut below = nonland_sacrifice_payment_v1::remaining(root, parent).ok()?;
+    below.extend(tail);
+    Some((player, limit, below))
+}
+
 fn occult_staged_draw(
     leaf: &EffectOp,
     path: &[u16],
@@ -13706,7 +13804,6 @@ fn occult_staged_draw(
     let item = &pending.resolving_item;
     if !path.is_empty()
         || item.kind != StackItemKind::Spell
-        || item.is_copy
         || item.inline_effect.is_some()
         || !matches!(
             leaf,
@@ -13717,7 +13814,13 @@ fn occult_staged_draw(
     {
         return None;
     }
-    leaf_staged_draw(leaf, path, &pending.ctx, state)
+    leaf_staged_draw(
+        leaf,
+        path,
+        &pending.ctx,
+        state,
+        state.engine.event_history.len(),
+    )
 }
 
 pub(crate) fn occult_draw_root(
@@ -13728,42 +13831,25 @@ pub(crate) fn occult_draw_root(
     occult_staged_draw(&root, &[], pending, state)
 }
 
-#[cfg(feature = "eternal-fixtures")]
-struct MiracleDrawSite {
-    player: PlayerRef,
-    count: u32,
-    below: Vec<EffectFrame>,
-    staged: bool,
-}
-
-/// A printed draw or Occult Epiphany's native draw and following discard.
-/// Occult's printed count and discard frames are bound to the same resolution.
-#[cfg(feature = "eternal-fixtures")]
-fn miracle_draw_site(
+/// The draw and its continuation, including siblings of enclosing sequences.
+pub(crate) fn draw_site(
     state: &GameState,
     pending: &EffectContinuation,
     root: &EffectOp,
-    printed: &EffectOp,
     path: &[u16],
-) -> Result<Option<MiracleDrawSite>, String> {
-    let plain = plain_draw_instruction(state, printed, &pending.ctx);
-    let (player, count, staged_below) = match plain {
-        Some((player, count)) => (player, count, Vec::new()),
-        None => {
-            let Some(draw) = occult_staged_draw(printed, path, pending, state) else {
-                return Ok(None);
-            };
-            draw
-        }
-    };
-    let mut below = nonland_sacrifice_payment_v1::remaining(root, path)?;
-    below.extend(staged_below);
-    Ok(Some(MiracleDrawSite {
-        player,
-        count,
-        below,
-        staged: plain.is_none(),
-    }))
+    start: usize,
+) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
+    if let Some(EffectOp::DrawCards { player, count }) =
+        resolved_definition_op_at(root, path, &pending.ctx, state)
+    {
+        let (player, count) = (*player, *count);
+        return Some((
+            player,
+            count,
+            nonland_sacrifice_payment_v1::remaining(root, path).ok()?,
+        ));
+    }
+    staged_draw_site(state, pending, root, path, start)
 }
 
 /// The attempts a draw leaf at `path` makes, when the interpreter can
@@ -13782,26 +13868,30 @@ fn authenticated_draw_attempts(
     count: u32,
 ) -> Result<Option<u32>, String> {
     let root = validated_definition_owned_root_effect(state, continuation)?;
-    let Some(printed) = effect_op_at_structural_path(&root, path) else {
+    let (first, spent) =
+        crate::eternal_cards_v1::owned_draws_v1::staged::attempts(state, continuation, path);
+    let start = first.unwrap_or(state.engine.event_history.len());
+    let Some((site_player, base, below)) = draw_site(state, continuation, &root, path, start)
+    else {
         return Ok(None);
     };
-    let Some(site) = miracle_draw_site(state, continuation, &root, printed, path)? else {
-        return Ok(None);
-    };
-    if continuation.ctx.resolve_player(site.player, state) != player
-        || site.below != continuation.frames
+    if continuation.ctx.resolve_player(site_player, state) != player || below != continuation.frames
     {
         return Ok(None);
     }
-    let fixed_draw = matches!(leaf, EffectOp::DrawCards { .. });
-    if printed == leaf || (site.staged && fixed_draw && site.count == count) {
-        Ok(Some(
-            count + event::draw_instruction_extra(state, player, count),
-        ))
-    } else if fixed_draw && count < site.count {
-        Ok(Some(count))
+    let Some(total) = draw_total_at(state, player, base, start) else {
+        return Err("draw instruction lost its starting hand".into());
+    };
+    let retained = restored_balance(state, continuation, &root, path)?;
+    let remaining = retained
+        .or_else(|| total.checked_sub(spent))
+        .ok_or("draw instruction exceeded its original attempts")?;
+    if (spent == 0 && count == base)
+        || (spent > 0 && matches!(leaf, EffectOp::DrawCards { .. }) && count == remaining)
+    {
+        Ok(Some(remaining))
     } else {
-        Ok(None)
+        Err("draw frame changed its original count".into())
     }
 }
 
@@ -13824,14 +13914,18 @@ pub(crate) fn suspend_miracle_draw(
     let Some(card) = crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state) else {
         return false;
     };
+    let start =
+        crate::eternal_cards_v1::owned_draws_v1::staged::attempts(state, continuation, path)
+            .0
+            .unwrap_or(state.engine.event_history.len());
     let authenticated = crate::eternal_legacy_e5b_v1::is_first_miracle_draw(state, player, card)
         && validated_definition_owned_root_effect(state, continuation).is_ok_and(|root| {
-            effect_op_at_structural_path(&root, path)
-                .and_then(|op| miracle_draw_site(state, continuation, &root, op, path).ok()?)
-                .is_some_and(|site| {
-                    continuation.ctx.resolve_player(site.player, state) == player
-                        && site.below == continuation.frames
-                })
+            draw_site(state, continuation, &root, path, start).is_some_and(
+                |(site_player, _, below)| {
+                    continuation.ctx.resolve_player(site_player, state) == player
+                        && below == continuation.frames
+                },
+            )
         });
     if !authenticated {
         return false;
@@ -13884,28 +13978,37 @@ fn miracle_draw_remainder(
 ) -> Result<(PlayerId, PlayerRef), String> {
     validate_effect_object_binding(state, drawn)?;
     let root = validated_definition_owned_root_effect(state, pending)?;
-    let printed = effect_op_at_structural_path(&root, path)
-        .ok_or("miracle draw lost its printed draw instruction")?;
-    let site = miracle_draw_site(state, pending, &root, printed, path)?
-        .filter(|site| site.count > 0)
-        .ok_or("miracle draw lost its printed draw instruction")?;
-    let player_ref = site.player;
-    let player = pending.ctx.resolve_player(player_ref, state);
-    let printed_count = site.count;
+    let player = state.objects.get(drawn.object).owner;
     let first = crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, player);
     let Some((draw_at, _)) = first.filter(|&(_, card)| card == drawn.object) else {
         return Err("miracle draw lost its first-draw receipt".into());
     };
+    let (first_attempt, attempted) =
+        crate::eternal_cards_v1::owned_draws_v1::staged::attempts(state, pending, path);
+    let retained = restored_balance(state, pending, &root, path)?;
+    let journal =
+        crate::eternal_cards_v1::owned_draws_v1::staged::journal_attempts(state, pending, path);
+    if journal.entered && journal.charged == 0 {
+        return Err("miracle draw lost its charged attempt".into());
+    }
+    if retained.is_none()
+        && !journal.entered
+        && crate::eternal_cards_v1::owned_draws_v1::staged::requires_generator_receipt(
+            state, pending,
+        )
+    {
+        return Err("miracle draw lost its generator receipt".into());
+    }
+    let start = first_attempt.unwrap_or(draw_at);
+    let (player_ref, printed_count, below) = draw_site(state, pending, &root, path, start)
+        .ok_or("miracle draw lost its printed draw instruction")?;
+    let total = draw_total_at(state, player, printed_count, start)
+        .ok_or("miracle draw lost its starting hand")?;
     if drawn.expected_zone != Zone::Hand
+        || pending.ctx.resolve_player(player_ref, state) != player
         || state.players[player.index()].draws_this_turn != 1
-        || remaining
-            >= printed_count.saturating_add(event::draw_instruction_extra_at_hand_size(
-                state,
-                player,
-                printed_count,
-                0,
-            ))
-        || tail != site.below
+        || Some(remaining) != retained.or_else(|| total.checked_sub(attempted.max(1)))
+        || tail != below
     {
         return Err("miracle draw lost its first draw or the rest of its program".into());
     }
@@ -16391,6 +16494,7 @@ fn drive_resumable_in_departure_scope_v1(
                     return Err("discard choice changed".to_string());
                 }
                 continuation.answered_choice_guard = None;
+                begin_draw_input_batch(state, &continuation, &path, player, cards.iter().map(|card| card.object));
                 let count = crate::standard_cards_v1::discard_chosen(state, player, &cards);
                 if count != 0 {
                     continuation.frames.push(EffectFrame::Program {
@@ -18519,6 +18623,11 @@ fn drive_resumable_in_departure_scope_v1(
                     count,
                     continuation.ctx.controller,
                 );
+                if crate::eternal_cards_v1::owned_draws_v1::staged::begin(
+                    state, &mut continuation, player, count.max(0) as u32, &path,
+                )? {
+                    continue;
+                }
                 if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
                     state,
                     &mut continuation,
@@ -18555,6 +18664,7 @@ fn drive_resumable_in_departure_scope_v1(
                         count,
                     )? {
                         for attempt in 1..=attempts {
+                            crate::eternal_cards_v1::owned_draws_v1::staged::note_attempt(state,&continuation,&path,player);
                             event::propose_draw_attempt(state, player);
                             if !event::draw_instruction_continues(state, player) {
                                 break;
@@ -18803,8 +18913,14 @@ fn resumable_discard_below(
                 op: leaf.clone(),
                 path: path.to_vec(),
             };
-            let (_, _, staged) = leaf_staged_draw(printed, path, &pending.ctx, state)
-                .ok_or("resumable discard lost its definition-owned leaf")?;
+            let (_, _, staged) = leaf_staged_draw(
+                printed,
+                path,
+                &pending.ctx,
+                state,
+                state.engine.event_history.len(),
+            )
+            .ok_or("resumable discard lost its definition-owned leaf")?;
             let at = staged
                 .iter()
                 .position(|frame| *frame == discard)

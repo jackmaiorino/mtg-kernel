@@ -193,7 +193,7 @@ pub(crate) fn forces_resumable(
         op if !is_copy && *op == coveted_jewel_changes_hands() => {
             Some((ctx.controller.opponent(), 3))
         }
-        op if !is_copy && *op == paradoxical_outcome() => {
+        op if *op == paradoxical_outcome() => {
             // A return can change which Riddlers apply. Route for a possible
             // second attempt, then check the actual count after the batch.
             let possible_attempts = if ctx.targets.is_empty() { 0 } else { 2 };
@@ -213,14 +213,6 @@ pub(crate) fn forces_resumable(
                     && [PlayerId::P0, PlayerId::P1]
                         .into_iter()
                         .any(|player| may_draw_miracle_after_shuffle(state, player)))
-                // A copied Paradoxical Outcome stages one draw of one card
-                // per returned permanent, so it is staged for a miracle only
-                // while no draw-count replacement applies.
-                || (is_copy
-                    && *program == paradoxical_outcome()
-                    && !ctx.targets.is_empty()
-                    && event::draw_instruction_extra(state, ctx.controller, 2) == 0
-                    && owned_draw_needs_stage(state, ctx.controller, 2))
         }
     };
     (needs_choice || crate::effect::program_may_draw_miracle(state, program, ctx))
@@ -249,6 +241,7 @@ pub(crate) fn drive_draws(
         let Some((kind, cards)) =
             replacement_options(state, continuation, drawer, &path, &continuation.frames)
         else {
+            owned_draws_v1::staged::note_attempt(state, continuation, &path, drawer);
             commit_resolution_draw(state, continuation, drawer, &path);
             count -= 1;
             if !owned_draws_v1::draw_stage_matches(
@@ -293,7 +286,10 @@ pub(crate) fn drive_draws(
             continuation.frames.clone(),
         );
         #[cfg(feature = "eternal-fixtures")]
-        crate::effect::record_draw_replacement_choice(state, continuation, &choice, false);
+        {
+            crate::effect::enter_printed_choice(state, continuation, &choice);
+            crate::effect::record_draw_replacement_choice(state, continuation, &choice, false);
+        }
         crate::eternal_cards_v1::e3::offer(continuation, choice);
         return Ok(true);
     }
@@ -598,6 +594,11 @@ pub(crate) fn finish_jace_or_hullbreacher(
     chosen: Option<EffectObjectBinding>,
 ) -> Result<(), String> {
     validate_jace_choice(state, pending, choice, &pending.frames)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::effect::retain_legacy_draw_offer(state, pending, choice);
+    owned_draws_v1::staged::note_attempt(state, pending, &choice.path, choice.player);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::effect::record_draw_replacement_choice(state, pending, choice, true);
     let player = choice.player;
     if chosen.is_some() {
         // The chooser selected the other replacement. The ordinary commit

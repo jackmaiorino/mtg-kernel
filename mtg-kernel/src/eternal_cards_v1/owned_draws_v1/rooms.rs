@@ -175,7 +175,7 @@ fn journal(state: &GameState, at: usize) -> Option<JournalV1> {
     let CommittedEvent::EternalOwnedDrawV1 { journal } = state.engine.event_history.get(at)? else {
         return None;
     };
-    Some(**journal)
+    Some((**journal).clone())
 }
 
 struct RevealedV1 {
@@ -212,7 +212,7 @@ fn finished(
         return Err(invalid.into());
     };
     let (started, attempts) = journal(state, started_at)
-        .and_then(JournalV1::start)
+        .and_then(|journal| journal.start())
         .ok_or(invalid)?;
     let player = pending.ctx.controller;
     let expected_source = pending.ctx.ability_source_contract.map(SourceV1::Ability);

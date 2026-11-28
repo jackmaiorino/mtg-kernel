@@ -1616,6 +1616,177 @@ fn sylvan_library_draws_two_and_charges_four_life_or_puts_back() {
 }
 
 #[test]
+fn sylvan_library_miracle_pauses_after_replaced_turn_draw() {
+    let mut state = game(&[
+        "Island",
+        "Island",
+        "Island",
+        "Island",
+        "Metamorphosis Fanatic",
+        "Plains",
+        "Swamp",
+        "Mountain",
+    ]);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let sylvan = put(&mut state, P0, "Sylvan Library", Zone::Battlefield);
+    let thug = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let miracle = state.players[0].library[4];
+    let later = state.players[0].library[5];
+    run_until(
+        &mut state,
+        |s| s.active_player == P0 && s.step == Step::Draw && !s.stack.is_empty(),
+        |_, decision| match decision {
+            Decision::ChooseEffectOption {
+                player: P0,
+                option_count: 2,
+                ..
+            } => Some(Action::ChooseEffectOption(1)),
+            _ => None,
+        },
+    );
+    assert_eq!(zone(&state, thug), Zone::Hand);
+    assert_eq!(state.players[0].draws_this_turn, 0);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == sylvan)
+    );
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == miracle)
+    );
+    assert_eq!(zone(&state, later), Zone::Library);
+    crate::eternal_sideboard_s1b_v1::assert_miracle_remainder_rejected(&state, 1, 0);
+    let stripped = crate::eternal_sideboard_s1b_v1::without_draw_journal(&state);
+    assert!(mtg_kernel::effect::validate_pending_effect_choice(&stripped).is_err());
+    let mut state: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. })
+        if legal_targets == [Target::Object(miracle), Target::Object(later)])
+    );
+    assert_eq!(state.players[0].draws_this_turn, 2);
+}
+
+#[test]
+fn sylvan_library_miracle_after_two_separate_dredge_instructions() {
+    let mut state = game(&[
+        "Shenanigans",
+        "Island",
+        "Island",
+        "Island",
+        "Island",
+        "Terminus",
+        "Plains",
+        "Swamp",
+    ]);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let library = put(&mut state, P0, "Sylvan Library", Zone::Battlefield);
+    put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let shenanigans = state.players[0].library[0];
+    let miracle = state.players[0].library[5];
+    run_until(
+        &mut state,
+        |s| s.active_player == P0 && s.step == Step::Draw && !s.stack.is_empty(),
+        |_, decision| match decision {
+            Decision::ChooseEffectOption {
+                player: P0,
+                option_count: 2,
+                ..
+            } => Some(Action::ChooseEffectOption(1)),
+            _ => None,
+        },
+    );
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption {source,..}) if source == library)
+    );
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {legal_targets,..}) if legal_targets == [Target::Object(shenanigans)])
+    );
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(shenanigans)),
+    );
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption {source,..}) if source == miracle)
+    );
+    crate::eternal_sideboard_s1b_v1::assert_miracle_remainder_rejected(&state, 0, 1);
+    let ambiguous = crate::eternal_sideboard_s1b_v1::without_draw_journal(&state);
+    assert!(
+        mtg_kernel::effect::validate_pending_effect_choice(&ambiguous)
+            .unwrap_err()
+            .contains("generator receipt")
+    );
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut restored, Action::ChooseEffectOption(0));
+    assert_eq!(restored.players[0].draws_this_turn, 1);
+}
+
+#[test]
+fn skeletal_scrying_miracle_precedes_life_loss_and_resumes_adjusted_draws() {
+    let mut state = game(&[
+        "Metamorphosis Fanatic",
+        "Island",
+        "Plains",
+        "Swamp",
+        "Mountain",
+        "Island",
+    ]);
+    let miracle = state.players[0].library[0];
+    let later = state.players[0].library[1];
+    put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    let dredger = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let spell = put(&mut state, P0, "Skeletal Scrying", Zone::Hand);
+    let fuel = [
+        put(&mut state, P0, "Swamp", Zone::Graveyard),
+        put(&mut state, P0, "Swamp", Zone::Graveyard),
+    ];
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    cast(&mut state, spell, &[]);
+    for card in fuel {
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(card)));
+    }
+    if matches!(
+        next(&mut state),
+        Decision::ChooseEffectTargets {
+            can_finish: true,
+            ..
+        }
+    ) {
+        act(&mut state, Action::FinishEffectSelection);
+    }
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. })
+        if legal_targets == [Target::Object(dredger)])
+    );
+    act(&mut state, Action::FinishEffectSelection);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectOption { source, .. }) if source == miracle)
+    );
+    assert_eq!(state.players[0].life, 20);
+    assert_eq!(zone(&state, later), Zone::Library);
+    let mut state: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    act(&mut state, Action::ChooseEffectOption(0));
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. })
+        if legal_targets == [Target::Object(dredger)])
+    );
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(dredger)),
+    );
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 2);
+    assert_eq!(zone(&state, dredger), Zone::Hand);
+    assert_eq!(zone(&state, later), Zone::Graveyard);
+    assert_eq!(state.players[0].life, 18);
+}
+
+#[test]
 fn sylvan_library_restores_draw_replacements_and_returns_only_the_drawn_card() {
     for actor in [P0, P1] {
         let opponent = actor.opponent();

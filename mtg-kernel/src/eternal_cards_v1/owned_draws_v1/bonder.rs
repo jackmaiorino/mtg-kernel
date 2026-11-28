@@ -166,7 +166,7 @@ fn journal(state: &GameState, at: usize) -> Option<JournalV1> {
     let CommittedEvent::EternalOwnedDrawV1 { journal } = state.engine.event_history.get(at)? else {
         return None;
     };
-    Some(**journal)
+    Some((**journal).clone())
 }
 
 pub(super) fn selected(
@@ -374,7 +374,8 @@ pub(super) fn matches_start(
         return false;
     }
     let first_at = resolution_at + 1;
-    let Some((first_start, first_count)) = journal(state, first_at).and_then(JournalV1::start)
+    let Some((first_start, first_count)) =
+        journal(state, first_at).and_then(|journal| journal.start())
     else {
         return false;
     };
@@ -416,7 +417,7 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
         .eternal_owned_draw_progress_v1
         .is_some_and(|progress| {
             journal(state, progress.started_at)
-                .and_then(JournalV1::start)
+                .and_then(|journal| journal.start())
                 .is_some_and(|(started, _)| {
                     matches!(started.instruction, InstructionV1::Bonder { .. })
                 })
