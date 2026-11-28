@@ -21,8 +21,14 @@ const PLAY_SCHEMA: &str = "mtg-kernel-cube-client-play-response/v1";
 enum Command {
     Keep {},
     Mulligan {},
-    Bottom { order: Vec<u32> },
-    Action { prompt_seq: u64, action_index: u32 },
+    Bottom {
+        order: Vec<u32>,
+    },
+    Action {
+        episode: u64,
+        prompt_seq: u64,
+        action_index: u32,
+    },
     Concede {},
 }
 
@@ -188,13 +194,17 @@ pub fn serve_uniform_human_game(
                         .project_current(&game, decision)
                         .map_err(|error| error.to_string())?;
                     let expected_prompt = visible.prompt_seq;
-                    transport.send("decision", json!({"decision": visible}))?;
+                    transport.send(
+                        "decision",
+                        json!({"episode": config.episode, "decision": visible}),
+                    )?;
                     loop {
                         match transport.command()? {
                             Some(Command::Action {
+                                episode,
                                 prompt_seq,
                                 action_index,
-                            }) if prompt_seq == expected_prompt => {
+                            }) if episode == config.episode && prompt_seq == expected_prompt => {
                                 let request = HumanActionRequestV1 {
                                     prompt_seq,
                                     action_index,
@@ -275,7 +285,9 @@ mod tests {
             "{\"kind\":\"mulligan\"}\n",
             "{\"kind\":\"keep\"}\n",
             "{\"kind\":\"bottom\",\"order\":[0]}\n",
-            "{\"kind\":\"action\",\"prompt_seq\":0,\"action_index\":0}\n",
+            "{\"kind\":\"action\",\"episode\":0,\"prompt_seq\":1,\"action_index\":0}\n",
+            "{\"kind\":\"action\",\"episode\":1,\"prompt_seq\":1,\"action_index\":0}\n",
+            "{\"kind\":\"action\",\"episode\":1,\"prompt_seq\":1,\"action_index\":0}\n",
             "{\"kind\":\"concede\"}\n",
         );
         let mut journal = File::create(dir.join("private.jsonl")).unwrap();
@@ -304,17 +316,22 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("own card text"));
         assert!(!output.contains("opponent card text"));
-        assert!(!output.contains("Mountain"));
         let frames: Vec<Value> = output
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
+        assert!(frames
+            .iter()
+            .filter(|frame| frame["event"] == "opening")
+            .all(|frame| !frame.to_string().contains("Mountain")));
         assert_eq!(frames[2]["view"]["opening"]["required_bottom"], 1);
         assert_eq!(frames[2]["view"]["opening"]["opponent_hand_count"], 7);
         let first = frames
             .iter()
             .find(|frame| frame["event"] == "decision")
             .unwrap();
+        assert_eq!(first["view"]["episode"], 1);
+        assert!(!first.to_string().contains("Mountain"));
         assert_eq!(
             first["view"]["decision"]["state"]["own_hand"]
                 .as_array()
@@ -327,10 +344,19 @@ mod tests {
                 .iter()
                 .filter(|frame| frame["event"] == "error")
                 .count(),
-            1
+            2
         );
         assert_eq!(frames.last().unwrap()["view"]["reason"], "conceded");
         drop(journal);
+        let private = std::fs::read_to_string(dir.join("private.jsonl")).unwrap();
+        assert_eq!(
+            private
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .filter(|frame| frame["event"] == "human_action")
+                .count(),
+            1,
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
