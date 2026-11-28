@@ -93,6 +93,7 @@ struct Manifest {
 }
 
 pub struct SeatPackage {
+    manifest_sha256: String,
     kind: SeatPackageKind,
     pool: CubePool,
     draft_build: Option<LearnedCheckpointSeats>,
@@ -216,11 +217,16 @@ impl SeatPackage {
             }
         };
         Ok(Self {
+            manifest_sha256: expected_sha256.to_owned(),
             kind,
             pool,
             draft_build,
             play,
         })
+    }
+
+    pub fn manifest_sha256(&self) -> &str {
+        &self.manifest_sha256
     }
 
     pub fn kind(&self) -> SeatPackageKind {

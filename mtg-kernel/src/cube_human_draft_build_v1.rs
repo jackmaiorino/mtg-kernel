@@ -279,6 +279,7 @@ pub fn serve_draft_build(
             "human_chair": config.human_chair,
             "draft_seed": draft_seed,
             "seat_package": package.kind().label(),
+            "seat_package_sha256": package.manifest_sha256(),
         }),
     )?;
 
