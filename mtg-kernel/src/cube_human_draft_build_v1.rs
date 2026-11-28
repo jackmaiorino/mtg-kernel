@@ -18,6 +18,7 @@ use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
 pub mod play;
+pub mod pod;
 
 const MAX_REQUEST_BYTES: u64 = 16 * 1024;
 const MAX_CARD_TEXT_BYTES: u64 = 16 * 1024 * 1024;
@@ -209,18 +210,7 @@ pub fn serve_draft_build_config(
     input: impl BufRead,
     output: impl Write,
 ) -> Result<PrivateDraftBuild, String> {
-    let config_bytes = crate::human_match_v2::read_bounded(config_path, 64 * 1024)?;
-    let text = std::str::from_utf8(&config_bytes).map_err(|e| e.to_string())?;
-    let value = crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
-    let config: OperatorConfig = serde_json::from_value(value).map_err(|e| e.to_string())?;
-    if config.schema != DRAFT_BUILD_CONFIG_SCHEMA
-        || !config.seat_package.path.is_absolute()
-        || !config.card_text_path.is_absolute()
-    {
-        return Err("Invalid draft/build schema or operator file paths.".into());
-    }
-    let package = SeatPackage::load(&config.seat_package.path, &config.seat_package.sha256)?;
-    let card_text = LocalCardText::load(&config.card_text_path)?;
+    let (config, package, card_text) = prepare_operator_config(config_path)?;
     serve_draft_build(
         &package,
         DraftBuildConfig {
@@ -233,6 +223,24 @@ pub fn serve_draft_build_config(
         input,
         output,
     )
+}
+
+fn prepare_operator_config(
+    config_path: &Path,
+) -> Result<(OperatorConfig, SeatPackage, LocalCardText), String> {
+    let config_bytes = crate::human_match_v2::read_bounded(config_path, 64 * 1024)?;
+    let text = std::str::from_utf8(&config_bytes).map_err(|e| e.to_string())?;
+    let value = crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
+    let config: OperatorConfig = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    if config.schema != DRAFT_BUILD_CONFIG_SCHEMA
+        || !config.seat_package.path.is_absolute()
+        || !config.card_text_path.is_absolute()
+    {
+        return Err("Invalid draft/build schema or operator file paths.".into());
+    }
+    let package = SeatPackage::load(&config.seat_package.path, &config.seat_package.sha256)?;
+    let card_text = LocalCardText::load(&config.card_text_path)?;
+    Ok((config, package, card_text))
 }
 
 pub fn serve_draft_build(
