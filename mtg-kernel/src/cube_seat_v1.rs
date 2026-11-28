@@ -178,7 +178,7 @@ fn pass_packs(packs: Vec<Vec<u16>>, round: usize) -> Vec<Vec<u16>> {
 pub fn run_seat_draft(
     pool: &CubePool,
     draft_seed: u64,
-    pickers: &mut [Box<dyn SeatPicker>; SEATS],
+    pickers: &mut [Box<dyn SeatPicker + '_>; SEATS],
 ) -> Result<SeatDraft, SeatError> {
     let opened = generate_packs(pool, draft_seed)?;
     let mut streams: [SplitMix64; SEATS] =

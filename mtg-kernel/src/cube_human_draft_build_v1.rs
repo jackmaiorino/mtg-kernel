@@ -1,0 +1,463 @@
+//! Fixed-chair JSONL draft and build stages for the human Cube pod.
+//! The transport sees the human view. The caller owns the private result and
+//! hands the committed decks to the play stage.
+
+use crate::card_def::CARD_DEFS;
+use crate::cube_draft_v1::{basic_land_ids, Deck, DraftRecord, DECK_CARDS, SEATS};
+use crate::cube_pod_runner_v1::{build_seed_for_chair, pod_draft_seed, PodUse, CLIENT_NAMESPACE};
+use crate::cube_seat_package_v1::{SeatPackage, SeatPackageKind};
+use crate::cube_seat_v1::{
+    canonical_deck, run_seat_draft, PickOutcome, SeatError, SeatPickView, SeatPicker,
+};
+use crate::state::SplitMix64;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufRead, Read, Write};
+use std::path::Path;
+
+const MAX_REQUEST_BYTES: u64 = 16 * 1024;
+const MAX_CARD_TEXT_BYTES: u64 = 16 * 1024 * 1024;
+pub const DRAFT_BUILD_RESPONSE_SCHEMA: &str = "mtg-kernel-cube-client-draft-build-response/v1";
+
+/// Operator-owned, local text. No protocol request can change the input path
+/// or read arbitrary entries from this map.
+pub struct LocalCardText(BTreeMap<u16, String>);
+
+impl LocalCardText {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let bytes = crate::human_match_v2::read_bounded(path, MAX_CARD_TEXT_BYTES)?;
+        let text = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
+        let value = crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
+        let Value::Object(entries) = value else {
+            return Err("Local card text must be a JSON object keyed by registry ID.".into());
+        };
+        let mut cards = BTreeMap::new();
+        for (key, value) in entries {
+            let id = key.parse::<u16>().map_err(|_| "Invalid card text ID.")?;
+            let Value::String(text) = value else {
+                return Err("Each local card text entry must be a string.".into());
+            };
+            if key != id.to_string() || usize::from(id) >= CARD_DEFS.len() {
+                return Err("Invalid card text ID.".into());
+            }
+            cards.insert(id, text);
+        }
+        Ok(Self(cards))
+    }
+
+    fn render(&self, ids: &[u16]) -> Vec<Value> {
+        ids.iter()
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "name": CARD_DEFS[usize::from(*id)].name,
+                    "text": self.0.get(id),
+                })
+            })
+            .collect()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum Command {
+    Pick { round: u8, pick: u8, card: u16 },
+    Build { cards: Vec<u16> },
+    Suggest {},
+}
+
+struct DraftTransport<I, O> {
+    input: I,
+    output: O,
+    line: String,
+}
+
+impl<I: BufRead, O: Write> DraftTransport<I, O> {
+    fn send(&mut self, event: &str, view: Value) -> Result<(), String> {
+        write_json_line(
+            &mut self.output,
+            &json!({
+                "schema": DRAFT_BUILD_RESPONSE_SCHEMA,
+                "event": event,
+                "view": view,
+            }),
+        )
+        .map_err(|_| "The client response could not be written.".into())
+    }
+
+    fn command(&mut self) -> Result<Option<Command>, String> {
+        self.line.clear();
+        let bytes = (&mut self.input)
+            .take(MAX_REQUEST_BYTES + 1)
+            .read_line(&mut self.line)
+            .map_err(|_| "The client request could not be read.")?;
+        if bytes == 0 {
+            return Err("The client disconnected.".into());
+        }
+        if bytes as u64 > MAX_REQUEST_BYTES {
+            return Err("The client request exceeds its byte limit.".into());
+        }
+        let command = crate::rl::parse_strict_json_value(&self.line)
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok());
+        if command.is_none() {
+            self.error("Invalid request.")?;
+        }
+        Ok(command)
+    }
+
+    fn error(&mut self, message: &str) -> Result<(), String> {
+        self.send("error", json!({"message": message}))
+    }
+}
+
+struct HumanPicker<'a, I, O> {
+    transport: &'a mut DraftTransport<I, O>,
+    card_text: &'a LocalCardText,
+    journal: &'a mut File,
+}
+
+impl<I: BufRead, O: Write> HumanPicker<'_, I, O> {
+    fn choose(&mut self, view: &SeatPickView<'_>) -> Result<PickOutcome, String> {
+        self.transport.send(
+            "pick",
+            json!({
+                "round": view.round,
+                "pick": view.pick,
+                "direction": view.direction,
+                "pack": self.card_text.render(view.pack),
+                "pool": view.pool,
+                "seen_not_taken": view.seen_not_taken,
+            }),
+        )?;
+        loop {
+            match self.transport.command()? {
+                Some(Command::Pick { round, pick, card }) => {
+                    if round == view.round && pick == view.pick {
+                        if let Some(index) =
+                            view.pack.iter().position(|&candidate| candidate == card)
+                        {
+                            journal(
+                                self.journal,
+                                "human_pick",
+                                json!({
+                                    "round": round, "pick": pick, "card": card,
+                                }),
+                            )?;
+                            return Ok(PickOutcome { index, row: None });
+                        }
+                    }
+                    self.transport.error("Pick a card from the current pack.")?;
+                }
+                Some(Command::Suggest {}) => self.transport.error("Suggestions are disabled.")?,
+                Some(Command::Build { .. }) => {
+                    self.transport.error("Finish drafting before building.")?
+                }
+                None => {}
+            }
+        }
+    }
+}
+
+impl<I: BufRead, O: Write> SeatPicker for HumanPicker<'_, I, O> {
+    fn pick(
+        &mut self,
+        view: &SeatPickView<'_>,
+        _: &mut SplitMix64,
+    ) -> Result<PickOutcome, SeatError> {
+        self.choose(view).map_err(SeatError::Seat)
+    }
+}
+
+/// Server-private output. Send only the human view through the transport.
+pub struct PrivateDraftBuild {
+    pub draft: DraftRecord,
+    pub decks: [Deck; SEATS],
+    pub journal: File,
+}
+
+pub struct DraftBuildConfig<'a> {
+    pub run: &'a str,
+    pub pod_index: u64,
+    pub human_chair: usize,
+    pub journal_path: &'a Path,
+}
+
+pub fn serve_draft_build(
+    package: &SeatPackage,
+    config: DraftBuildConfig<'_>,
+    card_text: &LocalCardText,
+    input: impl BufRead,
+    output: impl Write,
+) -> Result<PrivateDraftBuild, String> {
+    if config.human_chair >= SEATS || !config.journal_path.is_absolute() {
+        return Err("Invalid human chair or private journal path.".into());
+    }
+    if package.kind() == SeatPackageKind::Release {
+        return Err("Release sessions require a verified native player.".into());
+    }
+    let draft_seed = pod_draft_seed(CLIENT_NAMESPACE, config.run, config.pod_index)
+        .map_err(|e| e.to_string())?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut private = options
+        .open(config.journal_path)
+        .map_err(|e| format!("Fresh private journal required: {e}"))?;
+    journal(
+        &mut private,
+        "session",
+        json!({
+            "namespace": CLIENT_NAMESPACE,
+            "use": PodUse::Client,
+            "run": config.run,
+            "pod_index": config.pod_index,
+            "human_chair": config.human_chair,
+            "draft_seed": draft_seed,
+            "seat_package": package.kind().label(),
+        }),
+    )?;
+
+    let mut transport = DraftTransport {
+        input,
+        output,
+        line: String::new(),
+    };
+    transport.send(
+        "start",
+        json!({
+            "human_chair": config.human_chair,
+            "seat_package": package.kind().label(),
+        }),
+    )?;
+    let draft = {
+        let mut human: Option<Box<dyn SeatPicker + '_>> = Some(Box::new(HumanPicker {
+            transport: &mut transport,
+            card_text,
+            journal: &mut private,
+        }));
+        let mut pickers = std::array::from_fn(|chair| {
+            if chair == config.human_chair {
+                human.take().expect("exactly one human chair")
+            } else {
+                package.make_picker()
+            }
+        });
+        run_seat_draft(package.pool(), draft_seed, &mut pickers)
+            .map_err(|e| e.to_string())?
+            .record
+    };
+    journal(&mut private, "draft", json!(draft))?;
+
+    let mut decks: [Deck; SEATS] = std::array::from_fn(|_| Deck::default());
+    for (chair, deck) in decks.iter_mut().enumerate() {
+        if chair == config.human_chair {
+            continue;
+        }
+        let pool = &draft.pools[chair];
+        let mut stream = SplitMix64::seed(build_seed_for_chair(draft_seed, chair, 0));
+        let built = package
+            .make_builder()
+            .build(pool, &mut stream)
+            .map_err(|e| e.to_string())?;
+        built.deck.validate(pool).map_err(|e| e.to_string())?;
+        *deck = canonical_deck(&built.deck.card_ids());
+    }
+    let human_pool = &draft.pools[config.human_chair];
+    let basics = basic_land_ids().map_err(|e| e.to_string())?;
+    transport.send(
+        "build",
+        json!({
+            "pool": card_text.render(human_pool),
+            "basics": card_text.render(&basics),
+        }),
+    )?;
+    decks[config.human_chair] = loop {
+        match transport.command()? {
+            Some(Command::Build { cards }) => {
+                if cards.len() == DECK_CARDS as usize
+                    && cards.iter().all(|&id| usize::from(id) < CARD_DEFS.len())
+                {
+                    let deck = canonical_deck(&cards);
+                    if deck.validate(human_pool).is_ok() {
+                        break deck;
+                    }
+                }
+                transport.error("Submit exactly 40 cards from your own pool and basic lands.")?;
+            }
+            Some(Command::Suggest {}) => transport.error("Suggestions are disabled.")?,
+            Some(Command::Pick { .. }) => transport.error("Drafting is complete.")?,
+            None => {}
+        }
+    };
+    journal(&mut private, "decks", json!(decks))?;
+    transport.send("build_accepted", json!({"deck": decks[config.human_chair]}))?;
+    Ok(PrivateDraftBuild {
+        draft,
+        decks,
+        journal: private,
+    })
+}
+
+fn journal(file: &mut File, event: &str, payload: Value) -> Result<(), String> {
+    write_json_line(file, &json!({"event": event, "payload": payload}))
+        .and_then(|()| file.sync_data())
+        .map_err(|_| "The private pod journal could not be saved.".into())
+}
+
+fn write_json_line(output: &mut impl Write, value: &Value) -> io::Result<()> {
+    serde_json::to_writer(&mut *output, value)?;
+    output.write_all(b"\n")?;
+    output.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cube_draft_v1::POOL_CARDS;
+    use crate::cube_seat_package_v1::tests::{load_manifest, test_directory, uniform_manifest};
+    use std::io::Cursor;
+
+    struct FirstCard;
+
+    impl SeatPicker for FirstCard {
+        fn pick(
+            &mut self,
+            _: &SeatPickView<'_>,
+            _: &mut SplitMix64,
+        ) -> Result<PickOutcome, SeatError> {
+            Ok(PickOutcome {
+                index: 0,
+                row: None,
+            })
+        }
+    }
+
+    #[test]
+    fn draft_build_transport_reuses_runner_and_keeps_other_seats_private() {
+        let dir = test_directory();
+        let package = load_manifest(&dir, &uniform_manifest(&dir, false)).unwrap();
+        let human_chair = 3;
+        let draft_seed = pod_draft_seed(CLIENT_NAMESPACE, "fixture", 1).unwrap();
+        let mut pickers: [Box<dyn SeatPicker>; SEATS] = std::array::from_fn(|chair| {
+            if chair == human_chair {
+                Box::new(FirstCard)
+            } else {
+                package.make_picker()
+            }
+        });
+        let expected = run_seat_draft(package.pool(), draft_seed, &mut pickers)
+            .unwrap()
+            .record;
+
+        let mut requests = Vec::new();
+        write_json_line(&mut requests, &json!({"kind":"suggest"})).unwrap();
+        write_json_line(
+            &mut requests,
+            &json!({"kind":"pick","round":3,"pick":3,"card":0}),
+        )
+        .unwrap();
+        for pick in expected
+            .picks
+            .iter()
+            .filter(|pick| pick.seat == human_chair)
+        {
+            write_json_line(
+                &mut requests,
+                &json!({
+                    "kind":"pick","round":pick.round,"pick":pick.pick,"card":pick.chosen,
+                }),
+            )
+            .unwrap();
+        }
+        let basic = basic_land_ids().unwrap()[0];
+        write_json_line(&mut requests, &json!({"kind":"build","cards":[basic]})).unwrap();
+        let cards = vec![basic; DECK_CARDS as usize];
+        write_json_line(&mut requests, &json!({"kind":"build","cards":cards})).unwrap();
+        let secrets = LocalCardText(
+            package
+                .pool()
+                .ids()
+                .iter()
+                .map(|&id| (id, format!("local-{id}")))
+                .collect(),
+        );
+        let journal_path = dir.join("private.jsonl");
+        let mut replies = Vec::new();
+        let completed = serve_draft_build(
+            &package,
+            DraftBuildConfig {
+                run: "fixture",
+                pod_index: 1,
+                human_chair,
+                journal_path: &journal_path,
+            },
+            &secrets,
+            Cursor::new(requests),
+            &mut replies,
+        )
+        .unwrap();
+        assert_eq!(completed.draft, expected);
+        assert_eq!(completed.decks[human_chair].card_ids(), cards);
+        for (chair, deck) in completed
+            .decks
+            .iter()
+            .enumerate()
+            .filter(|(chair, _)| *chair != human_chair)
+        {
+            let mut stream = SplitMix64::seed(build_seed_for_chair(draft_seed, chair, 0));
+            let expected = package
+                .make_builder()
+                .build(&expected.pools[chair], &mut stream)
+                .unwrap();
+            assert_eq!(*deck, canonical_deck(&expected.deck.card_ids()));
+        }
+        let published: Vec<Value> = BufRead::lines(Cursor::new(&replies))
+            .map(|line| serde_json::from_str(&line.unwrap()).unwrap())
+            .collect();
+        let frames: Vec<_> = published
+            .iter()
+            .filter(|frame| frame["event"] == "pick")
+            .collect();
+        assert_eq!(frames.len(), POOL_CARDS);
+        for (frame, pick) in frames.iter().zip(
+            expected
+                .picks
+                .iter()
+                .filter(|pick| pick.seat == human_chair),
+        ) {
+            let pack = frame["view"]["pack"].as_array().unwrap();
+            let ids: Vec<_> = pack
+                .iter()
+                .map(|card| card["id"].as_u64().unwrap() as u16)
+                .collect();
+            assert_eq!(ids, pick.pack);
+            for (card, id) in pack.iter().zip(ids) {
+                assert_eq!(card["text"], format!("local-{id}"));
+            }
+        }
+        assert_eq!(
+            published
+                .iter()
+                .filter(|frame| frame["event"] == "error")
+                .count(),
+            3
+        );
+        assert_eq!(
+            published.last().unwrap()["view"]["deck"],
+            json!(completed.decks[human_chair])
+        );
+        let journal = std::fs::read_to_string(journal_path).unwrap();
+        assert!(journal.contains("client-pods") && journal.contains("\"event\":\"decks\""));
+        assert!(!journal.contains("local-"));
+        assert!(!String::from_utf8(replies).unwrap().contains("pod_index"));
+        drop(completed);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

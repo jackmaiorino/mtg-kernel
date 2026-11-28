@@ -215,6 +215,8 @@ pub mod cube_draft_build_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_draft_v1;
 #[cfg(feature = "eternal-fixtures")]
+pub mod cube_human_draft_build_v1;
+#[cfg(feature = "eternal-fixtures")]
 pub mod cube_learned_seat_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_owner_view_v1;

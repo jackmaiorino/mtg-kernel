@@ -325,7 +325,7 @@ fn check_pin(field: &str, expected: &str, actual: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
     use crate::cube_draft_build_v1::card_index::TABLE_SCHEMA_V1;
@@ -337,7 +337,7 @@ mod tests {
         json!({ "path": name, "sha256": sha256_hex(bytes) })
     }
 
-    fn uniform_manifest(directory: &Path, fenced: bool) -> Value {
+    pub(crate) fn uniform_manifest(directory: &Path, fenced: bool) -> Value {
         let basics = basic_land_ids().unwrap();
         let pool: Vec<_> = (0..CARD_DEFS.len() as u16)
             .filter(|id| !basics.contains(id))
@@ -381,14 +381,14 @@ mod tests {
         })
     }
 
-    fn load_manifest(directory: &Path, manifest: &Value) -> Result<SeatPackage, String> {
+    pub(crate) fn load_manifest(directory: &Path, manifest: &Value) -> Result<SeatPackage, String> {
         let bytes = serde_json::to_vec(manifest).unwrap();
         let path = directory.join("package.json");
         fs::write(&path, &bytes).unwrap();
         SeatPackage::load_bound(&path, &sha256_hex(&bytes), &"a".repeat(64))
     }
 
-    fn test_directory() -> PathBuf {
+    pub(crate) fn test_directory() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "cube-seat-package-test-{}-{}",
             std::process::id(),
