@@ -3229,11 +3229,23 @@ fn authenticated_spell_cast_receipt(
     let Some(cast_at) = receipt_at.checked_add(1) else {
         return Err("cast receipt history index overflow".into());
     };
+    // CR 601.2 / 708.2: a published cast receipt for a live stack spell must
+    // match its public identity (its printing when face up, or its concealed
+    // face-down state when face down).
+    let expected_public_identity = source.v4.face_down_v1.map_or(
+        crate::cast_identity_v1::PublicIdentityV1::Known {
+            card_def: source.card_def,
+        },
+        |face| crate::cast_identity_v1::PublicIdentityV1::Concealed {
+            disguised: face.disguised,
+        },
+    );
     if receipt.spell != item.source
         || receipt.owner != source.owner
         || receipt.origin_zone != origin.origin_zone
         || receipt.origin_zone_change_count != origin.origin_zone_change_count
         || receipt.stack_zone_change_count != source.zone_change_count
+        || receipt.public_identity != expected_public_identity
         || u64::try_from(cast_at).ok() != Some(receipt.spell_cast_history_index)
         || history.get(cast_at)
             != Some(&CommittedEvent::SpellCast {
@@ -33359,6 +33371,28 @@ fn spell_copy_parent_payment_matches_object(
             || (live.zone == card.zone && live.controller == card.controller))
 }
 
+fn object_zone_changes_after(state: &GameState, object: ObjectId, event_at: usize) -> Option<u32> {
+    let mut later: u32 = 0;
+    for event in state.engine.event_history.range_v2(event_at + 1..) {
+        let delta = match event {
+            CommittedEvent::ZoneChange { object: moved, .. } if *moved == object => 1,
+            CommittedEvent::Draw {
+                object: Some(drawn),
+                ..
+            } if *drawn == object => 1,
+            CommittedEvent::SpellCast { spell, .. } if *spell == object => 1,
+            CommittedEvent::HarvesterCastReversedV1 { restored, .. }
+                if restored.object == object =>
+            {
+                2
+            }
+            _ => 0,
+        };
+        later = later.checked_add(delta)?;
+    }
+    Some(later)
+}
+
 fn spell_copy_parent_pre_cast_zone_changes_match(
     state: &GameState,
     parent: &StackItem,
@@ -33397,13 +33431,24 @@ fn spell_copy_parent_pre_cast_zone_changes_match(
     }
     let start = cursor - refs.len();
     refs.iter().enumerate().all(|(offset, card)| {
-        state.engine.event_history.get(start + offset)
+        let event_at = start + offset;
+        let Some(live) = state.objects.try_get(card.object) else {
+            return false;
+        };
+        let Some(later) = object_zone_changes_after(state, card.object, event_at) else {
+            return false;
+        };
+        state.engine.event_history.get(event_at)
             == Some(&CommittedEvent::ZoneChange {
                 object: card.object,
                 from: expected_from,
                 to: card.zone,
                 controller_before: caster,
             })
+            // CR 400.7: bind the payment ref's generation to the exact
+            // post-event incarnation produced at `event_at` while allowing
+            // genuine subsequent moves of the paid card.
+            && live.zone_change_count.checked_sub(later) == Some(card.zone_change_count)
     })
 }
 
@@ -46751,6 +46796,293 @@ mod tests {
         assert!(breach_state.engine.halted.is_none());
         assert!(step(&mut breach_state, Action::ChooseSpellCopyPayment(false)).is_ok());
         assert!(breach_state.engine.halted.is_none());
+    }
+
+    /// Issue #987 review round 1, finding 1 (Retrace): a retrace payment ref's
+    /// `zone_change_count` must bind to the exact generation produced by the
+    /// matched discard `ZoneChange` event (CR 400.7), rejecting a ref forged
+    /// down to the previous positive (hand) generation while allowing genuine
+    /// later moves of the paid land.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_retrace_binds_payment_generation_to_discard_event() {
+        let mountain = card_id_by_name("Mountain").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[mountain; 1],
+            &[mountain; 4],
+            |_| "Mountain".into(),
+            9871,
+        );
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        crate::eternal_vintage_e7b_v1::e7b_state(&mut state).wrenn_emblems[0] = 1;
+
+        // Draw Mountain from library so it reaches hand via a real zone change
+        // (generation 1).
+        event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
+        let land = *state.players[0].hand.last().expect("drawn Mountain");
+        assert_eq!(state.objects.get(land).zone, Zone::Hand);
+        assert_eq!(state.objects.get(land).zone_change_count, 1);
+
+        let chain = put_in_graveyard(&mut state, PlayerId::P0, "Chain Lightning");
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { .. } => step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(PlayerId::P1)),
+                )
+                .unwrap(),
+                Decision::ChooseCostTargets { candidates, .. } => {
+                    assert!(candidates.contains(&land));
+                    step(&mut state, Action::ChooseCostTarget(land)).unwrap();
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision retracing Chain Lightning: {other:?}"),
+            }
+        }
+        assert_eq!(state.objects.get(land).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(land).zone_change_count, 2);
+        assert_eq!(
+            state.stack.last().unwrap().v4.paid_cost_refs[0].zone_change_count,
+            2
+        );
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+
+        // 1. Lowering only the payment ref's zone_change_count to the previous
+        //    positive generation (the card's hand incarnation) is refused.
+        let mut forged = state.clone();
+        forged.stack.last_mut().unwrap().v4.paid_cost_refs[0].zone_change_count = 1;
+        let before = forged.clone();
+        assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(forged, before);
+
+        // 2. Genuine later move of the discarded land (graveyard -> exile)
+        //    stays accepted with its original generation-2 payment ref, while
+        //    forging that ref down to 1 or up to 3 is refused.
+        let mut moved_exile = state.clone();
+        event::propose_and_commit(
+            &mut moved_exile,
+            ProposedEvent::zone_change(land, Zone::Exile),
+        );
+        assert_eq!(moved_exile.objects.get(land).zone_change_count, 3);
+        let mut moved_forged_low = moved_exile.clone();
+        moved_forged_low.stack.last_mut().unwrap().v4.paid_cost_refs[0].zone_change_count = 1;
+        let before_low = moved_forged_low.clone();
+        assert!(step(&mut moved_forged_low, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(moved_forged_low, before_low);
+        let mut moved_forged_high = moved_exile.clone();
+        moved_forged_high
+            .stack
+            .last_mut()
+            .unwrap()
+            .v4
+            .paid_cost_refs[0]
+            .zone_change_count = 3;
+        let before_high = moved_forged_high.clone();
+        assert!(step(
+            &mut moved_forged_high,
+            Action::ChooseSpellCopyPayment(false)
+        )
+        .is_err());
+        assert_eq!(moved_forged_high, before_high);
+        assert!(step(&mut moved_exile, Action::ChooseSpellCopyPayment(false)).is_ok());
+
+        // 3. Genuine later move to library followed by a draw stays accepted.
+        let mut moved_drawn = state.clone();
+        event::propose_and_commit(
+            &mut moved_drawn,
+            ProposedEvent::zone_change(land, Zone::Library),
+        );
+        event::propose_and_commit(&mut moved_drawn, ProposedEvent::draw(PlayerId::P0));
+        assert_eq!(moved_drawn.objects.get(land).zone, Zone::Hand);
+        assert_eq!(moved_drawn.objects.get(land).zone_change_count, 4);
+        assert!(step(&mut moved_drawn, Action::ChooseSpellCopyPayment(false)).is_ok());
+
+        // 4. Unchanged genuine state stays accepted.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Issue #987 review round 1, finding 1 (Escape): each escape payment ref's
+    /// `zone_change_count` must bind to the exact generation produced by its
+    /// matched exile `ZoneChange` event (CR 400.7), rejecting a ref forged down
+    /// to the previous positive (graveyard) generation while allowing genuine
+    /// later moves of the exiled card.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_escape_binds_payment_generation_to_exile_event() {
+        let mut state = ready_game_in_main1(0);
+        put_on_battlefield(&mut state, PlayerId::P0, "Underworld Breach");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        let chain = put_in_graveyard(&mut state, PlayerId::P0, "Chain Lightning");
+
+        // Move all three escape fodder cards into the graveyard via real zone
+        // changes so each enters the origin zone at positive generation 1.
+        let mut fodder = Vec::new();
+        for _ in 0..3 {
+            let card = put_in_hand(&mut state, PlayerId::P0, "Mountain");
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(card, Zone::Graveyard),
+            );
+            assert_eq!(state.objects.get(card).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(card).zone_change_count, 1);
+            fodder.push(card);
+        }
+        let [g1, g2, g3] = [fodder[0], fodder[1], fodder[2]];
+
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        let mut to_exile = vec![g1, g2, g3];
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { .. } => step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(PlayerId::P1)),
+                )
+                .unwrap(),
+                Decision::ChooseCostTargets { candidates, .. } => {
+                    let pick = to_exile
+                        .iter()
+                        .copied()
+                        .find(|id| candidates.contains(id))
+                        .expect("expected escape fodder in candidates");
+                    to_exile.retain(|&id| id != pick);
+                    step(&mut state, Action::ChooseCostTarget(pick)).unwrap();
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision escaping Chain Lightning: {other:?}"),
+            }
+        }
+        for (i, card) in [g1, g2, g3].into_iter().enumerate() {
+            assert_eq!(state.objects.get(card).zone, Zone::Exile);
+            assert_eq!(state.objects.get(card).zone_change_count, 2);
+            assert_eq!(
+                state.stack.last().unwrap().v4.paid_cost_refs[i].zone_change_count,
+                2
+            );
+        }
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+
+        // 1. Lowering only one payment ref's zone_change_count to the previous
+        //    positive generation (its graveyard incarnation) is refused.
+        let mut forged = state.clone();
+        forged.stack.last_mut().unwrap().v4.paid_cost_refs[0].zone_change_count = 1;
+        let before = forged.clone();
+        assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(forged, before);
+
+        // 2. Genuine later move of the exiled card (exile -> graveyard) stays
+        //    accepted with its original generation-2 ref, while forging that
+        //    ref down to 1 or up to 3 is refused.
+        let mut moved = state.clone();
+        event::propose_and_commit(&mut moved, ProposedEvent::zone_change(g1, Zone::Graveyard));
+        assert_eq!(moved.objects.get(g1).zone_change_count, 3);
+        let mut moved_forged_low = moved.clone();
+        moved_forged_low.stack.last_mut().unwrap().v4.paid_cost_refs[0].zone_change_count = 1;
+        let before_low = moved_forged_low.clone();
+        assert!(step(&mut moved_forged_low, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(moved_forged_low, before_low);
+        let mut moved_forged_high = moved.clone();
+        moved_forged_high
+            .stack
+            .last_mut()
+            .unwrap()
+            .v4
+            .paid_cost_refs[0]
+            .zone_change_count = 3;
+        let before_high = moved_forged_high.clone();
+        assert!(step(
+            &mut moved_forged_high,
+            Action::ChooseSpellCopyPayment(false)
+        )
+        .is_err());
+        assert_eq!(moved_forged_high, before_high);
+        assert!(step(&mut moved, Action::ChooseSpellCopyPayment(false)).is_ok());
+
+        // 3. Unchanged genuine state stays accepted.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Issue #987 review round 1, finding 2: for a face-up parent spell, the
+    /// authenticated `PublishedCastIdentityV1.public_identity` must match the
+    /// stack source's printing; mutating only `public_identity` to another
+    /// printing (or concealed) is refused while the unchanged genuine offer
+    /// stays accepted.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_escape_rejects_mismatched_cast_receipt_public_identity() {
+        let (mut state, chain, _) = chain_lightning_escaped_via_breach();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let stack_item_id = state.stack.last().unwrap().v4.stack_item_id;
+        let chain_def = state.objects.get(chain).card_def;
+        let mountain_def = card_id_by_name("Mountain").unwrap();
+        assert_ne!(chain_def, mountain_def);
+
+        let receipt_at = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::PublishedCastIdentityV1 { receipt }
+                        if receipt.stack_item_id == stack_item_id
+                )
+            })
+            .expect("escaped Chain Lightning has a cast identity receipt");
+
+        // 1. Changing only `public_identity` to `Known { card_def: Mountain }`
+        //    is refused without mutating state.
+        let mut wrong_printing = state.clone();
+        let CommittedEvent::PublishedCastIdentityV1 { receipt } =
+            &mut wrong_printing.engine.event_history[receipt_at]
+        else {
+            unreachable!();
+        };
+        assert_eq!(
+            receipt.public_identity,
+            crate::cast_identity_v1::PublicIdentityV1::Known {
+                card_def: chain_def
+            }
+        );
+        receipt.public_identity = crate::cast_identity_v1::PublicIdentityV1::Known {
+            card_def: mountain_def,
+        };
+        let before = wrong_printing.clone();
+        assert!(step(&mut wrong_printing, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(wrong_printing, before);
+
+        // 2. Changing only `public_identity` to `Concealed` on a face-up
+        //    parent is also refused without mutating state.
+        let mut concealed = state.clone();
+        let CommittedEvent::PublishedCastIdentityV1 { receipt } =
+            &mut concealed.engine.event_history[receipt_at]
+        else {
+            unreachable!();
+        };
+        receipt.public_identity =
+            crate::cast_identity_v1::PublicIdentityV1::Concealed { disguised: false };
+        let before_concealed = concealed.clone();
+        assert!(step(&mut concealed, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(concealed, before_concealed);
+
+        // 3. Unchanged genuine escaped Chain Lightning copy offer stays accepted.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
     }
 
     #[cfg(feature = "eternal-fixtures")]
