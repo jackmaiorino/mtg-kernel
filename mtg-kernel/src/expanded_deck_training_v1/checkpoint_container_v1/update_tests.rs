@@ -94,7 +94,7 @@ fn fixture(
         max_physical_decisions: 100000,
         max_policy_steps: 1000000,
         cube_flat_action_contract: false,
-            max_stack_objects: None,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: None,

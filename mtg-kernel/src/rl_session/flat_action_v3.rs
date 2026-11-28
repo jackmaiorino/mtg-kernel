@@ -684,6 +684,8 @@ impl FastActorSessionV1 {
     }
 
     #[cfg(test)]
+    // Used only by fixture-gated CubeV1 tests.
+    #[allow(dead_code)]
     pub(crate) fn from_cube_v1_fixture_state(state: GameState) -> Self {
         let mut session = Self::from_v3_fixture_state_without_advance(state);
         session.flat_action_contract_mode = FlatActionContractModeV1::CubeV1;
@@ -692,6 +694,8 @@ impl FastActorSessionV1 {
     }
 
     #[cfg(test)]
+    // Used only by fixture-gated CubeV1 tests.
+    #[allow(dead_code)]
     fn from_v3_fixture_state_without_advance(state: GameState) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;

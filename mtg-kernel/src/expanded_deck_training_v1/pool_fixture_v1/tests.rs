@@ -210,7 +210,7 @@ fn members_are_distinct_valid_containers_over_one_import_v1() {
                 max_physical_decisions: 4000,
                 max_policy_steps: 40000,
                 cube_flat_action_contract: false,
-            max_stack_objects: None,
+                max_stack_objects: None,
                 opponent: Some(member.source.clone()),
                 opponent_kind: None,
                 opponent_search: None,

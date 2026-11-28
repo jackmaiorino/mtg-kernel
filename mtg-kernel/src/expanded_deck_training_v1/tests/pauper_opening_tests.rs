@@ -51,7 +51,7 @@ fn episode(opening: bool) -> ExpandedEpisodeV1 {
         max_physical_decisions: 100_000,
         max_policy_steps: 1_000_000,
         cube_flat_action_contract: false,
-            max_stack_objects: None,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: opening.then_some(PauperOpeningV1::LondonV1),

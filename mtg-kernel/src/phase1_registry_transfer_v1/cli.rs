@@ -120,7 +120,7 @@ fn inference_only_episode() -> Result<ExpandedEpisodeV1, String> {
         max_physical_decisions: 100,
         max_policy_steps: 100,
         cube_flat_action_contract: false,
-            max_stack_objects: None,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: None,
