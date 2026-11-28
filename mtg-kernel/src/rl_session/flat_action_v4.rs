@@ -2040,6 +2040,10 @@ mod tests {
             }
         }
 
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
         fn removed_card_state(name: &str, zone: Zone) -> GameState {
             let mut state = ready_state_for(PlayerId::P0);
             state.active_player = PlayerId::P0;
@@ -2048,6 +2052,10 @@ mod tests {
             state
         }
 
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
         fn assert_removed_family_refuses_like_v3(family: &str, state: GameState) {
             let cube = FastActorSessionV1::from_cube_v1_fixture_state(state.clone());
             let frozen = FastActorSessionV1::from_v3_fixture_state(state);
