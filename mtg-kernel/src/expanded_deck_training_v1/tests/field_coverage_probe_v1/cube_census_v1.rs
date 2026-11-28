@@ -687,14 +687,21 @@ pub(super) fn census_stop_detail_v1(
                 Ok(observation) => {
                     detail["observation_fields"] =
                         json!(refused_observation_fields_v1(&observation));
-                    detail["v7_extensions_error"] =
-                        match crate::policy_observation_v7::policy_observation_extensions_v7(
+                    let extensions = if session.is_cube_v1() {
+                        crate::policy_observation_v7::policy_observation_extensions_v7_for_cube_v1(
                             session.game_state(),
                             player,
-                        ) {
-                            Ok(_) => Value::Null,
-                            Err(error) => json!(error.0),
-                        };
+                        )
+                    } else {
+                        crate::policy_observation_v7::policy_observation_extensions_v7(
+                            session.game_state(),
+                            player,
+                        )
+                    };
+                    detail["v7_extensions_error"] = match extensions {
+                        Ok(_) => Value::Null,
+                        Err(error) => json!(error.0),
+                    };
                 }
                 Err(error) => detail["observation_getter_error"] = json!(format!("{error:?}")),
             }

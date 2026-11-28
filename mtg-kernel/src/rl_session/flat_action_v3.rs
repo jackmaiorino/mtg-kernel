@@ -191,7 +191,12 @@ fn extensions(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<PolicyObservationExtensionsV6, FlatActionDecisionSliceErrorV1> {
-    crate::rl::policy_observation_extensions_v6(&session.state, current.actor).map_err(|error| {
+    let result = if session.is_cube_v1() {
+        crate::rl::policy_observation_extensions_cube_v1(&session.state, current.actor)
+    } else {
+        crate::rl::policy_observation_extensions_v6(&session.state, current.actor)
+    };
+    result.map_err(|error| {
         capture_action_error_v3(session, current, "observation_extensions", &error, None);
         FlatActionDecisionSliceErrorV1::InvalidDecisionRelation
     })
@@ -407,7 +412,7 @@ fn build_with_extensions(
             None,
         );
     })?;
-    flat_validate_origin_decision_for_contract_v1(session, &original).inspect_err(|error| {
+    flat_validate_origin_decision_v1(&original, &session.state).inspect_err(|error| {
         capture_action_error_v3(session, &original, "origin_decision_relations", error, None);
     })?;
     normalize_candidates(
@@ -678,22 +683,6 @@ impl FastActorSessionV1 {
         self
     }
 
-    pub(crate) fn into_cube_flat_action_v1(mut self) -> Self {
-        self.flat_action_contract_mode = FlatActionContractModeV1::CubeV1;
-        self.flat_action_cache_spare = None;
-        self.flat_action_cache_spare_v2 = None;
-        if let Some(mut current) = self.current.take() {
-            let result = if self.pauper_london_pending_v1() {
-                Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
-            } else {
-                prepare_and_build_v3(&self, &mut current)
-            };
-            flat_install_action_cache_build_result_v2(&mut current, result);
-            self.current = Some(current);
-        }
-        self
-    }
-
     #[cfg(test)]
     pub(crate) fn from_cube_v1_fixture_state(state: GameState) -> Self {
         let mut session = Self::from_v3_fixture_state_without_advance(state);
@@ -788,6 +777,34 @@ impl FastActorSessionV1 {
         Ok(Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
             episode_id, seed, max_physical_decisions, max_policy_steps, deck_ids, mainboards, Some(starting_player), windows, deck_format,
         )?.into_flat_action_v3())
+    }
+
+    /// CubeV1 is installed before the reset's first advance; every other
+    /// constructor retains its original mode transition sequence.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_cube_flat_action_v1(
+        episode_id: u64,
+        seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_explicit_decks_v2_with_contract_v1(
+            episode_id,
+            seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            Some(starting_player),
+            windows,
+            deck_format,
+            FlatActionContractModeV1::CubeV1,
+        )
     }
 
     pub fn reset_with_decks_and_limits_flat_action_v3(

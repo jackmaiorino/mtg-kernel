@@ -767,11 +767,22 @@ fn flat_visible_action_object_v4(
     ))
 }
 
+fn observation_extensions_v4(
+    session: &FastActorSessionV1,
+    actor: PlayerId,
+) -> Result<crate::policy_observation_v6::PolicyObservationExtensionsV6, crate::rl::RlContractError>
+{
+    if session.is_cube_v1() {
+        crate::rl::policy_observation_extensions_cube_v1(&session.state, actor)
+    } else {
+        crate::rl::policy_observation_extensions_v6(&session.state, actor)
+    }
+}
+
 /// `current.candidates` is not always in `origin_decision`'s raw,
 /// engine-surfaced shape: `flat_action_v3::prepare_and_build_v3` (run by
-/// `advance_to_decision_or_terminal_profiled` for every physical decision,
-/// unconditionally, since a fast-actor session's `flat_action_contract_mode`
-/// is always `V3` regardless of which generation later scores it) calls
+/// `advance_to_decision_or_terminal_profiled` for every physical decision in
+/// the V3 and CubeV1 modes, regardless of which generation later scores it) calls
 /// `flat_action_v3::normalize_candidates` in place on `current.candidates`,
 /// which (a) reorders a `Decision::ChooseEffectTargets` menu into
 /// decision-local-library canonical (class-ordinal-grouped) order whenever
@@ -826,7 +837,7 @@ fn validate_origin_decision_against_reordered_candidates_v4(
         #[cfg(test)]
         eprintln!("V4 reconstructed binding header: {_error:?}");
     })?;
-    flat_validate_origin_decision_for_contract_v1(session, &original).inspect_err(|_error| {
+    flat_validate_origin_decision_v1(&original, &session.state).inspect_err(|_error| {
         #[cfg(test)]
         eprintln!("V4 reconstructed decision relation: {_error:?}");
     })?;
@@ -1079,7 +1090,7 @@ impl FastActorSessionV1 {
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
-        let extension = crate::rl::policy_observation_extensions_v6(&self.state, current.actor)
+        let extension = observation_extensions_v4(self, current.actor)
             .inspect_err(|_error| {
                 #[cfg(test)]
                 eprintln!("V4 current observation extension: {_error}");
@@ -1305,11 +1316,10 @@ impl FastActorSessionV1 {
         if let Err(e) = flat_validate_expected_decision_v1(self, current, expected) {
             return format!("expected_decision {e:?}");
         }
-        let extension =
-            match crate::rl::policy_observation_extensions_v6(&self.state, current.actor) {
-                Ok(x) => x,
-                Err(e) => return format!("extensions {e:?}"),
-            };
+        let extension = match observation_extensions_v4(self, current.actor) {
+            Ok(x) => x,
+            Err(e) => return format!("extensions {e:?}"),
+        };
         let raw = match crate::rl::core_policy_action_candidates_v5(
             &current.origin_decision,
             &self.state,
@@ -1326,7 +1336,7 @@ impl FastActorSessionV1 {
         if let Err(e) = flat_validate_current_binding_header_v1(self, &original) {
             return format!("binding_header {e:?}");
         }
-        if let Err(e) = flat_validate_origin_decision_for_contract_v1(self, &original) {
+        if let Err(e) = flat_validate_origin_decision_v1(&original, &self.state) {
             return format!("origin_decision {e:?}");
         }
         if let Err(e) = super::flat_action_v3::normalize_candidates(
@@ -1829,14 +1839,86 @@ mod tests {
         try_encoded_v4(session).unwrap()
     }
 
-    #[cfg(feature = "eternal-fixtures")]
+    #[cfg(any(
+        feature = "eternal-fixtures",
+        all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )
+    ))]
     mod cube_v1 {
         use super::*;
         use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::flat_policy_v2::{
+            FlatCompletedDungeonV2, FlatContextPathElementV2, FlatEffectSubtypeChangeV2,
+            FlatObjectAbilityUseV2, FlatObjectCoreV2, FlatObjectGoadV2, FlatObjectSubtypeV2,
+            FlatRelationV2, FlatScorerActionCoreV2, FlatScorerActionRefV2,
+            FlatScoringOwnedBuffersV2,
+        };
+        use crate::flat_policy_v4::FlatDecisionEncoderV4;
         use crate::policy_observation_v6::tests::{put, ready_state_for};
         use crate::rl::ActionSemanticV1;
         use crate::rl_session::pauper_london_v1::PauperMulliganModeV1;
         use crate::state::{GameState, ObjectLinkV4, TriggerUseV1, Zone};
+
+        #[derive(Default)]
+        struct CubeScoringRows {
+            objects: Vec<FlatObjectCoreV2>,
+            relations: Vec<FlatRelationV2>,
+            object_subtypes: Vec<FlatObjectSubtypeV2>,
+            ability_uses: Vec<FlatObjectAbilityUseV2>,
+            goads: Vec<FlatObjectGoadV2>,
+            completed_dungeons: Vec<FlatCompletedDungeonV2>,
+            effect_subtype_changes: Vec<FlatEffectSubtypeChangeV2>,
+            context_path_elements: Vec<FlatContextPathElementV2>,
+            actions: Vec<FlatScorerActionCoreV2>,
+            action_refs: Vec<FlatScorerActionRefV2>,
+        }
+
+        impl CubeScoringRows {
+            fn buffers(&mut self) -> FlatScoringOwnedBuffersV2<'_> {
+                FlatScoringOwnedBuffersV2 {
+                    objects: &mut self.objects,
+                    relations: &mut self.relations,
+                    object_subtypes: &mut self.object_subtypes,
+                    ability_uses: &mut self.ability_uses,
+                    goads: &mut self.goads,
+                    completed_dungeons: &mut self.completed_dungeons,
+                    effect_subtype_changes: &mut self.effect_subtype_changes,
+                    context_path_elements: &mut self.context_path_elements,
+                    actions: &mut self.actions,
+                    action_refs: &mut self.action_refs,
+                }
+            }
+        }
+
+        fn assert_full_v4_scoring(session: &FastActorSessionV1) {
+            let decision = expected(session);
+            let actor = session.current.as_ref().unwrap().actor;
+            let observation = session.flat_policy_observation_v4(decision).unwrap();
+            let extensions =
+                crate::rl::policy_observation_extensions_cube_v1(session.game_state(), actor)
+                    .unwrap();
+            assert_eq!(observation.extensions, extensions);
+
+            let mut rows = CubeScoringRows::default();
+            let scored = session
+                .encode_current_flat_scoring_decision_owned_v4(
+                    decision,
+                    &mut FlatDecisionEncoderV4::default(),
+                    &mut rows.buffers(),
+                )
+                .unwrap();
+            assert_eq!(
+                scored.binding.0.legal_action_count,
+                decision.legal_action_count
+            );
+            assert_eq!(
+                rows.actions.len(),
+                usize::try_from(decision.legal_action_count).unwrap()
+            );
+            assert!(!rows.objects.is_empty());
+        }
 
         fn planeswalker_state(actor: PlayerId) -> (GameState, crate::ids::ObjectId) {
             let mut state = ready_state_for(actor);
@@ -1851,6 +1933,7 @@ mod tests {
             (state, walker)
         }
 
+        #[cfg(feature = "eternal-fixtures")]
         #[test]
         fn cube_planeswalker_encodes_every_action_for_both_seats_and_v3_still_refuses() {
             for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1875,6 +1958,7 @@ mod tests {
                 let (slice, _) = try_encoded_v4(&cube).unwrap();
                 assert_eq!(slice.active_action_count, decision.legal_action_count);
                 cube.flat_policy_observation_v4(decision).unwrap();
+                assert_full_v4_scoring(&cube);
 
                 let frozen = FastActorSessionV1::from_v3_fixture_state(state);
                 assert!(matches!(
@@ -1903,6 +1987,7 @@ mod tests {
 
         const TRIGGER_USE_CARD: &str = "Enduring Innocence";
 
+        #[cfg(feature = "eternal-fixtures")]
         #[test]
         fn cube_combat_statics_and_trigger_uses_encode_and_v3_still_refuses() {
             for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1915,6 +2000,7 @@ mod tests {
                     expected(&cube).legal_action_count
                 );
                 cube.flat_policy_observation_v4(expected(&cube)).unwrap();
+                assert_full_v4_scoring(&cube);
                 let frozen = FastActorSessionV1::from_v3_fixture_state(combat);
                 assert!(matches!(
                     try_encoded_v4(&frozen),
@@ -1942,12 +2028,208 @@ mod tests {
                     expected(&cube).legal_action_count
                 );
                 cube.flat_policy_observation_v4(expected(&cube)).unwrap();
+                assert_full_v4_scoring(&cube);
                 let frozen = FastActorSessionV1::from_v3_fixture_state(triggers);
                 assert!(matches!(
                     try_encoded_v4(&frozen),
                     Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
                 ));
             }
+        }
+
+        fn removed_card_state(name: &str, zone: Zone) -> GameState {
+            let mut state = ready_state_for(PlayerId::P0);
+            state.active_player = PlayerId::P0;
+            state.priority_player = PlayerId::P0;
+            put(&mut state, PlayerId::P0, name, zone);
+            state
+        }
+
+        fn assert_removed_family_refuses_like_v3(family: &str, state: GameState) {
+            let cube = FastActorSessionV1::from_cube_v1_fixture_state(state.clone());
+            let frozen = FastActorSessionV1::from_v3_fixture_state(state);
+            match (cube.current_response(), frozen.current_response()) {
+                (
+                    FastActorResponseV1::Terminal(cube_terminal),
+                    FastActorResponseV1::Terminal(frozen_terminal),
+                ) => assert_eq!(
+                    cube_terminal.terminal_reason, frozen_terminal.terminal_reason,
+                    "{family}: terminal refusal differs from frozen V3"
+                ),
+                (
+                    FastActorResponseV1::Decision(cube_decision),
+                    FastActorResponseV1::Decision(frozen_decision),
+                ) => {
+                    let cube_encoding = try_encoded_v4(&cube);
+                    let frozen_encoding = try_encoded_v4(&frozen);
+                    assert_eq!(
+                        cube_encoding, frozen_encoding,
+                        "{family}: action encoding differs from frozen V3"
+                    );
+                    let cube_observation = cube.flat_policy_observation_v4(cube_decision);
+                    let frozen_observation = frozen.flat_policy_observation_v4(frozen_decision);
+                    assert_eq!(
+                        cube_observation, frozen_observation,
+                        "{family}: observation differs from frozen V3"
+                    );
+                    assert!(
+                        cube_encoding.is_err() || cube_observation.is_err(),
+                        "{family}: CubeV1 unexpectedly accepted the removed family"
+                    );
+                }
+                (cube_response, frozen_response) => panic!(
+                    "{family}: refusal kind differs: Cube={cube_response:?}, V3={frozen_response:?}"
+                ),
+            }
+        }
+
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        #[test]
+        fn cube_removed_successor_families_refuse_exactly_like_frozen_v3() {
+            let cards: [(&str, Zone, fn(&GameState) -> bool); 6] = [
+                (
+                    "Fishing Pole",
+                    Zone::Battlefield,
+                    crate::fishing_pole_v39::lifecycle::requires_successor,
+                ),
+                (
+                    "Heraldic Banner",
+                    Zone::Hand,
+                    crate::heraldic_banner_v1::requires_successor,
+                ),
+                (
+                    "Krenko, Mob Boss",
+                    Zone::Battlefield,
+                    crate::krenko_v1::requires_successor,
+                ),
+                (
+                    "Zul Ashur, Lich Lord",
+                    Zone::Battlefield,
+                    crate::zul_ashur_v1::requires_successor,
+                ),
+                (
+                    "Arahbo, the First Fang",
+                    Zone::Battlefield,
+                    crate::arahbo_v1::requires_successor,
+                ),
+                (
+                    "Garruk's Uprising",
+                    Zone::Battlefield,
+                    crate::garruks_uprising_v1::requires_successor,
+                ),
+            ];
+            for (family, zone, requires_successor) in cards {
+                let state = removed_card_state(family, zone);
+                assert!(requires_successor(&state), "{family}: fixture is inactive");
+                assert_removed_family_refuses_like_v3(family, state);
+            }
+
+            let mut inspiration = removed_card_state("Inspiration from Beyond", Zone::Hand);
+            let inspiration_source = inspiration.players[0].hand[0];
+            inspiration.players[0].mana_pool[crate::mana::ManaColor::C.pool_index()] = 2;
+            inspiration.players[0].mana_pool[crate::mana::ManaColor::U.pool_index()] = 1;
+            crate::engine::step(
+                &mut inspiration,
+                crate::engine::Action::CastSpell(inspiration_source),
+            )
+            .unwrap();
+            assert!(crate::inspiration_observation_v1::requires_successor(
+                &inspiration
+            ));
+            assert_removed_family_refuses_like_v3("Inspiration from Beyond", inspiration);
+
+            let mut banishing = removed_card_state("Banishing Light", Zone::Hand);
+            let source = banishing.players[0].hand[0];
+            propose_and_commit(
+                &mut banishing,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert!(crate::banishing_light_v1::requires_successor(&banishing));
+            assert_removed_family_refuses_like_v3("Banishing Light", banishing);
+
+            let mut fiery = removed_card_state("Fiery Annihilation", Zone::Hand);
+            let fiery_source = fiery.players[0].hand[0];
+            let fiery_target = put(
+                &mut fiery,
+                PlayerId::P0,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let fiery_source_contract =
+                crate::state::AbilitySourceContractV4::capture(&fiery, fiery_source);
+            let fiery_target_contract = crate::state::StackTargetContractV4::capture(
+                &fiery,
+                crate::state::Target::Object(fiery_target),
+            );
+            crate::event::install_exile_if_dies(
+                &mut fiery,
+                fiery_source_contract,
+                fiery_target_contract,
+            );
+            assert!(crate::fiery_annihilation_v1::requires_successor(&fiery));
+            assert_removed_family_refuses_like_v3("Fiery Annihilation / ExileIfDies", fiery);
+
+            let mut outcome = removed_card_state("Herald of Eternal Dawn", Zone::Hand);
+            let herald = outcome.players[0].hand[0];
+            propose_and_commit(
+                &mut outcome,
+                ProposedEvent::zone_change(herald, Zone::Battlefield),
+            );
+            assert!(crate::game_outcome_protection_v1::requires_successor(
+                &outcome,
+                Some(PlayerId::P0)
+            ));
+            assert!(crate::game_outcome_protection_v1::active(&outcome, herald));
+            assert_removed_family_refuses_like_v3("Herald of Eternal Dawn", outcome);
+
+            let grants = removed_card_state("Akroma's Memorial", Zone::Battlefield);
+            assert!(
+                crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&grants)
+                    .is_err()
+            );
+            assert_removed_family_refuses_like_v3("Akroma's Memorial", grants);
+
+            let mut prevention = removed_card_state("Fleeting Flight", Zone::Hand);
+            let prevention_source = prevention.players[0].hand[0];
+            let prevention_target = put(
+                &mut prevention,
+                PlayerId::P0,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            crate::event::install_combat_damage_prevention(
+                &mut prevention,
+                prevention_source,
+                prevention_target,
+            );
+            assert!(prevention.engine.active_replacements.iter().any(|row| matches!(
+                row.kind,
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
+            )));
+            assert_removed_family_refuses_like_v3("Fleeting Flight", prevention);
+
+            let mut control = removed_card_state("Involuntary Employment", Zone::Hand);
+            let control_source = control.players[0].hand[0];
+            put(
+                &mut control,
+                PlayerId::P1,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            control.players[0].mana_pool[crate::mana::ManaColor::C.pool_index()] = 3;
+            control.players[0].mana_pool[crate::mana::ManaColor::R.pool_index()] = 2;
+            crate::engine::step(
+                &mut control,
+                crate::engine::Action::CastSpell(control_source),
+            )
+            .unwrap();
+            assert!(
+                crate::effect::temporary_control_v1::refuse_legacy_observation(&control).is_err()
+            );
+            assert_removed_family_refuses_like_v3("Involuntary Employment", control);
         }
 
         fn time_walk_rank(action: &ActionSemanticV1) -> u8 {
@@ -1977,12 +2259,13 @@ mod tests {
                 .unwrap()
         }
 
+        #[cfg(feature = "eternal-fixtures")]
         #[test]
         fn cube_time_walk_reaches_natural_end_and_frozen_v3_refuses_the_same_state() {
             let island = crate::card_def::card_id_by_name("Island").unwrap();
             let walk = crate::card_def::card_id_by_name("Time Walk").unwrap();
             let walker_deck = [vec![island; 17], vec![walk; 23]].concat();
-            let mut session = FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
+            let mut session = FastActorSessionV1::reset_cube_pauper_london_windows_deck_format_v1(
                 11,
                 0x5449_4d45,
                 65_536,
@@ -1994,8 +2277,7 @@ mod tests {
                 [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
                 Some(crate::sideboard::DeckFormatV1::Limited40V1),
             )
-            .unwrap()
-            .into_cube_flat_action_v1();
+            .unwrap();
 
             let mut first_extra = None;
             let mut took_extra = false;
@@ -2067,6 +2349,7 @@ mod tests {
             );
             // Builds without refusal; schedule visibility is FlatV9's (T6).
             cube.flat_policy_observation_v4(expected(&cube)).unwrap();
+            assert_full_v4_scoring(&cube);
         }
     }
 

@@ -112,6 +112,30 @@ impl FastActorSessionV1 {
         encoder: &mut FlatDecisionEncoderV4,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<FlatDecisionV4, FlatDecisionErrorV2> {
+        if self.is_cube_v1() {
+            let observation = self.flat_policy_observation_v4(expected)?;
+            let actor =
+                crate::kernel_native_search_opponent_v1::player_id_v1(observation.acting_player);
+            let cube_v6 =
+                crate::rl::policy_observation_extensions_cube_v1(self.game_state(), actor)
+                    .map_err(|_| FlatDecisionErrorV2::ObservationContract)?;
+            let cube_v7 =
+                crate::policy_observation_v7::policy_observation_extensions_v7_for_cube_v1(
+                    self.game_state(),
+                    actor,
+                )
+                .map_err(|_| FlatDecisionErrorV2::ObservationContract)?;
+            let frozen_v7 = crate::policy_observation_v7::policy_observation_extensions_v7(
+                self.game_state(),
+                actor,
+            )
+            .map_err(|_| FlatDecisionErrorV2::ObservationContract)?;
+            // The common builder is golden-bound. Prove its frozen rows are
+            // exactly the separately produced Cube rows before consuming them.
+            if observation.extensions != cube_v6 || cube_v7 != frozen_v7 {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+        }
         let mut decision = encoder
             .common
             .build_scoring_owned_v4(self, expected, buffers)?;

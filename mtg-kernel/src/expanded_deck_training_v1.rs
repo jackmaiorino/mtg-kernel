@@ -3779,28 +3779,63 @@ fn episode_session_v1(
     let mut session = if let Some(modes) = episode.mulligan_modes {
         // `opening` (London v1) with its refusals; never a reset start.
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
-            1,
-            game_seed,
-            episode.max_physical_decisions,
-            episode.max_policy_steps,
-            episode.selected.each_ref().map(|d| d.label.clone()),
-            configs.each_ref().map(|d| d.mainboard().to_vec()),
-            PlayerId(episode.starting_player),
-            modes,
-            windows,
-            episode.deck_format,
-        )
+        if episode.cube_flat_action_contract {
+            FastActorSessionV1::reset_cube_pauper_london_windows_deck_format_v1(
+                1,
+                game_seed,
+                episode.max_physical_decisions,
+                episode.max_policy_steps,
+                episode.selected.each_ref().map(|d| d.label.clone()),
+                configs.each_ref().map(|d| d.mainboard().to_vec()),
+                PlayerId(episode.starting_player),
+                modes,
+                windows,
+                episode.deck_format,
+            )
+        } else {
+            FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
+                1,
+                game_seed,
+                episode.max_physical_decisions,
+                episode.max_policy_steps,
+                episode.selected.each_ref().map(|d| d.label.clone()),
+                configs.each_ref().map(|d| d.mainboard().to_vec()),
+                PlayerId(episode.starting_player),
+                modes,
+                windows,
+                episode.deck_format,
+            )
+        }
         .map_err(err)?
     } else {
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
-        1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player), windows, episode.deck_format).map_err(err)?
+        if episode.cube_flat_action_contract {
+            FastActorSessionV1::reset_cube_flat_action_v1(
+                1,
+                game_seed,
+                physical + episode.max_physical_decisions,
+                steps + episode.max_policy_steps,
+                episode.selected.each_ref().map(|d| d.label.clone()),
+                configs.each_ref().map(|d| d.mainboard().to_vec()),
+                PlayerId(episode.starting_player),
+                windows,
+                episode.deck_format,
+            )
+        } else {
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
+                1,
+                game_seed,
+                physical + episode.max_physical_decisions,
+                steps + episode.max_policy_steps,
+                episode.selected.each_ref().map(|d| d.label.clone()),
+                configs.each_ref().map(|d| d.mainboard().to_vec()),
+                PlayerId(episode.starting_player),
+                windows,
+                episode.deck_format,
+            )
+        }
+        .map_err(err)?
     };
-    if episode.cube_flat_action_contract {
-        session = session.into_cube_flat_action_v1();
-    }
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
     }

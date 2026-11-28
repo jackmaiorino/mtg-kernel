@@ -33,7 +33,7 @@ impl FastActorSessionV1 {
         )
     }
 
-    pub(super) fn is_cube_v1(&self) -> bool {
+    pub(crate) fn is_cube_v1(&self) -> bool {
         self.flat_action_contract_mode == FlatActionContractModeV1::CubeV1
     }
 

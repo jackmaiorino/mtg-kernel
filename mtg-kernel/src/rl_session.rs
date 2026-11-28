@@ -2546,22 +2546,6 @@ fn flat_validate_origin_decision_v1(
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     flat_validate_origin_decision_akroma_inner(current, state, false)
 }
-fn flat_validate_origin_decision_for_contract_v1(
-    session: &FastActorSessionV1,
-    current: &FastActorCurrentDecisionV1,
-) -> Result<(), FlatActionDecisionSliceErrorV1> {
-    if session.is_cube_v1() {
-        flat_validate_origin_decision_common_scoped_cube_inner(
-            current,
-            &session.state,
-            false,
-            true,
-            crate::rl::CommonProjectionScopeV42::ExistingV40,
-        )
-    } else {
-        flat_validate_origin_decision_v1(current, &session.state)
-    }
-}
 fn flat_validate_origin_decision_akroma_inner(
     current: &FastActorCurrentDecisionV1,
     state: &crate::state::GameState,
@@ -2578,21 +2562,6 @@ fn flat_validate_origin_decision_common_scoped_v42(
     current: &FastActorCurrentDecisionV1,
     state: &crate::state::GameState,
     accept_akroma: bool,
-    scope: crate::rl::CommonProjectionScopeV42,
-) -> Result<(), FlatActionDecisionSliceErrorV1> {
-    flat_validate_origin_decision_common_scoped_cube_inner(
-        current,
-        state,
-        accept_akroma,
-        false,
-        scope,
-    )
-}
-fn flat_validate_origin_decision_common_scoped_cube_inner(
-    current: &FastActorCurrentDecisionV1,
-    state: &crate::state::GameState,
-    accept_akroma: bool,
-    accept_cube: bool,
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     use crate::engine::Action;
@@ -2623,8 +2592,6 @@ fn flat_validate_origin_decision_common_scoped_cube_inner(
         crate::divine_observation_v44::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::FullAjaniV42 {
         crate::ajani_observation_v42::validate_state(state)
-    } else if accept_cube {
-        crate::controlled_creature_grants_v1::validate_color_history(state)
     } else if accept_akroma {
         crate::akroma_public_v1::validate_state(state)
     } else {
@@ -4135,7 +4102,6 @@ fn flat_validate_current_binding_header_akroma_inner(
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
     if !accept_akroma
-        && !session.is_cube_v1()
         && crate::game_outcome_protection_v1::requires_successor(
             &session.state,
             Some(current.actor),
@@ -5264,7 +5230,6 @@ fn flat_validate_expected_decision_numeric_domain(
     exact_battlefield_v51: bool,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     if !accept_akroma
-        && !session.is_cube_v1()
         && crate::game_outcome_protection_v1::requires_successor(
             &session.state,
             Some(current.actor),
@@ -5334,28 +5299,22 @@ fn flat_validate_expected_decision_numeric_domain(
     }
     if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39
-        && !session.is_common_v40()
-        && !session.is_cube_v1())
+        && !session.is_common_v40())
         || (crate::inspiration_observation_v1::requires_successor(&session.state)
             && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37
-            && !session.is_common_v40()
-            && !session.is_cube_v1())
+            && !session.is_common_v40())
         || (crate::krenko_v1::requires_successor(&session.state)
             && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34
-            && !session.is_common_v40()
-            && !session.is_cube_v1())
+            && !session.is_common_v40())
         || (crate::zul_ashur_v1::requires_successor(&session.state)
             && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35
-            && !session.is_common_v40()
-            && !session.is_cube_v1())
+            && !session.is_common_v40())
         || (crate::heraldic_banner_v1::requires_successor(&session.state)
             && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36
-            && !session.is_common_v40()
-            && !session.is_cube_v1())
+            && !session.is_common_v40())
         || (crate::fiery_annihilation_v1::requires_successor(&session.state)
             && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33
-            && !session.is_common_v40()
-            && !session.is_cube_v1())
+            && !session.is_common_v40())
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
             && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25
             && !session.is_common_v40()
@@ -5410,13 +5369,11 @@ fn flat_validate_expected_decision_numeric_domain(
                             | FlatActionContractModeV1::LilianaV73
                             | FlatActionContractModeV1::ChandraV74
                             | FlatActionContractModeV1::KaitoV75
-                            | FlatActionContractModeV1::CubeV1
                     )
                 }
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => {
                     session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33
                         && !session.is_common_v40()
-                        && !session.is_cube_v1()
                 }
                 _ => false,
             }
@@ -5573,10 +5530,13 @@ enum FlatActionContractModeV1 {
     LilianaV73,
     ChandraV74,
     KaitoV75,
-    /// Opt-in Cube union admission on the existing V3/V4 transport. This is
-    /// deliberately outside `is_common_v40`: that predicate also selects the
-    /// distinct common candidate and observation contracts, rather than only
-    /// admitting successor states.
+    /// Opt-in Vintage Cube admission on the existing V3/V4 transport, limited
+    /// to planeswalker loyalty, combat statics, per-turn trigger uses and
+    /// scheduled extra turns. This is deliberately outside `is_common_v40`:
+    /// that predicate also selects the distinct common candidate and
+    /// observation contracts, rather than only admitting successor states.
+    /// The V4 flat encoder cannot observe planeswalker loyalty records,
+    /// trigger-use rows or the extra-turn schedule; FlatV9 owns those features.
     CubeV1,
     /// Rules-only Limited self-play (`rules_only_v1`): no consumer contract.
     RulesOnlyV1,
@@ -7858,6 +7818,33 @@ impl FastActorSessionV1 {
         windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
         deck_format: Option<crate::sideboard::DeckFormatV1>,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_explicit_decks_v2_with_contract_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            windows,
+            deck_format,
+            FlatActionContractModeV1::V2,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reset_explicit_decks_v2_with_contract_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: Option<PlayerId>,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
+        flat_action_contract_mode: FlatActionContractModeV1,
+    ) -> Result<Self, RlSessionError> {
         let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
@@ -7881,7 +7868,7 @@ impl FastActorSessionV1 {
             policy_step_count: 0,
             physical_decision_count: 0,
             current: None,
-            flat_action_contract_mode: FlatActionContractModeV1::V2,
+            flat_action_contract_mode,
             v3_spell_target_reference_adapter: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
             trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
@@ -9775,7 +9762,6 @@ impl FastActorSessionV1 {
         }
 
         if !self.is_common_v40()
-            && !self.is_cube_v1()
             && crate::game_outcome_protection_v1::requires_successor(
                 &self.state,
                 self.current.as_ref().map(|current| current.actor),
@@ -10667,7 +10653,6 @@ impl FastActorSessionV1 {
             return;
         }
         if !self.is_common_v40()
-            && !self.is_cube_v1()
             && crate::game_outcome_protection_v1::requires_successor(&self.state, None)
         {
             self.current = None;
@@ -10750,8 +10735,6 @@ impl FastActorSessionV1 {
             } else {
                 crate::akroma_public_v1::validate_state(&self.state)
             }
-        } else if self.is_cube_v1() {
-            crate::controlled_creature_grants_v1::validate_color_history(&self.state)
         } else {
             crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
         })
@@ -10770,8 +10753,7 @@ impl FastActorSessionV1 {
         }
         if (crate::fishing_pole_v39::lifecycle::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39
-            && !self.is_common_v40()
-            && !self.is_cube_v1())
+            && !self.is_common_v40())
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FishingPoleV39
                 && crate::fishing_pole_observation_v39::validate_projection_authority(&self.state)
                     .is_err())
@@ -10789,8 +10771,7 @@ impl FastActorSessionV1 {
         }
         if (crate::inspiration_observation_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37
-            && !self.is_common_v40()
-            && !self.is_cube_v1())
+            && !self.is_common_v40())
             || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37
                 && crate::inspiration_observation_v1::validate_projection_authority(&self.state)
                     .is_err())
@@ -10813,8 +10794,7 @@ impl FastActorSessionV1 {
                     .is_err())
             || (crate::heraldic_banner_v1::requires_successor(&self.state)
                 && self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36
-                && !self.is_common_v40()
-                && !self.is_cube_v1())
+                && !self.is_common_v40())
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -10831,7 +10811,6 @@ impl FastActorSessionV1 {
         if crate::krenko_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34
             && !self.is_common_v40()
-            && !self.is_cube_v1()
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -10847,7 +10826,6 @@ impl FastActorSessionV1 {
         if crate::arahbo_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
             && !self.is_common_v40()
-            && !self.is_cube_v1()
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -10890,7 +10868,6 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::LilianaV73
                     | FlatActionContractModeV1::ChandraV74
                     | FlatActionContractModeV1::KaitoV75
-                    | FlatActionContractModeV1::CubeV1
             )
         {
             self.current = None;
@@ -10974,7 +10951,6 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::LilianaV73
                     | FlatActionContractModeV1::ChandraV74
                     | FlatActionContractModeV1::KaitoV75
-                    | FlatActionContractModeV1::CubeV1
             )
         {
             self.terminal = Some(halted_terminal(

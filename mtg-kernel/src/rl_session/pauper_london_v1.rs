@@ -236,6 +236,63 @@ impl FastActorSessionV1 {
         windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
         deck_format: Option<crate::sideboard::DeckFormatV1>,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_pauper_london_with_contract_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            modes,
+            windows,
+            deck_format,
+            FlatActionContractModeV1::V3,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_cube_pauper_london_windows_deck_format_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        modes: [PauperMulliganModeV1; 2],
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_pauper_london_with_contract_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            modes,
+            windows,
+            deck_format,
+            FlatActionContractModeV1::CubeV1,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reset_pauper_london_with_contract_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        modes: [PauperMulliganModeV1; 2],
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
+        flat_action_contract_mode: FlatActionContractModeV1,
+    ) -> Result<Self, RlSessionError> {
         let (deck_hashes, mut state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
@@ -261,7 +318,7 @@ impl FastActorSessionV1 {
             policy_step_count: 0,
             physical_decision_count: 0,
             current: None,
-            flat_action_contract_mode: FlatActionContractModeV1::V3,
+            flat_action_contract_mode,
             v3_spell_target_reference_adapter: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
             trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),

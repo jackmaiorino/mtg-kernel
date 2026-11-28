@@ -220,10 +220,10 @@ fn cube_flat_action_contract_is_explicit_and_limited40_only() {
         assert_eq!(decoded, frozen);
 
         let configs = cube.configurations().unwrap();
+        let session = episode_session_v1(&cube, &configs).unwrap();
+        assert!(session.is_cube_v1());
         assert!(matches!(
-            episode_session_v1(&cube, &configs)
-                .unwrap()
-                .current_response(),
+            session.current_response(),
             FastActorResponseV1::Decision(_)
         ));
 
