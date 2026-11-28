@@ -566,6 +566,12 @@ fn prepared(state: &GameState, id: StackItemId) -> Result<&PreparationV4, String
     if r.index as usize != *index
         || r.index <= p.index
         || !r.ctx.same_except_niv_damage_origin_v1(&context(&p.item))
+        || crate::effect::validate_historical_copy_legal_targets_v1(
+            state,
+            &p.item,
+            &r.ctx.copy_legal_targets_v1,
+        )
+        .is_err()
         || r.facts.source.source != source.source
         || r.facts.source.owner != source.owner
         || r.facts.source.zone_change_count != source.zone_change_count

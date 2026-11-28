@@ -24307,6 +24307,9 @@ pub(crate) fn stack_target_legalities(
         return Ok(vec![crate::zul_ashur_v1::target_legal(state, item)]);
     }
     if spec == TargetSpec::CreatureThenUpToOneAttachedEquipment {
+        if item.targets.is_empty() {
+            return Ok(vec![false]);
+        }
         return Ok(crate::fiery_annihilation_v1::target_legalities(
             state,
             item.source,
@@ -24319,6 +24322,9 @@ pub(crate) fn stack_target_legalities(
         .collect());
     }
     if spec == TargetSpec::TwoCreaturesWithDifferentControllers {
+        if item.targets.is_empty() {
+            return Ok(vec![false]);
+        }
         return Ok(different_controller_creature_targets_are_legal(
             state,
             item.source,
@@ -46407,10 +46413,50 @@ mod tests {
         assert_eq!(state.objects.get(stage).card_def, mountain_def);
         assert!(state.objects.get(stage).tapped);
         assert_eq!(state.stack.len(), 1);
+        let top = state.stack.last().unwrap().clone();
+        assert_eq!(copy_legal_targets_for_item_v1(&state, &top), Ok(vec![0]));
+
+        // A valid continuation carrying copy_legal_targets_v1 = [0] passes
+        // copy-target validation, round-trips through serde JSON, and empty
+        // copy_legal_targets_v1 omits the field and preserves ExecCtx hash.
+        let valid_ctx = ExecCtx {
+            niv_damage_origin_v1: None,
+            stack_item_id: Some(top.v4.stack_item_id),
+            source: top.source,
+            controller: top.controller,
+            targets: top.targets.clone(),
+            target_contracts: top.v4.target_contracts.clone(),
+            copy_legal_targets_v1: vec![0],
+            discarded: top.discarded.clone(),
+            paid_cost_refs: top.v4.paid_cost_refs.clone(),
+            hidden_ability_source: top.v4.hidden_ability_source,
+            ability_source_contract: top.v4.ability_source_contract,
+            cauldron_grant: top.v4.cauldron_grant,
+            kicked: top.kicked,
+            optional_additional_cost_paid: top.v4.optional_additional_cost_paid,
+            x_value: top.v4.x_value,
+        };
+        let valid_pending = effect::EffectContinuation {
+            resolving_item: top.clone(),
+            ctx: valid_ctx.clone(),
+            frames: Vec::new(),
+            choice: None,
+            answered_choice_guard: None,
+        };
         assert_eq!(
-            copy_legal_targets_for_item_v1(&state, state.stack.last().unwrap()),
-            Ok(vec![0])
+            effect::validate_copy_legal_targets_v1(&state, &valid_pending),
+            Ok(())
         );
+        let populated_json = serde_json::to_string(&valid_ctx).unwrap();
+        assert!(populated_json.contains("\"copy_legal_targets_v1\":[0]"));
+        let decoded: ExecCtx = serde_json::from_str(&populated_json).unwrap();
+        assert_eq!(decoded, valid_ctx);
+        let mut empty_ctx = valid_ctx.clone();
+        empty_ctx.copy_legal_targets_v1.clear();
+        let empty_json = serde_json::to_string(&empty_ctx).unwrap();
+        assert!(!empty_json.contains("copy_legal_targets_v1"));
+        let decoded_empty: ExecCtx = serde_json::from_str(&empty_json).unwrap();
+        assert_eq!(decoded_empty, empty_ctx);
 
         // Now resolve Candelabra's ability: Stage is still a legal land target and untaps.
         pass_until_stack_resolves(&mut state);
@@ -46567,19 +46613,34 @@ mod tests {
         );
 
         // Forging copy_legal_targets_v1 on a continuation for an illegal, unchanged,
-        // or unsorted slot must be rejected by continuation validation.
-        for forged_slots in [vec![1], vec![0], vec![1, 0]] {
+        // or unsorted slot must be rejected by continuation validation with the
+        // exact copy-target validator error.
+        for (forged_slots, expected_err) in [
+            (vec![1], "not a legal target"),
+            (vec![0], "lacks a recorded copy definition"),
+            (vec![1, 0], "strictly increasing"),
+        ] {
             let mut forged = state.clone();
             let mut forged_ctx = ctx.clone();
             forged_ctx.copy_legal_targets_v1 = forged_slots;
-            forged.engine.pending_effect = Some(effect::EffectContinuation {
+            let pending = effect::EffectContinuation {
                 resolving_item: top.clone(),
                 ctx: forged_ctx,
                 frames: Vec::new(),
                 choice: None,
                 answered_choice_guard: None,
-            });
-            assert!(effect::validate_pending_effect_choice(&forged).is_err());
+            };
+            let direct_err = effect::validate_copy_legal_targets_v1(&forged, &pending).unwrap_err();
+            assert!(
+                direct_err.contains(expected_err),
+                "expected `{expected_err}` in `{direct_err}`"
+            );
+            forged.engine.pending_effect = Some(pending);
+            let full_err = effect::validate_pending_effect_choice(&forged).unwrap_err();
+            assert!(
+                full_err.contains(expected_err),
+                "expected `{expected_err}` in `{full_err}`"
+            );
         }
 
         // Resolve Cast into the Fire: Epicure dies, Stage (Mountain) is untouched.
@@ -46588,6 +46649,196 @@ mod tests {
         assert_eq!(state.objects.get(epicure).zone, Zone::Graveyard);
         assert_eq!(state.objects.get(stage).zone, Zone::Battlefield);
         assert_eq!(state.objects.get(stage).damage, 0);
+    }
+
+    /// Issue #936 (owner-path regression): a native-owned stack item whose
+    /// source left the battlefield (`Goblin Bombardment` LKI path through
+    /// `acquire_native_execution_owner_v1`) must populate `copy_legal_targets_v1`
+    /// and resolve cleanly when its target changes definition via a copy.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn goblin_bombardment_native_owner_resolves_against_copy_changed_target() {
+        let mut state = ready_game_in_main1(0);
+        let bombardment = put_on_battlefield(&mut state, PlayerId::P0, "Goblin Bombardment");
+        let fodder = put_on_battlefield(&mut state, PlayerId::P0, "Voldaren Epicure");
+        let tear = put_in_hand(&mut state, PlayerId::P0, "Tear Asunder");
+        state.players[0].mana_pool[mana::ManaColor::C.pool_index()] = 1;
+        state.players[0].mana_pool[mana::ManaColor::G.pool_index()] = 1;
+
+        let curie = put_on_battlefield(&mut state, PlayerId::P1, "Curie, Emergent Intelligence");
+        let dreadnought = put_on_battlefield(&mut state, PlayerId::P1, "Phyrexian Dreadnought");
+        let dreadnought_def = state.objects.get(dreadnought).card_def;
+        state.players[1].mana_pool[mana::ManaColor::C.pool_index()] = 1;
+        state.players[1].mana_pool[mana::ManaColor::U.pool_index()] = 1;
+
+        // P0 activates Goblin Bombardment sacrificing Epicure and targeting Curie.
+        step(&mut state, Action::ActivateAbility(bombardment, 0)).unwrap();
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert!(legal_targets.contains(&Target::Object(curie)));
+                    step(&mut state, Action::ChooseTarget(Target::Object(curie))).unwrap();
+                }
+                Decision::ChooseCostTargets { candidates, .. } => {
+                    assert!(candidates.contains(&fodder));
+                    step(&mut state, Action::ChooseCostTarget(fodder)).unwrap();
+                }
+                Decision::CastSpellOrPass {
+                    player: PlayerId::P0,
+                    ..
+                } => break,
+                other => panic!("unexpected Bombardment activation decision: {other:?}"),
+            }
+        }
+        assert_eq!(state.objects.get(fodder).zone, Zone::Graveyard);
+
+        // P0 responds by destroying Goblin Bombardment with Tear Asunder so
+        // Bombardment's stack ability takes the NativeExecutionOwnerV1 LKI path.
+        step(&mut state, Action::CastSpell(tear)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(bombardment)));
+                step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Object(bombardment)),
+                )
+                .unwrap();
+            }
+            other => panic!("expected ChooseTargets for Tear Asunder, got {other:?}"),
+        }
+        // Resolve Tear Asunder only (Bombardment ability remains on stack).
+        for expected_player in [PlayerId::P0, PlayerId::P1] {
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, .. } if player == expected_player
+            ));
+            step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        assert_eq!(state.objects.get(bombardment).zone, Zone::Exile);
+        assert_eq!(state.stack.len(), 1);
+
+        // P0 passes; P1 responds by activating Curie, exiling Phyrexian Dreadnought.
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        step(&mut state, Action::ActivateAbility(curie, 0)).unwrap();
+        if let Decision::ChooseCostTargets { candidates, .. } = advance_until_decision(&mut state) {
+            assert!(candidates.contains(&dreadnought));
+            step(&mut state, Action::ChooseCostTarget(dreadnought)).unwrap();
+        }
+        assert_eq!(state.objects.get(dreadnought).zone, Zone::Exile);
+
+        // Resolve Curie's ability (Curie becomes Dreadnought), then Bombardment's
+        // native-owned LKI damage ability.
+        pass_until_stack_resolves(&mut state);
+        assert!(
+            state.engine.halted.is_none(),
+            "Native-owned Goblin Bombardment LKI must not halt on a copy-changed target: {:?}",
+            state.engine.halted
+        );
+        assert_eq!(state.objects.get(curie).card_def, dreadnought_def);
+        assert_eq!(state.objects.get(curie).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(curie).damage, 1);
+    }
+
+    /// Issue #936: Assimilation Aegis copies remain excluded from
+    /// `copy_legal_targets_v1` and from `validate_copy_legal_targets_v1`.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn aegis_copy_is_excluded_from_copy_legal_targets_v1() {
+        let mut state = ready_game_in_main1(0);
+        let bolt = put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
+        state.players[0].mana_pool[mana::ManaColor::R.pool_index()] = 1;
+        let epicure = put_on_battlefield(&mut state, PlayerId::P1, "Voldaren Epicure");
+        let aegis = put_on_battlefield(&mut state, PlayerId::P1, "Assimilation Aegis");
+        let donor = put_in_graveyard(&mut state, PlayerId::P0, "Tolarian Terror");
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::zone_change(donor, Zone::Exile),
+        );
+
+        step(&mut state, Action::CastSpell(bolt)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(epicure)));
+                step(&mut state, Action::ChooseTarget(Target::Object(epicure))).unwrap();
+            }
+            other => panic!("expected ChooseTargets for Lightning Bolt, got {other:?}"),
+        }
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+
+        let host = crate::state::ObjectLinkV4 {
+            object: epicure,
+            zone_change_count: state.objects.get(epicure).zone_change_count,
+        };
+        state.objects.get_mut(aegis).v4.attached_to = Some(host);
+        state.objects.get_mut(aegis).v4.layer_timestamp = Some(17);
+        let aegis_source = crate::state::AbilitySourceContractV4::capture(&state, aegis);
+        state.objects.get_mut(donor).v4.exiled_by = Some(crate::state::ObjectLinkV4 {
+            object: aegis,
+            zone_change_count: aegis_source.zone_change_count,
+        });
+        let mut copy_ctx = ExecCtx::no_targets(aegis, PlayerId::P1);
+        copy_ctx.ability_source_contract = Some(aegis_source);
+        let chosen = effect::EffectObjectBinding {
+            object: donor,
+            expected_zone: Zone::Exile,
+            expected_zone_change_count: state.objects.get(donor).zone_change_count,
+        };
+        crate::standard_cards_v1::apply_aegis_copy(&mut state, &copy_ctx, host, 17, chosen);
+        assert!(crate::standard_cards_v1::active_aegis_copy(&state, epicure));
+
+        let top = state.stack.last().unwrap().clone();
+        assert_eq!(copy_legal_targets_for_item_v1(&state, &top), Ok(vec![]));
+        let mut forged_ctx = effect::crystal_prevention_v1::context(&top);
+        forged_ctx.copy_legal_targets_v1 = vec![0];
+        let pending = effect::EffectContinuation {
+            resolving_item: top,
+            ctx: forged_ctx,
+            frames: Vec::new(),
+            choice: None,
+            answered_choice_guard: None,
+        };
+        let err = effect::validate_copy_legal_targets_v1(&state, &pending).unwrap_err();
+        assert!(
+            err.contains("lacks a recorded copy definition"),
+            "expected Aegis exclusion error, got `{err}`"
+        );
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn zero_target_special_specs_remain_illegal_at_resolution() {
+        let mut state = ready_game_in_main1(0);
+        for name in ["Fiery Annihilation", "Run Away Together"] {
+            let spell = put_in_hand(&mut state, PlayerId::P0, name);
+            let item = StackItem {
+                source: spell,
+                controller: PlayerId::P0,
+                kind: StackItemKind::Spell,
+                ..StackItem::default()
+            };
+            assert_eq!(stack_target_legalities(&item, &state), Ok(vec![false]));
+            assert_eq!(stack_targets_still_legal(&item, &state), Ok(false));
+        }
     }
 }
 

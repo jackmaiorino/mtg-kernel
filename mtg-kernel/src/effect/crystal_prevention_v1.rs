@@ -1082,10 +1082,19 @@ pub(crate) fn spell_cast_snapshot_matches(
     if original != *saved {
         return false;
     }
+    let copy_slots = boundary
+        .pending
+        .as_deref()
+        .map(|p| p.ctx.copy_legal_targets_v1.clone())
+        .unwrap_or_default();
+    if super::validate_historical_copy_legal_targets_v1(state, item, &copy_slots).is_err() {
+        return false;
+    }
     let mut initial = probe_with_niv_damage_origin(
         item,
         crate::event::niv_damage_origin_for_saved_item_v1(state, item),
     );
+    initial.ctx.copy_legal_targets_v1 = copy_slots;
     let Ok(root) = validated_definition_owned_root_effect(state, &initial) else {
         return false;
     };
@@ -1123,10 +1132,19 @@ pub(crate) fn source_power_payment_matches(
     };
     let mut original = item.clone();
     original.v4.crystal_prevention_started_v1 = CrystalPreventionStartedV1::default();
+    let copy_slots = boundary
+        .pending
+        .as_deref()
+        .map(|p| p.ctx.copy_legal_targets_v1.clone())
+        .unwrap_or_default();
+    if super::validate_historical_copy_legal_targets_v1(state, item, &copy_slots).is_err() {
+        return false;
+    }
     let mut initial = probe_with_niv_damage_origin(
         item,
         crate::event::niv_damage_origin_for_saved_item_v1(state, item),
     );
+    initial.ctx.copy_legal_targets_v1 = copy_slots;
     initial.frames.push(EffectFrame::Program {
         op: boundary.root.clone(),
         path: Vec::new(),
@@ -1560,6 +1578,7 @@ struct CrystalInitialRootV1 {
     item: StackItem,
     root: EffectOp,
     expected_niv_origin: Option<crate::event::NivDamageOriginV1>,
+    copy_legal_targets_v1: Vec<u16>,
 }
 
 #[derive(Clone)]
@@ -1679,6 +1698,7 @@ fn validate_from_proof(
             return validate_full(state, false);
         }
         let mut initial = probe_with_niv_damage_origin(&entry.item, entry.expected_niv_origin);
+        initial.ctx.copy_legal_targets_v1 = entry.copy_legal_targets_v1.clone();
         initial.frames.push(EffectFrame::Program {
             op: entry.root.clone(),
             path: Vec::new(),
@@ -1790,6 +1810,8 @@ fn validate_with_owner_inner(
     // The latest boundary of each item so far: what a reverse scan of the
     // history before a boundary finds for its item.
     let mut latest = std::collections::HashMap::new();
+    let mut initial_copy_slots: std::collections::HashMap<crate::ids::StackItemId, Vec<u16>> =
+        std::collections::HashMap::new();
     let mut initial_roots = Vec::new();
     for (index, event) in state
         .engine
@@ -1933,8 +1955,15 @@ fn validate_with_owner_inner(
             }
         }
         if previous.is_none() {
+            let copy_slots = b
+                .pending
+                .as_deref()
+                .map(|p| p.ctx.copy_legal_targets_v1.clone())
+                .unwrap_or_default();
+            super::validate_historical_copy_legal_targets_v1(state, &b.item, &copy_slots)?;
             let expected_origin = crate::event::niv_damage_origin_for_saved_item_v1(state, &b.item);
             let mut initial = probe_with_niv_damage_origin(&b.item, expected_origin);
+            initial.ctx.copy_legal_targets_v1 = copy_slots.clone();
             initial.frames.push(EffectFrame::Program {
                 op: b.root.clone(),
                 path: Vec::new(),
@@ -1946,10 +1975,12 @@ fn validate_with_owner_inner(
             {
                 return Err("Crystal initial root/owner authority changed".into());
             }
+            initial_copy_slots.insert(b.item.v4.stack_item_id, copy_slots.clone());
             initial_roots.push(CrystalInitialRootV1 {
                 item: (*b.item).clone(),
                 root: b.root.clone(),
                 expected_niv_origin: expected_origin,
+                copy_legal_targets_v1: copy_slots,
             });
         }
         if let Some(p) = b.pending.as_deref() {
@@ -2012,6 +2043,10 @@ fn validate_with_owner_inner(
             if p.resolving_item != *b.item
                 || !p.ctx.same_except_niv_damage_origin_v1(&context(&b.item))
                 || !niv_origin_matches_saved_item(state, &b.item, &p.ctx)
+                || initial_copy_slots
+                    .get(&b.item.v4.stack_item_id)
+                    .map(Vec::as_slice)
+                    != Some(p.ctx.copy_legal_targets_v1.as_slice())
             {
                 return Err("Crystal boundary lost the complete captured context".into());
             }
@@ -2092,10 +2127,13 @@ pub(crate) fn begin_owned(
     ctx: &ExecCtx,
     owner: &OwnerV1,
 ) -> Result<ResumableProgress, String> {
+    let expected_copy_slots =
+        crate::engine::copy_legal_targets_for_item_v1(state, &owner.original)?;
     if !owner.initial
         || *op != owner.root
         || !ctx.same_except_niv_damage_origin_v1(&context(&owner.original))
         || !niv_origin_matches_saved_item(state, &owner.original, ctx)
+        || ctx.copy_legal_targets_v1 != expected_copy_slots
         || state.engine.pending_effect.is_some()
         || state
             .stack
@@ -2105,6 +2143,7 @@ pub(crate) fn begin_owned(
         return Err("Crystal removed-item loan changed".into());
     }
     let mut p = probe_with_niv_damage_origin(&owner.expected, ctx.niv_damage_origin_v1);
+    p.ctx.copy_legal_targets_v1 = ctx.copy_legal_targets_v1.clone();
     p.frames.push(EffectFrame::Program {
         op: op.clone(),
         path: Vec::new(),
@@ -2596,6 +2635,12 @@ fn validate_damage_operations(state: &GameState) -> Result<(), String> {
                 .ctx
                 .same_except_niv_damage_origin_v1(&context(&execution.item))
             || !niv_origin_matches_saved_item(state, &execution.item, &operation.ctx)
+            || super::validate_historical_copy_legal_targets_v1(
+                state,
+                &execution.item,
+                &operation.ctx.copy_legal_targets_v1,
+            )
+            .is_err()
             || step.frame
                 != (EffectFrame::Program {
                     op: operation.op.clone(),
@@ -3623,6 +3668,12 @@ fn choice_original_damage(
         };
         if !ctx.same_except_niv_damage_origin_v1(&context(&execution.item))
             || !niv_origin_matches_saved_item(state, &execution.item, ctx)
+            || super::validate_historical_copy_legal_targets_v1(
+                state,
+                &execution.item,
+                &ctx.copy_legal_targets_v1,
+            )
+            .is_err()
         {
             return Err("Crystal chosen power borrowed foreign stack incarnation".into());
         }

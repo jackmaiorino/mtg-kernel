@@ -878,7 +878,12 @@ pub(crate) fn validate_pending(state: &GameState) -> Result<(), String> {
 }
 fn validate_continuation(state: &GameState, p: &EffectContinuation) -> Result<(), String> {
     let (pub_at, _) = publication(state, &p.resolving_item)?;
-    if p.ctx != original_context(&p.resolving_item, state) {
+    super::validate_copy_legal_targets_v1(state, p)?;
+    let mut expected = super::crystal_prevention_v1::context(&p.resolving_item);
+    expected.niv_damage_origin_v1 =
+        event::niv_damage_origin_for_saved_item_v1(state, &p.resolving_item);
+    expected.copy_legal_targets_v1 = p.ctx.copy_legal_targets_v1.clone();
+    if p.ctx != expected {
         return Err("Chandra full pending context changed".into());
     }
     if !p.resolving_item.v4.crystal_prevention_started_v1.is_empty() {

@@ -11190,11 +11190,11 @@ fn validate_aberration_continuation_v1(
     }
 }
 
-fn validate_copy_legal_targets_v1(
+pub(crate) fn validate_historical_copy_legal_targets_v1(
     state: &GameState,
-    pending: &EffectContinuation,
+    item: &StackItem,
+    slots: &[u16],
 ) -> Result<(), String> {
-    let slots = &pending.ctx.copy_legal_targets_v1;
     if slots.is_empty() {
         return Ok(());
     }
@@ -11204,7 +11204,6 @@ fn validate_copy_legal_targets_v1(
     if !slots.windows(2).all(|pair| pair[0] < pair[1]) {
         return Err("copy-legal target slots must be strictly increasing".into());
     }
-    let mut cached_legalities: Option<Vec<bool>> = None;
     for &slot in slots {
         let index = usize::from(slot);
         let (
@@ -11213,6 +11212,50 @@ fn validate_copy_legal_targets_v1(
                 object: bound,
                 card_def,
                 owner,
+                zone_change_count,
+                ..
+            }),
+        ) = (
+            item.targets.get(index).copied(),
+            item.v4.target_contracts.get(index).copied(),
+        )
+        else {
+            return Err("copy-legal target slot does not name an object target".into());
+        };
+        if bound != object {
+            return Err("copy-legal target slot contract mismatched its target".into());
+        }
+        let live = state
+            .objects
+            .try_get(object)
+            .ok_or("copy-legal target object is missing")?;
+        if live.owner != owner
+            || (live.zone_change_count == zone_change_count
+                && crate::standard_cards_v1::active_aegis_copy(state, object))
+            || !crate::standard_cards_v1::had_card_def(state, object, zone_change_count, card_def)
+        {
+            return Err("copy-legal target slot lacks a recorded copy definition".into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_copy_legal_targets_v1(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let slots = &pending.ctx.copy_legal_targets_v1;
+    validate_historical_copy_legal_targets_v1(state, &pending.resolving_item, slots)?;
+    if slots.is_empty() {
+        return Ok(());
+    }
+    let mut cached_legalities: Option<Vec<bool>> = None;
+    for &slot in slots {
+        let index = usize::from(slot);
+        let (
+            Some(Target::Object(object)),
+            Some(StackTargetContractV4::Object {
+                card_def,
                 zone,
                 zone_change_count,
                 ..
@@ -11229,19 +11272,10 @@ fn validate_copy_legal_targets_v1(
         else {
             return Err("copy-legal target slot does not name an object target".into());
         };
-        if bound != object {
-            return Err("copy-legal target slot contract mismatched its target".into());
-        }
         let live = state
             .objects
             .try_get(object)
             .ok_or("copy-legal target object is missing")?;
-        if live.owner != owner
-            || crate::standard_cards_v1::active_aegis_copy(state, object)
-            || !crate::standard_cards_v1::had_card_def(state, object, zone_change_count, card_def)
-        {
-            return Err("copy-legal target slot lacks a recorded copy definition".into());
-        }
         if live.zone == zone && live.zone_change_count == zone_change_count {
             if live.card_def == card_def {
                 return Err("copy-legal target slot did not change card definition".into());
@@ -18784,16 +18818,20 @@ fn resumable_discard_below(
 
 impl ExecCtx {
     /// Compare the semantic stack context while leaving the private Niv damage
-    /// handoff to its owning continuation validator. This token is checked
-    /// against the authentic saved stack row before effect execution.
+    /// handoff and resolution-time copy-legal target slots to their owning
+    /// continuation and boundary validators.
     pub(crate) fn same_except_niv_damage_origin_v1(&self, other: &Self) -> bool {
-        if self.niv_damage_origin_v1 == other.niv_damage_origin_v1 {
+        if self.niv_damage_origin_v1 == other.niv_damage_origin_v1
+            && self.copy_legal_targets_v1 == other.copy_legal_targets_v1
+        {
             return self == other;
         }
         let mut left = self.clone();
         let mut right = other.clone();
         left.niv_damage_origin_v1 = None;
         right.niv_damage_origin_v1 = None;
+        left.copy_legal_targets_v1.clear();
+        right.copy_legal_targets_v1.clear();
         left == right
     }
 
@@ -29949,9 +29987,11 @@ impl NativeExecutionOwnerV1 {
             .pending_effect
             .as_ref()
             .ok_or("native pending row lost")?;
+        validate_copy_legal_targets_v1(state, pending)?;
         let mut expected = crystal_prevention_v1::context(&pending.resolving_item);
         expected.niv_damage_origin_v1 =
             event::niv_damage_origin_for_saved_item_v1(state, &pending.resolving_item);
+        expected.copy_legal_targets_v1 = pending.ctx.copy_legal_targets_v1.clone();
         let root = validated_native_execution_root_v1(state, pending)?;
         if pending.ctx != expected
             || pending.frames.iter().any(|frame| {
@@ -29983,6 +30023,7 @@ pub(crate) fn acquire_native_execution_owner_v1(
         return Ok(None);
     }
     crate::engine::validated_stack_item_target_spec(item, state)?;
+    ctx.copy_legal_targets_v1 = crate::engine::copy_legal_targets_for_item_v1(state, item)?;
     if state.engine.pending_effect.is_some()
         || state.stack.last() != Some(item)
         || state
@@ -31347,7 +31388,12 @@ fn spirit_copy_item_v1(state: &GameState, item: &StackItem) -> bool {
                 d.name == "Self-Reflection"
                     && (d.spell_effect)() == Some(EffectOp::CreateControlledCreatureTargetCopyV1)
             })
-    }) && spirit_copy_target_v1(state, &crystal_prevention_v1::context(item))
+    }) && {
+        let mut ctx = crystal_prevention_v1::context(item);
+        ctx.copy_legal_targets_v1 =
+            crate::engine::copy_legal_targets_for_item_v1(state, item).unwrap_or_default();
+        spirit_copy_target_v1(state, &ctx)
+    }
 }
 fn spirit_copy_proposal_v1(
     state: &GameState,
