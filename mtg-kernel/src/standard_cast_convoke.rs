@@ -19,8 +19,8 @@ fn escape(p: &PendingCast) -> bool {
 pub(super) fn active(state: &GameState, p: &PendingCast) -> bool {
     if escape(p) {
         let def = &card_def::CARD_DEFS[state.objects.get(p.spell).card_def as usize];
-        return !sphinx_lore_cast_v1::waiting(p)
-            && !(p.mode_chosen == Some(1) && escape_supports_second_form_v1(def))
+        return !(sphinx_lore_cast_v1::waiting(p)
+            || (p.mode_chosen == Some(1) && escape_supports_second_form_v1(def)))
             && printed_tap_payment(def);
     }
     p.cast_mode == Some(CastMode::Alternative)
