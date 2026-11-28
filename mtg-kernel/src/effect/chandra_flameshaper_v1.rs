@@ -828,6 +828,16 @@ pub(crate) fn cleanup(state: &mut GameState) -> Result<(), String> {
     }
     Ok(())
 }
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn original_context(item: &StackItem, state: &GameState) -> ExecCtx {
+    let mut ctx = super::crystal_prevention_v1::context(item);
+    ctx.niv_damage_origin_v1 = event::niv_damage_origin_for_saved_item_v1(state, item);
+    ctx
+}
 pub(crate) fn validate_pending(state: &GameState) -> Result<(), String> {
     for (input, j) in rows(state) {
         if let JournalV74::ExileInput { publication, .. } = j {
