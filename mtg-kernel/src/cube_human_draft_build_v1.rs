@@ -384,7 +384,7 @@ mod tests {
     use crate::cube_seat_package_v1::tests::{load_manifest, test_directory, uniform_manifest};
     use std::io::Cursor;
 
-    struct FirstCard;
+    pub(super) struct FirstCard;
 
     impl SeatPicker for FirstCard {
         fn pick(
