@@ -264,7 +264,12 @@ pub fn serve_uniform_human_game(
                     visible.prompt_seq = prompt_seq;
                     transport.send(
                         "decision",
-                        json!({"episode": config.episode, "prompt_seq": prompt_seq, "decision": visible}),
+                        json!({
+                            "episode": config.episode,
+                            "prompt_seq": prompt_seq,
+                            "card_text": card_text.render_decision(&visible.state),
+                            "decision": visible,
+                        }),
                     )?;
                     loop {
                         match bound_command(&mut transport, config.episode, prompt_seq)? {
@@ -413,6 +418,10 @@ mod tests {
         assert_eq!(first["view"]["decision"]["prompt_seq"], 4);
         assert!(!first.to_string().contains("Mountain"));
         assert_eq!(
+            first["view"]["card_text"],
+            json!({"Island": "own card text"})
+        );
+        assert_eq!(
             first["view"]["decision"]["state"]["own_hand"]
                 .as_array()
                 .unwrap()
@@ -429,6 +438,8 @@ mod tests {
         assert_eq!(frames.last().unwrap()["view"]["reason"], "conceded");
         drop(journal);
         let private = std::fs::read_to_string(dir.join("private.jsonl")).unwrap();
+        assert!(!private.contains("own card text"));
+        assert!(!private.contains("opponent card text"));
         let private: Vec<Value> = private
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())

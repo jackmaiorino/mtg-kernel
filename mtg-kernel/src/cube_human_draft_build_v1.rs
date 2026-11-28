@@ -2,13 +2,14 @@
 //! The transport sees the human view. The caller owns the private result and
 //! hands the committed decks to the play stage.
 
-use crate::card_def::CARD_DEFS;
+use crate::card_def::{card_id_by_visible_name, CARD_DEFS};
 use crate::cube_draft_v1::{basic_land_ids, Deck, DraftRecord, DECK_CARDS, SEATS};
 use crate::cube_pod_runner_v1::{build_seed_for_chair, pod_draft_seed, PodUse, CLIENT_NAMESPACE};
 use crate::cube_seat_package_v1::{SeatPackage, SeatPackageKind};
 use crate::cube_seat_v1::{
     canonical_deck, run_seat_draft, PickOutcome, SeatError, SeatPickView, SeatPicker,
 };
+use crate::human_bo3_v1::HumanVisibleStateV1;
 use crate::state::SplitMix64;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
@@ -49,6 +50,51 @@ impl LocalCardText {
             cards.insert(id, text);
         }
         Ok(Self(cards))
+    }
+
+    /// Map only names from the fixed human projection to local text. The
+    /// response keys are already-visible names, including visible alternate
+    /// faces, so the gameplay response needs no registry IDs.
+    fn render_decision<'a>(&'a self, view: &'a HumanVisibleStateV1) -> BTreeMap<&'a str, &'a str> {
+        let public = &view.public;
+        let public_cards = public
+            .battlefield
+            .iter()
+            .flatten()
+            .chain(public.graveyards.iter().flatten())
+            .chain(&public.exile)
+            .map(|card| &card.stable);
+        let zone_cards = view
+            .own_hand
+            .iter()
+            .chain(view.known_hand_cards.iter().flatten())
+            .chain(
+                view.known_library_cards
+                    .iter()
+                    .flatten()
+                    .map(|known| &known.card),
+            )
+            .chain(
+                view.extensions
+                    .decision_local_library
+                    .iter()
+                    .flat_map(|choice| &choice.cards),
+            )
+            .map(|card| &card.stable);
+        public_cards
+            .chain(zone_cards)
+            .chain(public.stack.iter().map(|item| &item.source))
+            .map(|card| card.name.as_str())
+            .chain(
+                view.known_face_down_cards
+                    .iter()
+                    .map(|known| known.name.as_str()),
+            )
+            .filter_map(|name| {
+                let (id, _) = card_id_by_visible_name(name)?;
+                self.0.get(&id).map(|text| (name, text.as_str()))
+            })
+            .collect()
     }
 
     fn render(&self, ids: &[u16]) -> Vec<Value> {
