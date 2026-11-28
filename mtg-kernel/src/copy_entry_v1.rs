@@ -4033,84 +4033,145 @@ mod tests {
     use crate::engine::{advance_until_decision, step, Action, Decision};
     use crate::state::{Step, Target, Zone};
 
+    fn completed_copy_state(player: PlayerId, donor_name: &str) -> GameState {
+        let cards = ["Reanimate", "Phyrexian Metamorph", donor_name, "Island"]
+            .map(|name| card_id_by_name(name).unwrap());
+        let mut state = GameState::new_from_libraries(
+            &cards,
+            &cards,
+            |id| {
+                crate::card_def::CARD_DEFS[usize::from(id)]
+                    .object_name
+                    .into()
+            },
+            137,
+        );
+        state.active_player = player;
+        state.priority_player = player;
+        state.step = Step::Main1;
+        let mut place = |name: &str, zone| {
+            let seat = &mut state.players[player.index()];
+            let pos = seat
+                .library
+                .iter()
+                .position(|id| state.objects.get(*id).card_def == card_id_by_name(name).unwrap())
+                .unwrap();
+            let object = seat.library.remove(pos);
+            state.objects.get_mut(object).zone = zone;
+            match zone {
+                Zone::Hand => seat.hand.push(object),
+                Zone::Graveyard => seat.graveyard.push(object),
+                Zone::Battlefield => seat.battlefield.push(object),
+                _ => unreachable!(),
+            }
+            object
+        };
+        let spell = place("Reanimate", Zone::Hand);
+        let entrant = place("Phyrexian Metamorph", Zone::Graveyard);
+        let donor = place(donor_name, Zone::Battlefield);
+        state.players[player.index()].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
+        let surface = crate::policy_surface_v5::PolicySurfaceV5::new();
+        let flat = |state: &GameState| {
+            crate::rl::observe_policy_v5_unhashed_for_flat_policy(
+                state, &surface, player, 0, 0, 0, 1,
+            )
+        };
+        advance_until_decision(&mut state);
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        advance_until_decision(&mut state);
+        step(&mut state, Action::ChooseTarget(Target::Object(entrant))).unwrap();
+        let mut chose = false;
+        for _ in 0..24 {
+            let response = advance_until_decision(&mut state);
+            let action = match response {
+                Decision::ChooseEffectTargets { source, .. } if source == entrant => {
+                    assert!(flat(&state).is_err());
+                    chose = true;
+                    Action::ChooseEffectTarget(Target::Object(donor))
+                }
+                Decision::ChooseMeddlingMageNameV1 { .. } => Action::ChooseEffectOption(0),
+                Decision::CastSpellOrPass { .. } if chose && state.stack.is_empty() => break,
+                Decision::CastSpellOrPass { .. } => Action::Pass,
+                other => panic!("unexpected copy decision: {other:?}"),
+            };
+            step(&mut state, action).unwrap();
+        }
+        assert!(chose);
+        assert_eq!(state.objects.get(entrant).zone, Zone::Battlefield);
+        assert_eq!(
+            state.objects.get(entrant).card_def,
+            card_id_by_name(donor_name).unwrap()
+        );
+        assert_eq!(flat(&state).is_ok(), donor_name == "Mind Stone");
+        state
+    }
+
     #[test]
     fn flat_actor_observes_completed_nonmage_copies_and_refuses_pending_or_named_copies() {
         for player in [PlayerId::P0, PlayerId::P1] {
             for donor_name in ["Mind Stone", "Meddling Mage"] {
-                let cards = ["Reanimate", "Phyrexian Metamorph", donor_name, "Island"]
-                    .map(|name| card_id_by_name(name).unwrap());
-                let mut state = GameState::new_from_libraries(
-                    &cards,
-                    &cards,
-                    |id| {
-                        crate::card_def::CARD_DEFS[usize::from(id)]
-                            .object_name
-                            .into()
-                    },
-                    137,
-                );
-                state.active_player = player;
-                state.priority_player = player;
-                state.step = Step::Main1;
-                let mut place = |name: &str, zone| {
-                    let seat = &mut state.players[player.index()];
-                    let pos = seat
-                        .library
-                        .iter()
-                        .position(|id| {
-                            state.objects.get(*id).card_def == card_id_by_name(name).unwrap()
-                        })
-                        .unwrap();
-                    let object = seat.library.remove(pos);
-                    state.objects.get_mut(object).zone = zone;
-                    match zone {
-                        Zone::Hand => seat.hand.push(object),
-                        Zone::Graveyard => seat.graveyard.push(object),
-                        Zone::Battlefield => seat.battlefield.push(object),
-                        _ => unreachable!(),
-                    }
-                    object
-                };
-                let spell = place("Reanimate", Zone::Hand);
-                let entrant = place("Phyrexian Metamorph", Zone::Graveyard);
-                let donor = place(donor_name, Zone::Battlefield);
-                state.players[player.index()].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
-                let surface = crate::policy_surface_v5::PolicySurfaceV5::new();
-                let flat = |state: &GameState| {
-                    crate::rl::observe_policy_v5_unhashed_for_flat_policy(
-                        state, &surface, player, 0, 0, 0, 1,
-                    )
-                };
-                advance_until_decision(&mut state);
-                step(&mut state, Action::CastSpell(spell)).unwrap();
-                advance_until_decision(&mut state);
-                step(&mut state, Action::ChooseTarget(Target::Object(entrant))).unwrap();
-                let mut chose = false;
-                for _ in 0..24 {
-                    let response = advance_until_decision(&mut state);
-                    let action = match response {
-                        Decision::ChooseEffectTargets { source, .. } if source == entrant => {
-                            assert!(flat(&state).is_err());
-                            chose = true;
-                            Action::ChooseEffectTarget(Target::Object(donor))
-                        }
-                        Decision::ChooseMeddlingMageNameV1 { .. } => Action::ChooseEffectOption(0),
-                        Decision::CastSpellOrPass { .. } if chose && state.stack.is_empty() => {
-                            break
-                        }
-                        Decision::CastSpellOrPass { .. } => Action::Pass,
-                        other => panic!("unexpected copy decision: {other:?}"),
-                    };
-                    step(&mut state, action).unwrap();
-                }
-                assert!(chose);
-                assert_eq!(state.objects.get(entrant).zone, Zone::Battlefield);
-                assert_eq!(
-                    state.objects.get(entrant).card_def,
-                    card_id_by_name(donor_name).unwrap()
-                );
-                assert_eq!(flat(&state).is_ok(), donor_name == "Mind Stone");
+                completed_copy_state(player, donor_name);
             }
+        }
+    }
+
+    #[test]
+    fn cube_v1_copy_entry_history_stays_observable_across_extra_turn() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = completed_copy_state(player, "Mind Stone");
+            assert!(
+                crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(&state)
+            );
+            assert!(!flat_requires_successor(&state));
+            let walk = crate::policy_observation_v6::tests::put(
+                &mut state,
+                player,
+                "Time Walk",
+                Zone::Hand,
+            );
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 1;
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::C.pool_index()] = 1;
+            let mut cast = false;
+            for _ in 0..8 {
+                match advance_until_decision(&mut state) {
+                    Decision::CastSpellOrPass {
+                        player: actor,
+                        castable_spells,
+                        ..
+                    } if actor == player && castable_spells.contains(&walk) => {
+                        step(&mut state, Action::CastSpell(walk)).unwrap();
+                        cast = true;
+                        break;
+                    }
+                    Decision::CastSpellOrPass { .. } => step(&mut state, Action::Pass).unwrap(),
+                    other => panic!("unexpected Time Walk cast decision: {other:?}"),
+                }
+            }
+            assert!(cast, "Time Walk was actually cast");
+            for _ in 0..8 {
+                if state.extra_turn_v1.is_some() {
+                    break;
+                }
+                match advance_until_decision(&mut state) {
+                    Decision::CastSpellOrPass { .. } => step(&mut state, Action::Pass).unwrap(),
+                    other => panic!("unexpected Time Walk resolution decision: {other:?}"),
+                }
+            }
+            assert!(state.extra_turn_v1.is_some(), "Time Walk resolved");
+            let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
+            assert!(crate::rl::extra_turn_observation_storage_v1(
+                &state,
+                &surface,
+                player,
+                0,
+                0,
+                (0, 1),
+            )
+            .is_err());
+            crate::rl::observe_policy_v6_unhashed_for_cube_flat_policy(
+                &state, &surface, player, 0, 0, 0, 1,
+            )
+            .unwrap();
         }
     }
 }

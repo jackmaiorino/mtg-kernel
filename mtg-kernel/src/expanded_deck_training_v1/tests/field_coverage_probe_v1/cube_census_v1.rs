@@ -701,8 +701,8 @@ pub(super) fn census_stop_detail_v1(
         }
         if diagnosis.starts_with("observation ") {
             let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
-            detail["observation_raw_error"] =
-                match crate::rl::observe_policy_v6_unhashed_for_flat_policy(
+            let observation = if cube_mode_opt_in_v1() {
+                crate::rl::observe_policy_v6_unhashed_for_cube_flat_policy(
                     session.game_state(),
                     &surface,
                     player,
@@ -710,10 +710,22 @@ pub(super) fn census_stop_detail_v1(
                     d.physical_decision_id,
                     d.substep_index,
                     d.substep_count,
-                ) {
-                    Ok(_) => json!("unlocated: a fresh surface builds the observation"),
-                    Err(error) => json!(error.0),
-                };
+                )
+            } else {
+                crate::rl::observe_policy_v6_unhashed_for_flat_policy(
+                    session.game_state(),
+                    &surface,
+                    player,
+                    d.step,
+                    d.physical_decision_id,
+                    d.substep_index,
+                    d.substep_count,
+                )
+            };
+            detail["observation_raw_error"] = match observation {
+                Ok(_) => json!("unlocated: a fresh surface builds the observation"),
+                Err(error) => json!(error.0),
+            };
         }
         detail
     }))

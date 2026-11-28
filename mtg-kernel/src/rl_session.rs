@@ -2546,6 +2546,22 @@ fn flat_validate_origin_decision_v1(
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     flat_validate_origin_decision_akroma_inner(current, state, false)
 }
+fn flat_validate_origin_decision_for_contract_v1(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if session.is_cube_v1() {
+        flat_validate_origin_decision_common_scoped_cube_inner(
+            current,
+            &session.state,
+            false,
+            true,
+            crate::rl::CommonProjectionScopeV42::ExistingV40,
+        )
+    } else {
+        flat_validate_origin_decision_v1(current, &session.state)
+    }
+}
 fn flat_validate_origin_decision_akroma_inner(
     current: &FastActorCurrentDecisionV1,
     state: &crate::state::GameState,
@@ -2562,6 +2578,21 @@ fn flat_validate_origin_decision_common_scoped_v42(
     current: &FastActorCurrentDecisionV1,
     state: &crate::state::GameState,
     accept_akroma: bool,
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_origin_decision_common_scoped_cube_inner(
+        current,
+        state,
+        accept_akroma,
+        false,
+        scope,
+    )
+}
+fn flat_validate_origin_decision_common_scoped_cube_inner(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    accept_akroma: bool,
+    accept_cube: bool,
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     use crate::engine::Action;
@@ -2592,6 +2623,8 @@ fn flat_validate_origin_decision_common_scoped_v42(
         crate::divine_observation_v44::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::FullAjaniV42 {
         crate::ajani_observation_v42::validate_state(state)
+    } else if accept_cube {
+        crate::controlled_creature_grants_v1::validate_color_history(state)
     } else if accept_akroma {
         crate::akroma_public_v1::validate_state(state)
     } else {
@@ -4102,6 +4135,7 @@ fn flat_validate_current_binding_header_akroma_inner(
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
     if !accept_akroma
+        && !session.is_cube_v1()
         && crate::game_outcome_protection_v1::requires_successor(
             &session.state,
             Some(current.actor),
@@ -5230,6 +5264,7 @@ fn flat_validate_expected_decision_numeric_domain(
     exact_battlefield_v51: bool,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     if !accept_akroma
+        && !session.is_cube_v1()
         && crate::game_outcome_protection_v1::requires_successor(
             &session.state,
             Some(current.actor),
@@ -5342,7 +5377,8 @@ fn flat_validate_expected_decision_numeric_domain(
             .engine
             .active_replacements
             .iter()
-            .any(|replacement| match replacement.kind {
+            .any(|replacement| {
+                match replacement.kind {
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn {
                     ..
                 } => {
@@ -5383,6 +5419,7 @@ fn flat_validate_expected_decision_numeric_domain(
                         && !session.is_cube_v1()
                 }
                 _ => false,
+            }
             })
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -9738,6 +9775,7 @@ impl FastActorSessionV1 {
         }
 
         if !self.is_common_v40()
+            && !self.is_cube_v1()
             && crate::game_outcome_protection_v1::requires_successor(
                 &self.state,
                 self.current.as_ref().map(|current| current.actor),
@@ -10629,6 +10667,7 @@ impl FastActorSessionV1 {
             return;
         }
         if !self.is_common_v40()
+            && !self.is_cube_v1()
             && crate::game_outcome_protection_v1::requires_successor(&self.state, None)
         {
             self.current = None;
@@ -10711,6 +10750,8 @@ impl FastActorSessionV1 {
             } else {
                 crate::akroma_public_v1::validate_state(&self.state)
             }
+        } else if self.is_cube_v1() {
+            crate::controlled_creature_grants_v1::validate_color_history(&self.state)
         } else {
             crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
         })
@@ -10806,6 +10847,7 @@ impl FastActorSessionV1 {
         if crate::arahbo_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
             && !self.is_common_v40()
+            && !self.is_cube_v1()
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -10848,6 +10890,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::LilianaV73
                     | FlatActionContractModeV1::ChandraV74
                     | FlatActionContractModeV1::KaitoV75
+                    | FlatActionContractModeV1::CubeV1
             )
         {
             self.current = None;
@@ -10931,6 +10974,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::LilianaV73
                     | FlatActionContractModeV1::ChandraV74
                     | FlatActionContractModeV1::KaitoV75
+                    | FlatActionContractModeV1::CubeV1
             )
         {
             self.terminal = Some(halted_terminal(

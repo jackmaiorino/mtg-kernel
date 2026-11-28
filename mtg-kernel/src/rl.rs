@@ -4352,8 +4352,8 @@ pub(crate) fn observe_policy_v6_unhashed_for_flat_policy(
     })
 }
 
-/// Cube keeps the flat observation except when an extra turn needs the
-/// existing V23/common storage transport.
+/// Cube always uses flat text. Keep these capability flags identical to its
+/// explicit successor-gate admissions; dedicated-candidate families stay off.
 pub(crate) fn observe_policy_v6_unhashed_for_cube_flat_policy(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -4363,26 +4363,50 @@ pub(crate) fn observe_policy_v6_unhashed_for_cube_flat_policy(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV6> {
-    if state.extra_turn_v1.is_none() {
-        return observe_policy_v6_unhashed_for_flat_policy(
-            state,
-            surface,
-            acting_player,
-            step_index,
-            physical_decision_id,
-            substep_index,
-            substep_count,
-        );
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    if crate::authority_of_the_consuls_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "opposing-creature tapped entry and captured gain require their observation successor"
+                .into(),
+        ));
     }
-    Ok(extra_turn_observation_storage_v1(
-        state,
-        surface,
-        acting_player,
-        step_index,
-        physical_decision_id,
-        (substep_index, substep_count),
-    )?
-    .into_legacy())
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    Ok(
+        build_policy_observation_storage_common_fishing_v39_ajani_v42(
+            (
+                PolicyObservationBuildV5 {
+                    state,
+                    surface,
+                    acting_player,
+                    step_index,
+                    physical_decision_id,
+                    substep_index,
+                    substep_count,
+                    text_mode: ObservationTextModeV2::FlatForbiddenElided,
+                },
+                // Akroma's common projection admits game outcomes and controlled
+                // grants; Ajani through Season retain their dedicated refusals.
+                (true, false, false, false, false, false, false, false),
+            ),
+            false,
+            false,
+            false,
+            false,
+            false,
+            (
+                // Authority, extra turn, combat, Banishing, Gourmand, Garruk,
+                // Crystal, Arahbo, Strongbox, Fiery, Krenko, Zul, Banner,
+                // Inspiration, Twinflame; the outer flag is Fishing Pole.
+                (
+                    false, true, true, true, false, true, false, true, false, true, true, true,
+                    true, true, false,
+                ),
+                true,
+            ),
+        )?
+        .into_legacy(),
+    )
 }
 
 fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<ObservationV6> {

@@ -407,7 +407,7 @@ fn build_with_extensions(
             None,
         );
     })?;
-    flat_validate_origin_decision_v1(&original, &session.state).inspect_err(|error| {
+    flat_validate_origin_decision_for_contract_v1(session, &original).inspect_err(|error| {
         capture_action_error_v3(session, &original, "origin_decision_relations", error, None);
     })?;
     normalize_candidates(
@@ -683,7 +683,11 @@ impl FastActorSessionV1 {
         self.flat_action_cache_spare = None;
         self.flat_action_cache_spare_v2 = None;
         if let Some(mut current) = self.current.take() {
-            let result = prepare_and_build_v3(&self, &mut current);
+            let result = if self.pauper_london_pending_v1() {
+                Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+            } else {
+                prepare_and_build_v3(&self, &mut current)
+            };
             flat_install_action_cache_build_result_v2(&mut current, result);
             self.current = Some(current);
         }

@@ -68,7 +68,7 @@ pub(crate) fn episode(
         london_keep_offset: None,
         deck_format,
         cube_flat_action_contract: false,
-            max_stack_objects: None,
+        max_stack_objects: None,
     }
 }
 
@@ -209,9 +209,16 @@ fn cube_flat_action_contract_is_explicit_and_limited40_only() {
         let value = serde_json::to_value(&cube).unwrap();
         assert_eq!(value["cube_flat_action_contract"], serde_json::json!(true));
         assert_eq!(
-            serde_json::from_value::<ExpandedEpisodeV1>(value).unwrap(),
+            serde_json::from_value::<ExpandedEpisodeV1>(value.clone()).unwrap(),
             cube
         );
+        let mut pre_cube_fields = FIELD_ORDER.to_vec();
+        pre_cube_fields.push("max_stack_objects");
+        let without_cube = positional(&value, &pre_cube_fields);
+        let decoded = serde_json::from_value::<ExpandedEpisodeV1>(without_cube).unwrap();
+        assert!(!decoded.cube_flat_action_contract);
+        assert_eq!(decoded, frozen);
+
         let configs = cube.configurations().unwrap();
         assert!(matches!(
             episode_session_v1(&cube, &configs)
