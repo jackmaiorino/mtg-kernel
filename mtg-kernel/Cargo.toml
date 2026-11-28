@@ -251,6 +251,10 @@ serde_json = "1"
 sha2 = "0.10"
 toml = "0.8"
 
+[[bin]]
+name = "cube_human_pod_v1"
+required-features = ["eternal-fixtures"]
+
 [dev-dependencies]
 semver = "1"
 syn = { version = "2", features = ["full", "visit"] }

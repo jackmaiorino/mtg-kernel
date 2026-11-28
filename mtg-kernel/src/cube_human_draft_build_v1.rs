@@ -185,6 +185,53 @@ pub struct DraftBuildConfig<'a> {
     pub journal_path: &'a Path,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OperatorConfig {
+    schema: String,
+    seat_package: crate::expanded_deck_training_v1::PinnedFileV1,
+    run: String,
+    pod_index: u64,
+    human_chair: usize,
+    journal_path: std::path::PathBuf,
+    card_text_path: std::path::PathBuf,
+}
+
+pub const DRAFT_BUILD_CONFIG_SCHEMA: &str = "mtg-kernel-cube-client-draft-build-config/v1";
+
+/// Opens the operator's local inputs once, then serves the fixed-chair
+/// draft/build phase. The same phase is used by the complete pod service.
+pub fn serve_draft_build_config(
+    config_path: &Path,
+    input: impl BufRead,
+    output: impl Write,
+) -> Result<PrivateDraftBuild, String> {
+    let config_bytes = crate::human_match_v2::read_bounded(config_path, 64 * 1024)?;
+    let text = std::str::from_utf8(&config_bytes).map_err(|e| e.to_string())?;
+    let value = crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
+    let config: OperatorConfig = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    if config.schema != DRAFT_BUILD_CONFIG_SCHEMA
+        || !config.seat_package.path.is_absolute()
+        || !config.card_text_path.is_absolute()
+    {
+        return Err("Invalid draft/build schema or operator file paths.".into());
+    }
+    let package = SeatPackage::load(&config.seat_package.path, &config.seat_package.sha256)?;
+    let card_text = LocalCardText::load(&config.card_text_path)?;
+    serve_draft_build(
+        &package,
+        DraftBuildConfig {
+            run: &config.run,
+            pod_index: config.pod_index,
+            human_chair: config.human_chair,
+            journal_path: &config.journal_path,
+        },
+        &card_text,
+        input,
+        output,
+    )
+}
+
 pub fn serve_draft_build(
     package: &SeatPackage,
     config: DraftBuildConfig<'_>,
