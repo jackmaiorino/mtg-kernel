@@ -402,7 +402,7 @@ fn validate_opening_state(
             }
         }
     }
-    if all.len() != 120 {
+    if all.len() != mainboard_size * 2 {
         return Err("opening physical card count differs".into());
     }
     Ok(())
