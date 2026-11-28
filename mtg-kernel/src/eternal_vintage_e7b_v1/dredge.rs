@@ -842,7 +842,7 @@ fn drive_draw_step_draws(state: &mut GameState, player: PlayerId, mut remaining:
         }
         event::propose_draw_attempt(state, player);
         remaining -= 1;
-        if wait_for_miracle(state, remaining) {
+        if wait_for_miracle(state, player, remaining) {
             return;
         }
     }
@@ -852,12 +852,34 @@ fn drive_draw_step_draws(state: &mut GameState, player: PlayerId, mut remaining:
 /// it is drawn (702.94a), so the rest of a multi-card turn-based draw (Quantum
 /// Riddler's) waits for that reveal. The wait is the remaining count without
 /// a replacement choice (`dredge_draw` is `None`).
-fn wait_for_miracle(state: &mut GameState, remaining: u32) -> bool {
-    if remaining == 0 || crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state).is_none() {
+fn wait_for_miracle(state: &mut GameState, player: PlayerId, remaining: u32) -> bool {
+    let Some(drawn) = crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state) else {
+        return false;
+    };
+    let Some((draw_at, _)) = crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, player)
+        .filter(|&(_, card)| card == drawn)
+    else {
+        return false;
+    };
+    if draw_step_needs_count_receipt(state, player) {
+        owned_draws_v1::record(
+            state,
+            owned_draws_v1::JournalV1::DrawStepMiracleV1 {
+                player,
+                draw_at,
+                remaining,
+            },
+        );
+    }
+    if remaining == 0 {
         return false;
     }
     e7b_state(state).draw_step_remaining = super::OptionalRemainingV1(Some(remaining));
     true
+}
+
+fn draw_step_needs_count_receipt(state: &GameState, player: PlayerId) -> bool {
+    event::draw_instruction_extra_at_hand_size(state, player, 1, 0) > 0
 }
 
 /// The rest of a turn-based draw waiting for a miracle reveal, if any.
@@ -867,54 +889,279 @@ fn miracle_draw_step_wait(state: &GameState) -> Option<u32> {
         .and_then(|e7b| e7b.draw_step_remaining.0)
 }
 
-/// Authenticates a turn-based draw waiting for a miracle reveal: only during
-/// the active player's draw step, with nothing resolving, while that
-/// player's first draw this turn is a miracle card whose reveal is pending,
-/// and no more draws remain than its draw-count replacements added for the
-/// hand it had before the draw (121.2b). Each attempt made so far put at
-/// most one card into that hand (a draw, or a dredged card's return), so
-/// some count of attempts made, the miracle's among them, accounts for
-/// the rest: the hand before the draw held at least the current hand less
-/// those attempts, and a larger hand adds no more draws.
-pub(crate) fn validate_miracle_draw_step_wait(state: &GameState) -> Result<(), String> {
-    let Some(remaining) = miracle_draw_step_wait(state) else {
-        return Ok(());
-    };
-    let player = state.active_player;
-    let hand = state.players[player.index()].hand.len();
-    let accounted = (1..=hand.max(1)).any(|made| {
-        let extra =
-            event::draw_instruction_extra_at_hand_size(state, player, 1, hand.saturating_sub(made));
-        u64::from(remaining) + u64::try_from(made).unwrap_or(u64::MAX) <= 1 + u64::from(extra)
-    });
-    let revealing = crate::eternal_legacy_e5b_v1::pending_decision(state).is_some_and(|decision| {
-        matches!(decision, crate::engine::Decision::ChooseEffectOption { player: owner, source, .. }
-            if owner == player
-                && crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, player)
-                    .is_some_and(|(_, card)| card == source))
-    });
-    if state.step != crate::state::Step::Draw
-        || remaining == 0
-        || !accounted
-        || !state.stack.is_empty()
-        || state.engine.pending_effect.is_some()
-        || !revealing
+/// Whether `event_history` holds an unresumed `DrawStepMiracleV1` receipt for
+/// `(player, draw_at)`.
+fn has_unresumed_draw_step_miracle(state: &GameState, player: PlayerId, draw_at: usize) -> bool {
+    let mut found = false;
+    for (at, entry) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::EternalOwnedDrawV1])
     {
-        return Err("the draw step's remaining draws lost their miracle reveal".into());
+        if at <= draw_at {
+            continue;
+        }
+        let event::CommittedEvent::EternalOwnedDrawV1 { journal } = entry else {
+            continue;
+        };
+        match **journal {
+            owned_draws_v1::JournalV1::DrawStepMiracleV1 {
+                player: recorded,
+                draw_at: draw,
+                ..
+            } if recorded == player && draw == draw_at => found = true,
+            owned_draws_v1::JournalV1::DrawStepMiracleResumedV1 {
+                player: recorded,
+                draw_at: draw,
+            } if recorded == player && draw == draw_at => return false,
+            _ => {}
+        }
     }
-    Ok(())
+    found
+}
+
+fn hand_changed_since_upkeep(state: &GameState, player: PlayerId, before: usize) -> Option<bool> {
+    let history = &state.engine.event_history[..before];
+    let upkeep = history.iter().rposition(|entry| {
+        matches!(
+            entry,
+            event::CommittedEvent::UpkeepBegan { player: began } if *began == player
+        )
+    })?;
+    Some(history[upkeep + 1..].iter().any(|entry| {
+        matches!(
+            entry,
+            event::CommittedEvent::Draw { player: drawn, .. } if *drawn == player
+        ) || matches!(
+            entry,
+            event::CommittedEvent::ZoneChange { object, from, to, .. }
+                if (*from == Zone::Hand || *to == Zone::Hand)
+                    && state.objects.try_get(*object).is_some_and(|card| card.owner == player)
+        )
+    }))
+}
+
+/// Old snapshots did not publish an exact count. Accept only a first-attempt
+/// wait with no earlier hand change this turn; dredges and other hand changes
+/// make the old layout ambiguous, so current receipts replace this inference.
+fn legacy_expected_miracle_wait(
+    state: &GameState,
+    player: PlayerId,
+    draw_at: usize,
+) -> Option<u32> {
+    if hand_changed_since_upkeep(state, player, draw_at)? {
+        return None;
+    }
+    let hand_before = state.players[player.index()].hand.len().checked_sub(1)?;
+    let expected = event::draw_instruction_extra_at_hand_size(state, player, 1, hand_before);
+    (expected != 0).then_some(expected)
+}
+
+/// Authenticates a turn-based wait against the active player's first drawn
+/// Miracle and the engine's record of how many attempts were outstanding.
+pub(crate) fn validate_miracle_draw_step_wait(state: &GameState) -> Result<(), String> {
+    let remaining = miracle_draw_step_wait(state);
+    let invalid = || String::from("the draw step's remaining draws lost their miracle reveal");
+    let player = state.active_player;
+    let max_extra = event::draw_instruction_extra_at_hand_size(state, player, 1, 0);
+    if let Some(dredge_player) = read_state(state).and_then(|e7b| e7b.dredge_draw) {
+        let raw_remaining = read_state(state).and_then(|e7b| e7b.draw_step_remaining.0);
+        if dredge_player != player || state.step != crate::state::Step::Draw {
+            return Err(invalid());
+        }
+        let hand_changed =
+            hand_changed_since_upkeep(state, dredge_player, state.engine.event_history.len());
+        if hand_changed == Some(false) {
+            let hand_len = state.players[dredge_player.index()].hand.len();
+            let expected_total =
+                1 + event::draw_instruction_extra_at_hand_size(state, dredge_player, 1, hand_len);
+            let expected = (expected_total > 1).then_some(expected_total);
+            if raw_remaining != expected {
+                return Err(invalid());
+            }
+        } else if let Some(count) = raw_remaining {
+            let dredge_max =
+                1 + event::draw_instruction_extra_at_hand_size(state, dredge_player, 1, 0);
+            if count < 2 || count > dredge_max {
+                return Err(invalid());
+            }
+        }
+    }
+
+    // Never allow a live Miracle offer whose draw-step Miracle receipt has
+    // already been answered/resumed, in any step of the turn (CR 702.94a).
+    if let Some(crate::engine::Decision::ChooseEffectOption {
+        player: owner,
+        source,
+        ..
+    }) = crate::eternal_legacy_e5b_v1::pending_decision(state)
+    {
+        if let Some((offer_draw_at, _)) =
+            crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, owner)
+                .filter(|&(_, card)| card == source)
+        {
+            let already_resumed = state
+                .engine
+                .event_history
+                .of_kinds_v2(&[crate::event_history_v1::EventKindV1::EternalOwnedDrawV1])
+                .any(|(at, entry)| {
+                    at > offer_draw_at
+                        && matches!(
+                            entry,
+                            event::CommittedEvent::EternalOwnedDrawV1 { journal }
+                                if matches!(
+                                    **journal,
+                                    owned_draws_v1::JournalV1::DrawStepMiracleResumedV1 {
+                                        player: recorded,
+                                        draw_at: draw,
+                                    } if recorded == owner && draw == offer_draw_at
+                                )
+                        )
+                });
+            if already_resumed {
+                return Err(invalid());
+            }
+        }
+    }
+    let idle_draw_step = state.step == crate::state::Step::Draw
+        && state.stack.is_empty()
+        && state.engine.pending_effect.is_none();
+    let reveal = if idle_draw_step {
+        crate::eternal_legacy_e5b_v1::pending_decision(state).and_then(|decision| {
+            let crate::engine::Decision::ChooseEffectOption {
+                player: owner,
+                source,
+                ..
+            } = decision
+            else {
+                return None;
+            };
+            (owner == player)
+                .then(|| crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, player))?
+                .filter(|&(_, card)| card == source)
+        })
+    } else {
+        None
+    };
+
+    // Any unresumed non-zero draw-step Miracle receipt requires its active reveal
+    // to still be pending; clearing both the offer and remaining count cannot
+    // drop mandatory draws.
+    let mut unresumed_nonzero: Vec<(PlayerId, usize)> = Vec::new();
+    for (_, entry) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::EternalOwnedDrawV1])
+    {
+        let event::CommittedEvent::EternalOwnedDrawV1 { journal } = entry else {
+            continue;
+        };
+        match **journal {
+            owned_draws_v1::JournalV1::DrawStepMiracleV1 {
+                player: recorded,
+                draw_at: draw,
+                remaining: rec_rem,
+            } if rec_rem != 0 => {
+                if !unresumed_nonzero.contains(&(recorded, draw)) {
+                    unresumed_nonzero.push((recorded, draw));
+                }
+            }
+            owned_draws_v1::JournalV1::DrawStepMiracleResumedV1 {
+                player: recorded,
+                draw_at: draw,
+            } => {
+                unresumed_nonzero.retain(|&pair| pair != (recorded, draw));
+            }
+            _ => {}
+        }
+    }
+
+    let Some((draw_at, _)) = reveal else {
+        return if remaining.is_some() || !unresumed_nonzero.is_empty() {
+            Err(invalid())
+        } else {
+            Ok(())
+        };
+    };
+    if unresumed_nonzero
+        .iter()
+        .any(|&(rec_player, rec_at)| rec_player != player || rec_at != draw_at)
+    {
+        return Err(invalid());
+    }
+    let mut receipt = None;
+    let mut duplicate_receipt = false;
+    let mut resumed = false;
+    for (at, entry) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::EternalOwnedDrawV1])
+    {
+        if at <= draw_at {
+            continue;
+        }
+        let event::CommittedEvent::EternalOwnedDrawV1 { journal } = entry else {
+            continue;
+        };
+        match **journal {
+            owned_draws_v1::JournalV1::DrawStepMiracleV1 {
+                player: recorded,
+                draw_at: draw,
+                remaining: rec_rem,
+            } if recorded == player && draw == draw_at => {
+                if rec_rem > max_extra {
+                    return Err(invalid());
+                }
+                duplicate_receipt |= receipt.replace(rec_rem).is_some();
+            }
+            owned_draws_v1::JournalV1::DrawStepMiracleResumedV1 {
+                player: recorded,
+                draw_at: draw,
+            } if recorded == player && draw == draw_at => resumed = true,
+            _ => {}
+        }
+    }
+    let replacement_pending = read_state(state).is_some_and(|e7b| e7b.dredge_draw.is_some());
+    if replacement_pending
+        || state.players[player.index()].draws_this_turn != 1
+        || duplicate_receipt
+        || resumed
+    {
+        return Err(invalid());
+    }
+    let valid = if let Some(recorded) = receipt {
+        remaining == (recorded != 0).then_some(recorded)
+    } else {
+        remaining == legacy_expected_miracle_wait(state, player, draw_at)
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(invalid())
+    }
 }
 
 /// Continues a turn-based draw once its miracle reveal is answered.
 pub(crate) fn resume_draw_step_after_miracle(state: &mut GameState) {
-    let Some(remaining) = miracle_draw_step_wait(state) else {
-        return;
-    };
     if crate::eternal_legacy_e5b_v1::pending_decision(state).is_some() {
         return;
     }
-    e7b_state(state).draw_step_remaining = super::OptionalRemainingV1(None);
     let player = state.active_player;
+    let remaining = miracle_draw_step_wait(state);
+    let draw_at = crate::eternal_legacy_e5b_v1::first_miracle_draw_at(state, player)
+        .map(|(draw_at, _)| draw_at);
+    if let Some(draw_at) = draw_at {
+        if remaining.is_some() || has_unresumed_draw_step_miracle(state, player, draw_at) {
+            owned_draws_v1::record(
+                state,
+                owned_draws_v1::JournalV1::DrawStepMiracleResumedV1 { player, draw_at },
+            );
+        }
+    }
+    let Some(remaining) = remaining else {
+        return;
+    };
+    e7b_state(state).draw_step_remaining = super::OptionalRemainingV1(None);
     drive_draw_step_draws(state, player, remaining);
 }
 
@@ -924,7 +1171,8 @@ pub(crate) fn resume_draw_step_after_miracle(state: &mut GameState) {
 pub(crate) fn defer_draw_step_draw(state: &mut GameState, player: PlayerId) -> bool {
     let total = 1 + event::draw_instruction_extra(state, player, 1);
     if !(owned_draw_needs_choice(state, player, 1)
-        || total > 1 && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player))
+        || (total > 1 || draw_step_needs_count_receipt(state, player))
+            && crate::eternal_legacy_e5b_v1::next_draw_may_offer_miracle(state, player))
     {
         return false;
     }
@@ -1006,8 +1254,9 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
             }
         }
     }
-    if remaining > 1 && !wait_for_miracle(state, remaining - 1) {
-        drive_draw_step_draws(state, player, remaining - 1);
+    let later = remaining.saturating_sub(1);
+    if !wait_for_miracle(state, player, later) && later != 0 {
+        drive_draw_step_draws(state, player, later);
     }
     Ok(true)
 }
