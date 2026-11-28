@@ -437,7 +437,8 @@ impl TripwireTracker {
         }
 
         let pod: ReplayPod = serde_json::from_value(pod)?;
-        if pod.schema != crate::cube_pod_runner_v1::POD_RECORD_SCHEMA
+        if (pod.schema != crate::cube_pod_runner_v1::POD_RECORD_SCHEMA
+            && pod.schema != crate::cube_pod_runner_v1::POD_RECORD_SCHEMA_V3)
             || pod.games.len() != crate::cube_pod_runner_v1::TRAINING_POD_GAMES
         {
             return Err(invalid(

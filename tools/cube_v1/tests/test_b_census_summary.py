@@ -71,6 +71,18 @@ class NormaliserTests(unittest.TestCase):
             bcs.stop_kind({"kind": "terminal", "classification": "natural", "reason": "turn source:3"}),
             "turn source:*",
         )
+        # Dedicated encoder_refusal:<kind> category (M5 D11 / interfaces v3 r2).
+        self.assertEqual(
+            bcs.stop_kind(
+                {
+                    "kind": "terminal",
+                    "code": "encoder_refusal:unsupported_zone",
+                    "classification": "encoder_refusal",
+                    "reason": "encoder_refusal:unsupported_zone: source:42",
+                }
+            ),
+            "encoder_refusal:unsupported_zone",
+        )
 
     def test_census_shapes_agree_with_cause_of(self):
         self.assertEqual(bcs.cause_of({"end": "driver_decision_cap"}), "driver_decision_cap")
