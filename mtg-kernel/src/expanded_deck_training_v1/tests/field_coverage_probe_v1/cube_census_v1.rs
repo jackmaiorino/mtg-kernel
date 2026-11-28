@@ -708,7 +708,7 @@ pub(super) fn census_stop_detail_v1(
         }
         if diagnosis.starts_with("observation ") {
             let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
-            let observation = if cube_mode_opt_in_v1() {
+            let observation = if session.is_cube_v1() {
                 crate::rl::observe_policy_v6_unhashed_for_cube_flat_policy(
                     session.game_state(),
                     &surface,
