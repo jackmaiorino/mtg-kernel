@@ -109,6 +109,9 @@ impl GamePilot for NaturalPilot {
                 reason: "fixture".to_owned(),
             },
             last_action_source: None,
+            first_player_seat: None,
+            last_acting_seat: None,
+            pilot_sample: None,
         }
     }
 }
@@ -245,6 +248,9 @@ fn paired_pods_keep_the_prefix_for_a_death_in_the_second_pod() {
                         message: "injected exit".to_owned(),
                     },
                     last_action_source: None,
+                    first_player_seat: None,
+                    last_acting_seat: None,
+                    pilot_sample: None,
                 };
             }
             NaturalPilot.play(spec, caps)
@@ -317,6 +323,9 @@ impl GamePilot for AlwaysHaltPilot {
             policy_steps: Some(1),
             end: GameEnd::DecisionCap,
             last_action_source: None,
+            first_player_seat: None,
+            last_acting_seat: None,
+            pilot_sample: None,
         }
     }
 }
@@ -334,6 +343,9 @@ impl GamePilot for FirstWatchdogPilot {
                 policy_steps: Some(0),
                 end: watchdog_game_end(),
                 last_action_source: None,
+                first_player_seat: None,
+                last_acting_seat: None,
+                pilot_sample: None,
             };
         }
         NaturalPilot.play(spec, caps)
@@ -355,6 +367,9 @@ impl GamePilot for RepeatWatchdogPilot {
                 policy_steps: Some(0),
                 end: watchdog_game_end(),
                 last_action_source: None,
+                first_player_seat: None,
+                last_acting_seat: None,
+                pilot_sample: None,
             };
         }
         NaturalPilot.play(spec, caps)
@@ -1078,12 +1093,17 @@ fn append_manifest_entry(
 }
 
 fn append_resume(manifest: &mut String, seq: u64, run: &str, next: u64) {
+    let run_id = if run.contains('/') {
+        run.to_owned()
+    } else {
+        format!("test/{run}")
+    };
     append_manifest_entry(
         manifest,
         seq,
         "resume",
         serde_json::json!({
-            "run_id": format!("test/{run}"),
+            "run_id": run_id,
             "host_loss_evidence": "fixture host boot record",
             "last_published_update": next.saturating_sub(1),
             "resume_batch": next,
@@ -2451,6 +2471,46 @@ fn resume_checks_receipt_binding_and_rejects_missing_game_fields() {
     assert!(error.to_string().contains("missing field") && error.to_string().contains("games"));
 }
 
+fn split_json_array_elements(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut elements = Vec::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut start = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(s) = start.take() {
+                        elements.push(&text[s..=i]);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    elements
+}
+
 #[test]
 fn signed_shakedown_checkpoint_marks_match_a6_and_d0() {
     let b1 = RunConfig::shakedown(PathBuf::new(), "b1", Segment::BuilderOnly);
@@ -2459,4 +2519,564 @@ fn signed_shakedown_checkpoint_marks_match_a6_and_d0() {
     assert_eq!(b1.marks.owner_views, b1.marks.dose_reads);
     assert!(k1.marks.dose_reads.is_empty());
     assert_eq!(k1.marks.owner_views, [64, 128]);
+}
+
+#[test]
+fn m5_l3_host_loss_replays_interrupted_batch_with_exact_checkpoint_and_straddling_tripwire_parity()
+{
+    use mtg_kernel::cube_pod_runner_v1::{PodRecordVersion, POD_RECORD_SCHEMA_V3};
+    use mtg_kernel::cube_seat_v1::{PilotSampleCounts, M4_INTERFACES_VERSION_V3};
+    use mtg_kernel::cube_training_driver_v1::HostLossPolicy;
+
+    struct StraddlingPilot;
+    impl GamePilot for StraddlingPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, _caps: &GameCaps) -> AttemptOutcome {
+            let mut counts = PilotSampleCounts::default();
+            let card = spec.decks[0].card_ids()[0];
+            counts.decisions = 2;
+            counts.offered_decisions_by_card.insert(card, 2);
+            counts.offered_actions_by_card.insert(card, 3);
+            counts.chosen_by_card.insert(card, 1);
+            AttemptOutcome {
+                decisions: 2,
+                physical_decisions: Some(2),
+                policy_steps: Some(2),
+                end: GameEnd::Natural {
+                    winner_seat: Some(spec.seats[(spec.action_seed % 2) as usize]),
+                    reason: "m5-l3-fixture".to_owned(),
+                },
+                last_action_source: Some(card),
+                first_player_seat: Some(spec.seats[0]),
+                last_acting_seat: Some(spec.seats[(spec.action_seed % 2) as usize]),
+                pilot_sample: Some(counts),
+            }
+        }
+    }
+
+    let make_m5_cfg = |root: &Path| {
+        let mut cfg = RunConfig::m5(
+            root,
+            "b1",
+            Segment::BuilderOnly,
+            2,
+            PilotSchedule {
+                initial: PilotSelection::Checkpoint { pin: pilot_pin() },
+                switch: None,
+            },
+        );
+        cfg.host = Some("m5-test-host".to_owned());
+        cfg
+    };
+
+    let temp = TempTestDir::new("m5-l3-replay");
+    let direct_root = temp.join("direct");
+    let cube = pool();
+    let pilot = FixturePilot(Arc::new(StraddlingPilot));
+
+    // Uninterrupted reference execution across 2 updates (2,240 games, straddling the rolling window).
+    let mut direct = TrainingDriver::open(make_m5_cfg(&direct_root), model_rows(), 1234).unwrap();
+    for u in 0..2 {
+        assert_eq!(
+            direct.run_next_update(&cube, &pilot),
+            Ok(RunOutcome::Published { update: u })
+        );
+    }
+    let direct_sha = direct.checkpoint_state_sha256().to_owned();
+    let direct_u1_ckpt = fs::read(direct_root.join("updates/update-0001/checkpoint.json")).unwrap();
+    let direct_u1_pods = fs::read(direct_root.join("updates/update-0001/pods.json")).unwrap();
+    let direct_u1_sample = fs::read(direct_root.join("pilot_path/update-0001.json")).unwrap();
+    let direct_tripwire_games = tripwire_games_for_test(&direct_root).unwrap();
+    assert_eq!(direct_tripwire_games, 2 * 16 * 70);
+    drop(direct);
+
+    // Simulate host loss mid-uncommitted update 1 (partial pods staged in pending/update-0001, no commit.json,
+    // runner-active.json left behind).
+    let replay_root = temp.join("replay");
+    let mut interrupted =
+        TrainingDriver::open(make_m5_cfg(&replay_root), model_rows(), 1234).unwrap();
+    assert_eq!(
+        interrupted.run_next_update(&cube, &pilot),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    drop(interrupted);
+    let pending_u1 = replay_root.join("pending/update-0001/partial");
+    fs::create_dir_all(&pending_u1).unwrap();
+    fs::write(pending_u1.join("pod-000016.json"), b"{\"partial\":true}").unwrap();
+    fs::write(replay_root.join("runner-active.json"), b"null\n").unwrap();
+
+    // R1 check: relaunching without a resume entry under L3 ReplayInterruptedBatch
+    // must fail closed with ResumeAuthorizationRequired and write NO stops/ record,
+    // leaving proof-backed recovery possible.
+    let no_proof_cfg = make_m5_cfg(&replay_root);
+    assert_eq!(
+        TrainingDriver::open(no_proof_cfg, model_rows(), 1234).err(),
+        Some(TrainingDriverError::ResumeAuthorizationRequired)
+    );
+    assert!(
+        !replay_root.join("stops").exists()
+            || fs::read_dir(replay_root.join("stops"))
+                .unwrap()
+                .next()
+                .is_none(),
+        "unproven L3 relaunch must not write a permanent process_death stop"
+    );
+
+    // Verify D0 AbandonTouchedBatch would refuse this exact state, while M5 ReplayInterruptedBatch
+    // recovers cleanly with a pinned host-loss resume entry.
+    let mut resume_cfg = make_m5_cfg(&replay_root);
+    assert_eq!(
+        resume_cfg.host_loss_policy,
+        HostLossPolicy::ReplayInterruptedBatch
+    );
+    assert_eq!(resume_cfg.pod_record_version, PodRecordVersion::V3);
+    assert_eq!(resume_cfg.interfaces, M4_INTERFACES_VERSION_V3);
+    assert!(!resume_cfg.fill_pod_tails);
+    resume_cfg.resume = Some(manifest_resume(
+        &temp.join("m5-resume.md"),
+        "m5-train/b1",
+        1,
+    ));
+
+    let mut resumed = TrainingDriver::open(resume_cfg, model_rows(), 1234).unwrap();
+    assert_eq!(resumed.next_update(), 1);
+    assert!(!replay_root.join("pending/update-0001").exists());
+    assert_eq!(
+        resumed.run_next_update(&cube, &pilot),
+        Ok(RunOutcome::Published { update: 1 })
+    );
+    assert_eq!(resumed.checkpoint_state_sha256(), direct_sha);
+    assert_eq!(
+        fs::read(replay_root.join("updates/update-0001/checkpoint.json")).unwrap(),
+        direct_u1_ckpt
+    );
+    assert_eq!(
+        fs::read(replay_root.join("updates/update-0001/pods.json")).unwrap(),
+        direct_u1_pods
+    );
+    assert_eq!(
+        fs::read(replay_root.join("pilot_path/update-0001.json")).unwrap(),
+        direct_u1_sample
+    );
+    assert_eq!(
+        fs::read(replay_root.join("updates/update-0001/pilot_path.json")).unwrap(),
+        direct_u1_sample
+    );
+    assert_eq!(
+        tripwire_games_for_test(&replay_root).unwrap(),
+        direct_tripwire_games
+    );
+    drop(resumed);
+
+    // Check v3 schema: timing sidecar stays outside commit.json, while deterministic
+    // pilot_path.json is pinned in commit.json and recovered idempotently if deleted.
+    let commit = read_value(&replay_root.join("updates/update-0001/commit.json"));
+    let commit_files = commit["files"].as_object().unwrap();
+    assert!(!commit_files.contains_key("timing"));
+    assert!(commit_files.contains_key("pilot_path.json"));
+    assert!(replay_root
+        .join("timing/update-0001/pod-000016.jsonl")
+        .is_file());
+    fs::remove_file(replay_root.join("pilot_path/update-0001.json")).unwrap();
+    let reopened = TrainingDriver::open(make_m5_cfg(&replay_root), model_rows(), 1234).unwrap();
+    drop(reopened);
+    assert_eq!(
+        fs::read(replay_root.join("pilot_path/update-0001.json")).unwrap(),
+        direct_u1_sample
+    );
+    let mut pods_raw = String::new();
+    std::io::Read::read_to_string(
+        &mut flate2::read::GzDecoder::new(
+            fs::File::open(replay_root.join("updates/update-0001/pods.json")).unwrap(),
+        ),
+        &mut pods_raw,
+    )
+    .unwrap();
+    let raw_pods = split_json_array_elements(&pods_raw);
+    assert_eq!(raw_pods.len(), 16);
+    mtg_kernel::cube_pod_runner_v1::validate_pod_record_json(raw_pods[0]).unwrap();
+    let pods: Vec<serde_json::Value> = serde_json::from_str(&pods_raw).unwrap();
+    assert_eq!(pods[0]["schema"], POD_RECORD_SCHEMA_V3);
+    assert_eq!(pods[0]["interfaces"], M4_INTERFACES_VERSION_V3);
+    let a0 = &pods[0]["games"][0]["attempts"][0];
+    assert!(a0["first_player_seat"].is_u64());
+    assert!(a0["last_acting_seat"].is_u64());
+    assert!(matches!(
+        a0["last_acting_arm"].as_str(),
+        Some("learning" | "older" | "fixture")
+    ));
+
+    // Idempotent reopen on clean recovered root changes no byte.
+    let reopened = TrainingDriver::open(make_m5_cfg(&replay_root), model_rows(), 1234).unwrap();
+    assert_eq!(reopened.checkpoint_state_sha256(), direct_sha);
+}
+
+#[test]
+fn m5_l3_host_loss_preserves_execution_zero_watchdog_and_enforces_hang_on_second_expiry() {
+    struct AlwaysWatchdogPilot;
+    impl GamePilot for AlwaysWatchdogPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, _caps: &GameCaps) -> AttemptOutcome {
+            AttemptOutcome {
+                decisions: 1,
+                physical_decisions: None,
+                policy_steps: None,
+                end: watchdog_game_end(),
+                last_action_source: None,
+                first_player_seat: Some(spec.seats[0]),
+                last_acting_seat: None,
+                pilot_sample: None,
+            }
+        }
+    }
+
+    let temp = TempTestDir::new("m5-l3-watchdog-distinct");
+    let root = temp.join("b1");
+    let make_cfg = || {
+        RunConfig::m5(
+            &root,
+            "b1",
+            Segment::BuilderOnly,
+            1,
+            PilotSchedule {
+                initial: PilotSelection::Checkpoint { pin: pilot_pin() },
+                switch: None,
+            },
+        )
+    };
+    let mut driver = TrainingDriver::open(make_cfg(), model_rows(), 1234).unwrap();
+    drop(driver);
+
+    // Simulate execution 0 already expired on watchdog (pod 0, game 0) and persisted
+    // watchdog/update-0000.json, followed by a host loss mid-execution-1.
+    fs::create_dir_all(root.join("watchdog")).unwrap();
+    let void_record = serde_json::json!({
+        "schema": "mtg-kernel-cube-stop/v1",
+        "kind": "watchdog_void",
+        "run": "b1",
+        "batch_index": 0,
+        "pod": 0,
+        "pairing": 0,
+        "game": 0,
+        "decks": [0, 1],
+        "attempts": [{"deal_seed": 1, "stop_kind": "terminal:watchdog", "last_action_source": null}],
+        "hang": null,
+        "first_watchdog_pod": 0,
+        "first_watchdog_game": 0,
+        "second_watchdog_pod": null,
+        "second_watchdog_game": null,
+        "firing": null,
+        "process_death": null,
+        "error": null,
+        "batch": []
+    });
+    fs::write(
+        root.join("watchdog/update-0000.json"),
+        serde_json::to_vec_pretty(&void_record).unwrap(),
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("pending/update-0000/partial")).unwrap();
+    fs::write(root.join("runner-active.json"), b"null\n").unwrap();
+
+    let mut resume_cfg = make_cfg();
+    resume_cfg.resume = Some(manifest_resume(
+        &temp.join("wd-resume.md"),
+        "m5-train/b1",
+        0,
+    ));
+    driver = TrainingDriver::open(resume_cfg, model_rows(), 1234).unwrap();
+    let pilot = FixturePilot(Arc::new(AlwaysWatchdogPilot));
+    // Must immediately trigger hang/watchdog_stop on execution 1 (NOT grant another watchdog retry!).
+    assert_eq!(
+        driver.run_next_update(&pool(), &pilot),
+        Ok(RunOutcome::Stopped {
+            update: 0,
+            kind: "watchdog_stop".to_owned(),
+        })
+    );
+    let stop = read_value(&root.join("stops/stop-0000.json"));
+    assert_eq!(stop["hang"], true);
+    assert_eq!(stop["first_watchdog_pod"], 0);
+    assert_eq!(stop["first_watchdog_game"], 0);
+    assert_eq!(stop["second_watchdog_pod"], 0);
+    assert_eq!(stop["second_watchdog_game"], 0);
+    assert_eq!(stop["firing"]["rule"]["target"], "hang");
+}
+
+#[test]
+fn m5_v3_null_attribution_worker_parity_and_fill_pod_tails_ordered_stop() {
+    use mtg_kernel::cube_seat_v1::PilotSampleCounts;
+
+    // Pilot that exercises:
+    // - attempt 0 halt with decisions == 0 (explicit null last_acting_seat & last_acting_arm)
+    // - attempt 1 completed with non-null first_player_seat, last_acting_seat, last_acting_arm
+    // - deterministic sampled offered/chosen counts across 1 vs 4 workers.
+    struct ZeroDecisionThenNaturalPilot {
+        attempt0_action_seed: u64,
+    }
+    impl GamePilot for ZeroDecisionThenNaturalPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, _caps: &GameCaps) -> AttemptOutcome {
+            if spec.action_seed == self.attempt0_action_seed {
+                return AttemptOutcome {
+                    decisions: 0,
+                    physical_decisions: Some(0),
+                    policy_steps: Some(0),
+                    end: GameEnd::SessionError {
+                        code: "reset_failed".to_owned(),
+                        message: "zero-decision halt".to_owned(),
+                    },
+                    last_action_source: None,
+                    first_player_seat: None,
+                    last_acting_seat: None,
+                    pilot_sample: None,
+                };
+            }
+            let card = spec.decks[0].card_ids()[0];
+            let mut counts = PilotSampleCounts {
+                decisions: 4,
+                offered_decisions_null: 2,
+                offered_actions_null: 3,
+                chosen_null: 2,
+                ..PilotSampleCounts::default()
+            };
+            counts.offered_decisions_by_card.insert(card, 3);
+            counts.offered_actions_by_card.insert(card, 5);
+            counts.chosen_by_card.insert(card, 2);
+            AttemptOutcome {
+                decisions: 4,
+                physical_decisions: Some(4),
+                policy_steps: Some(4),
+                end: GameEnd::Natural {
+                    winner_seat: Some(spec.seats[1]),
+                    reason: "natural".to_owned(),
+                },
+                last_action_source: Some(card),
+                first_player_seat: Some(spec.seats[0]),
+                last_acting_seat: Some(spec.seats[1]),
+                pilot_sample: Some(counts),
+            }
+        }
+    }
+
+    let temp = TempTestDir::new("m5-v3-worker-parity");
+    let cube = pool();
+    let pod0_play_seed =
+        mtg_kernel::cube_pod_runner_v1::pod_play_seed("m5-train", "b1", 0).unwrap();
+    let pod0_game0_seed = mtg_kernel::cube_draft_v1::game_seed(pod0_play_seed, 0);
+    let attempt0_action_seed = mtg_kernel::cube_pod_runner_v1::attempt_seeds(pod0_game0_seed, 0).2;
+    let pilot = FixturePilot(Arc::new(ZeroDecisionThenNaturalPilot {
+        attempt0_action_seed,
+    }));
+
+    let run_with_workers = |name: &str, workers: usize| {
+        let root = temp.join(name);
+        let mut cfg = RunConfig::m5(
+            &root,
+            "b1",
+            Segment::BuilderOnly,
+            1,
+            PilotSchedule {
+                initial: PilotSelection::Checkpoint { pin: pilot_pin() },
+                switch: None,
+            },
+        );
+        cfg.workers = workers;
+        cfg.pilot_sample_denom = 4;
+        let mut driver = TrainingDriver::open(cfg, model_rows(), 1234).unwrap();
+        assert_eq!(
+            driver.run_next_update(&cube, &pilot),
+            Ok(RunOutcome::Published { update: 0 })
+        );
+        (
+            driver.checkpoint_state_sha256().to_owned(),
+            fs::read(root.join("updates/update-0000/pods.json")).unwrap(),
+            fs::read(root.join("pilot_path/update-0000.json")).unwrap(),
+            root,
+        )
+    };
+
+    let (sha1, pods1, sample1, root1) = run_with_workers("w1", 1);
+    let (sha4, pods4, sample4, _root4) = run_with_workers("w4", 4);
+    assert_eq!(sha1, sha4);
+    assert_eq!(pods1, pods4);
+    assert_eq!(sample1, sample4);
+
+    let sample_doc = read_value(&root1.join("pilot_path/update-0000.json"));
+    assert_eq!(sample_doc["sample_denom"], 4);
+    assert_eq!(sample_doc["total_games"], 16 * 70);
+    assert!(sample_doc["sampled_games"].as_u64().unwrap() > 0);
+    let sampled_decisions = sample_doc["sampled_decisions"].as_u64().unwrap();
+    assert!(sampled_decisions > 0);
+    assert_eq!(sample_doc["sampled_refused_decisions"], 0);
+    let chosen_card_sum: u64 = sample_doc["chosen_by_card"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|v| v.as_u64().unwrap())
+        .sum();
+    let chosen_null = sample_doc["chosen_null"].as_u64().unwrap();
+    assert_eq!(chosen_card_sum + chosen_null, sampled_decisions);
+
+    // R3 check: an uninstrumented pilot that omits pilot_sample on a sampled
+    // game with decisions > 0 must fail closed instead of silently reporting zeros.
+    struct UninstrumentedPilot;
+    impl GamePilot for UninstrumentedPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, _caps: &GameCaps) -> AttemptOutcome {
+            AttemptOutcome {
+                decisions: 2,
+                physical_decisions: Some(2),
+                policy_steps: Some(2),
+                end: GameEnd::Natural {
+                    winner_seat: Some(spec.seats[0]),
+                    reason: "natural".to_owned(),
+                },
+                last_action_source: None,
+                first_player_seat: Some(spec.seats[0]),
+                last_acting_seat: Some(spec.seats[0]),
+                pilot_sample: None,
+            }
+        }
+    }
+    let uninst_root = temp.join("uninstrumented-r3");
+    let mut uninst_cfg = RunConfig::m5(
+        &uninst_root,
+        "b1",
+        Segment::BuilderOnly,
+        1,
+        PilotSchedule {
+            initial: PilotSelection::Checkpoint { pin: pilot_pin() },
+            switch: None,
+        },
+    );
+    uninst_cfg.workers = 1;
+    uninst_cfg.pilot_sample_denom = 1;
+    let mut uninst_driver = TrainingDriver::open(uninst_cfg, model_rows(), 1234).unwrap();
+    let uninst_pilot = FixturePilot(Arc::new(UninstrumentedPilot));
+    let err = uninst_driver
+        .run_next_update(&cube, &uninst_pilot)
+        .expect_err("uninstrumented pilot on sampled game must fail closed");
+    assert!(
+        matches!(
+            err,
+            TrainingDriverError::Pod(mtg_kernel::cube_pod_runner_v1::PodRunnerError::InvalidPlan(
+                _
+            ))
+        ),
+        "unexpected error: {err:?}"
+    );
+    drop(uninst_driver);
+
+    // Verify at least one zero-decision halted attempt has explicit null last_acting_seat/arm.
+    let mut pods_raw = String::new();
+    std::io::Read::read_to_string(
+        &mut flate2::read::GzDecoder::new(
+            fs::File::open(root1.join("updates/update-0000/pods.json")).unwrap(),
+        ),
+        &mut pods_raw,
+    )
+    .unwrap();
+    for raw_pod in split_json_array_elements(&pods_raw) {
+        mtg_kernel::cube_pod_runner_v1::validate_pod_record_json(raw_pod).unwrap();
+    }
+    let pods: Vec<serde_json::Value> = serde_json::from_str(&pods_raw).unwrap();
+    let mut saw_zero_decision_null = false;
+    for pod in &pods {
+        for g in pod["games"].as_array().unwrap() {
+            for a in g["attempts"].as_array().unwrap() {
+                if a["decisions"].as_u64() == Some(0) {
+                    assert!(a["last_acting_seat"].is_null());
+                    assert!(a["last_acting_arm"].is_null());
+                    saw_zero_decision_null = true;
+                }
+            }
+        }
+    }
+    assert!(
+        saw_zero_decision_null,
+        "expected zero-decision halt with explicit null attribution"
+    );
+
+    // Verify --fill-pod-tails ordered stop on Checkpoint pilot when pod 0 stops while pod 1 runs.
+    struct Pod0RetryExhaustedPilot {
+        pod0_stop_seed: u64,
+    }
+    impl GamePilot for Pod0RetryExhaustedPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, _caps: &GameCaps) -> AttemptOutcome {
+            let sample = PilotSampleCounts {
+                decisions: 1,
+                offered_decisions_null: 1,
+                offered_actions_null: 1,
+                chosen_null: 1,
+                ..PilotSampleCounts::default()
+            };
+            if spec.episode == 0
+                && (0..=3u8).any(|k| {
+                    mtg_kernel::cube_pod_runner_v1::attempt_seeds(self.pod0_stop_seed, k).2
+                        == spec.action_seed
+                })
+            {
+                return AttemptOutcome {
+                    decisions: 1,
+                    physical_decisions: Some(1),
+                    policy_steps: Some(1),
+                    end: GameEnd::DecisionCap,
+                    last_action_source: None,
+                    first_player_seat: Some(spec.seats[0]),
+                    last_acting_seat: Some(spec.seats[0]),
+                    pilot_sample: Some(sample),
+                };
+            }
+            AttemptOutcome {
+                decisions: 1,
+                physical_decisions: Some(1),
+                policy_steps: Some(1),
+                end: GameEnd::Natural {
+                    winner_seat: Some(spec.seats[0]),
+                    reason: "natural".to_owned(),
+                },
+                last_action_source: None,
+                first_player_seat: Some(spec.seats[0]),
+                last_acting_seat: Some(spec.seats[0]),
+                pilot_sample: Some(sample),
+            }
+        }
+    }
+
+    let pod0_play_seed =
+        mtg_kernel::cube_pod_runner_v1::pod_play_seed("m5-train", "b1", 0).unwrap();
+    let pod0_game0_seed = mtg_kernel::cube_draft_v1::game_seed(pod0_play_seed, 0);
+    let stop_pilot = FixturePilot(Arc::new(Pod0RetryExhaustedPilot {
+        pod0_stop_seed: pod0_game0_seed,
+    }));
+
+    let run_stop = |name: &str, fill_pod_tails: bool| {
+        let root = temp.join(name);
+        let mut cfg = RunConfig::m5(
+            &root,
+            "b1",
+            Segment::BuilderOnly,
+            1,
+            PilotSchedule {
+                initial: PilotSelection::Checkpoint { pin: pilot_pin() },
+                switch: None,
+            },
+        );
+        cfg.workers = 4;
+        cfg.fill_pod_tails = fill_pod_tails;
+        let mut driver = TrainingDriver::open(cfg, model_rows(), 1234).unwrap();
+        let outcome = driver.run_next_update(&cube, &stop_pilot).unwrap();
+        assert_eq!(
+            outcome,
+            RunOutcome::Stopped {
+                update: 0,
+                kind: "retry_exhausted".to_owned(),
+            }
+        );
+        read_value(&root.join("stops/stop-0000.json"))
+    };
+
+    let stop_serial = run_stop("stop-serial", false);
+    let stop_tailed = run_stop("stop-tailed", true);
+    assert_eq!(stop_serial, stop_tailed);
+    assert_eq!(stop_tailed["pod"], 0);
+    assert_eq!(stop_tailed["game"], 0);
+    assert_eq!(stop_tailed["batch"].as_array().unwrap().len(), 1);
 }

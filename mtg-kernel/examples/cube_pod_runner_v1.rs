@@ -36,14 +36,15 @@ use mtg_kernel::cube_owner_view_v1::cube_pool_from_ordered_ids;
 use mtg_kernel::cube_pod_runner_v1::{
     run_training_pod, run_uniform_training_batch, training_roles_with_older,
     uniform_training_chairs, validate_training_pod_config, BatchReport, PilotInfo, PodCaps,
-    PodPins, PodUse, TrainingPodConfig, UniformBatchConfig, DEFAULT_WATCHDOG_SECONDS,
+    PodPins, PodRecordVersion, PodUse, TrainingPodConfig, UniformBatchConfig,
+    DEFAULT_WATCHDOG_SECONDS,
 };
 use mtg_kernel::cube_read_plan_v1::{
     execute_read_plan_v1, parse_and_validate_read_plan_json,
-    run_prep_set_execution_with_ended_claim, sha256_hex, supervise_plan_set_execution,
-    to_canonical_compact_json, to_canonical_pretty_json, CheckpointSeatFactory,
-    CommandPodWorkerLauncher, PodProgressJournal, ReadPlanRunOptions, RuntimePins,
-    RuntimeVerification, ShakedownManifestPin,
+    run_prep_set_execution_with_ended_claim, sha256_hex, supervise_plan_set_execution_with_options,
+    to_canonical_compact_json, to_canonical_pretty_json, write_read_pilot_path_sidecar,
+    CheckpointSeatFactory, CommandPodWorkerLauncher, PodProgressJournal, ReadPlanRunOptions,
+    ReadPlanSetOptions, RuntimePins, RuntimeVerification, ShakedownManifestPin,
 };
 #[path = "cube_pod_runner/worker.rs"]
 mod worker;
@@ -96,6 +97,8 @@ const VALUE_FLAGS: &[&str] = &[
     "--shakedown-records-repo",
     "--platform",
     "--host",
+    "--record-version",
+    "--pilot-sample-denom",
 ];
 
 struct Args {
@@ -391,6 +394,12 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
     }
     plan.preflight_seats(&loaded.seats)
         .map_err(|e| e.to_string())?;
+    let record_version = match args.get("--record-version").unwrap_or("v2") {
+        "v2" => PodRecordVersion::V2,
+        "v3" => PodRecordVersion::V3,
+        other => return Err(format!("unknown --record-version {other:?}")),
+    };
+    let pilot_sample_denom = args.number("--pilot-sample-denom")?.unwrap_or(0);
     let journal = PodProgressJournal::create(journal_path).map_err(|e| e.to_string())?;
     let run_opts = ReadPlanRunOptions {
         execution,
@@ -398,6 +407,8 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
         host,
         watchdog_override: None,
         journal: Some(&journal),
+        record_version,
+        pilot_sample_denom,
     };
     let output = execute_read_plan_v1(
         &loaded.pool,
@@ -427,6 +438,22 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
     timing_file
         .sync_all()
         .map_err(|e| format!("{}: {e}", timing_path.display()))?;
+    if pilot_sample_denom > 0 {
+        let sample = output.pilot_sample.as_ref().ok_or_else(|| {
+            format!(
+                "worker pod {} missing required pilot_path sample for denom {pilot_sample_denom}",
+                plan.pod_index
+            )
+        })?;
+        let sidecar_path = out_path
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or_else(|| Path::new("."))
+            .join("pilot_path")
+            .join(format!("pod-{:06}.json", plan.pod_index));
+        write_read_pilot_path_sidecar(&sidecar_path, &plan, pilot_sample_denom, sample)
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -540,6 +567,8 @@ fn run_cli(args: &Args) -> Fallible<()> {
                     "--card-index-pin",
                     "--ordered-pool",
                     "--ordered-pool-pin",
+                    "--record-version",
+                    "--pilot-sample-denom",
                 ] {
                     if let Some(value) = args.get(flag) {
                         cmd.arg(flag).arg(value);
@@ -551,13 +580,23 @@ fn run_cli(args: &Args) -> Fallible<()> {
                 cmd
             },
         );
-        let receipt = supervise_plan_set_execution(
+        let record_version = match args.get("--record-version").unwrap_or("v2") {
+            "v2" => PodRecordVersion::V2,
+            "v3" => PodRecordVersion::V3,
+            other => return Err(format!("unknown --record-version {other:?}")),
+        };
+        let pilot_sample_denom = args.number("--pilot-sample-denom")?.unwrap_or(0);
+        let receipt = supervise_plan_set_execution_with_options(
             &loaded.pool,
             Path::new(plan_dir),
             execution,
             &loaded.seats,
             &verification,
             &launcher,
+            ReadPlanSetOptions {
+                record_version,
+                pilot_sample_denom,
+            },
         )
         .map_err(|error| error.to_string())?;
         let text = to_canonical_pretty_json(&receipt).map_err(|e| e.to_string())?;

@@ -29042,6 +29042,26 @@ fn keyword_check() -> bool {
 }
 
 fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keywords) -> Keywords {
+    // Shadowspear: "Permanents your opponents control lose hexproof and
+    // indestructible until end of turn."
+    #[cfg(feature = "eternal-fixtures")]
+    let wanted = {
+        let mut wanted = wanted;
+        if wanted.has(Keywords::HEXPROOF)
+            && crate::eternal_legacy_e7a_v1::keyword_lost(state, id, Keywords::HEXPROOF)
+        {
+            wanted = Keywords(wanted.0 & !Keywords::HEXPROOF.0);
+        }
+        if wanted.has(Keywords::INDESTRUCTIBLE)
+            && crate::eternal_legacy_e7a_v1::keyword_lost(state, id, Keywords::INDESTRUCTIBLE)
+        {
+            wanted = Keywords(wanted.0 & !Keywords::INDESTRUCTIBLE.0);
+        }
+        if wanted == Keywords::NONE {
+            return Keywords::NONE;
+        }
+        wanted
+    };
     let asks = |k: Keywords| wanted.has(k);
     let mut found = Keywords::NONE;
     if asks(Keywords::HEXPROOF)
@@ -29148,11 +29168,11 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
             | crate::eternal_cube_c9a_v1::granted_keywords(state, id)
             | crate::eternal_cube_c9b_v1::granted_keywords(state, id)
             | crate::eternal_cube_c9c_v1::granted_keywords(state, id);
-        // Carnage Interpreter's menace and Keen-Eyed Curator's trample
-        // (Vintage Cube wave C5a); `has_effective_keyword` reads them through
-        // `eternal_cards_v1::conditional_self_keywords`.
+        // Dash haste (wave E7b / C3a), Carnage Interpreter's menace and
+        // Keen-Eyed Curator's trample (wave C5a), and Dragon's Rage
+        // Channeler's delirium flying.
         if printed_active {
-            found = found | crate::eternal_cube_c5a_v1::conditional_keywords(state, id);
+            found = found | crate::eternal_cards_v1::conditional_self_keywords(state, id);
         }
     }
     if printed_active && obj.zone == Zone::Battlefield {
@@ -46545,3 +46565,7 @@ mod wide_cast_x_v59_tests;
 ))]
 #[path = "engine/ordinary_cleanup_discard_tests.rs"]
 mod ordinary_cleanup_discard_tests;
+
+#[cfg(all(test, feature = "eternal-fixtures"))]
+#[path = "engine/effective_keywords_parity_tests.rs"]
+mod effective_keywords_parity_tests;

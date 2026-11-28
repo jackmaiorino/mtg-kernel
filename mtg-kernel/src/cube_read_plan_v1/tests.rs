@@ -1,4 +1,5 @@
 use super::*;
+use crate::cube_pod_runner_v1::POD_RECORD_SCHEMA;
 
 fn execution_entry(execution: u64, reason: ExecutionReason) -> ManifestExecutionEntry {
     ManifestExecutionEntry {
@@ -158,6 +159,10 @@ fn write_history_receipt(
                 halted: true,
                 stop_kind: Some(WATCHDOG_STOP_KIND.to_owned()),
                 last_action_source: None,
+                first_player_seat: None,
+                last_acting_seat: None,
+                last_acting_arm: None,
+                v3: false,
             }],
             scores: None,
         })
